@@ -12,6 +12,7 @@ google_oauth.local.json
 
 # Local agent skills and configuration.
 .agents/
+skills-lock.json
 
 # Tauri-generated schemas and local build output.
 src-tauri/gen/
