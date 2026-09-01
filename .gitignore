@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+.vite/
+.turbo/
+target/
+*.log
+*.tsbuildinfo
+
+# Local OAuth configuration may contain client credentials.
+google_oauth.local.json
+
+# Local agent skills and configuration.
+.agents/
+
+# Tauri-generated schemas and local build output.
+src-tauri/gen/
+src-tauri/binaries/*
+!src-tauri/binaries/README.md

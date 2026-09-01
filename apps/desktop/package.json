@@ -1,0 +1,25 @@
+{
+  "name": "@survey-synth/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "build": "pnpm --filter @survey-synth/contracts build && tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "pnpm --filter @survey-synth/contracts build && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm --filter @survey-synth/contracts build && vitest run test"
+  },
+  "dependencies": {
+    "@survey-synth/contracts": "workspace:*",
+    "@tauri-apps/api": "^2.8.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.2",
+    "vite": "^7.1.3",
+    "vitest": "^3.2.4"
+  }
+}

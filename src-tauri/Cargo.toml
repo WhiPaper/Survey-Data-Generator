@@ -1,0 +1,24 @@
+[package]
+name = "survey-synth-host"
+version = "0.1.0"
+description = "Thin Tauri host for Survey Synth"
+authors = ["Survey Synth"]
+edition = "2021"
+build = "build.rs"
+
+[lib]
+name = "survey_synth_host"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "survey-synth-app"
+path = "src/main.rs"
+
+[build-dependencies]
+serde_json = "1"
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
