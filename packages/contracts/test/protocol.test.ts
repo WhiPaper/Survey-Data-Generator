@@ -83,6 +83,59 @@ describe("shared RPC contracts", () => {
     ).toThrow();
   });
 
+  it("validates compact Form discovery and import contracts", () => {
+    expect(
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "r_forms",
+        method: "forms.list",
+        params: { query: "Customer", cursor: "page-2" },
+      }),
+    ).toMatchObject({ method: "forms.list" });
+    expect(
+      parseRpcResult("forms.list", {
+        items: [{ formId: "form-1", title: "Customer survey" }],
+      }),
+    ).toEqual({ items: [{ formId: "form-1", title: "Customer survey" }] });
+    expect(
+      parseRpcResult("forms.import", {
+        importId: "import-1",
+        formId: "form-1",
+        title: "Customer survey",
+        responseCount: 2,
+        questionCount: 5,
+      }),
+    ).toMatchObject({ formId: "form-1", responseCount: 2 });
+    expect(() =>
+      parseRpcResult("forms.import", {
+        importId: "import-1",
+        formId: "form-1",
+        title: "Customer survey",
+        responseCount: -1,
+        questionCount: 5,
+      }),
+    ).toThrow();
+    expect(() =>
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "r_forms_page_token",
+        method: "forms.list",
+        params: { pageToken: "provider-token" },
+      }),
+    ).toThrow();
+    expect(
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "r_forms_cancel",
+        method: "forms.import.cancel",
+        params: { operationId: "operation-1" },
+      }),
+    ).toMatchObject({ method: "forms.import.cancel" });
+  });
+
   it("validates host capability messages separately from frontend RPC", () => {
     expect(() =>
       parseRpcRequest({

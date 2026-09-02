@@ -6,13 +6,20 @@ import {
   callBackend,
   getAccounts,
   getSession,
+  importForm,
+  listForms,
   login,
   logout,
   pingBackend,
   revokeAccess,
   switchAccount,
 } from "../src/api/backend";
-import { VERSIONS, parseRpcRequest, type GoogleAccountId } from "@survey-synth/contracts";
+import {
+  VERSIONS,
+  parseRpcRequest,
+  type FormId,
+  type GoogleAccountId,
+} from "@survey-synth/contracts";
 
 describe("typed desktop backend client", () => {
   it("sends system.ping through the generic backend command and parses its response", async () => {
@@ -95,5 +102,43 @@ describe("typed desktop backend client", () => {
       ok: true,
     });
     expect(invoke).toHaveBeenCalledTimes(7);
+  });
+
+  it("exposes compact Form discovery and import RPCs", async () => {
+    const invoke = vi.fn(async (_command: string, args?: Record<string, unknown>) => {
+      const request = parseRpcRequest(JSON.parse(String(args?.request)) as unknown);
+      if (request.method === "forms.list") {
+        expect(request.params).toEqual({ query: "Customer" });
+        return {
+          items: [{ formId: "form-1", title: "Customer survey", modifiedAt: "2026-08-28" }],
+          nextCursor: "page-2",
+        };
+      }
+      if (request.method === "forms.import") {
+        expect(request.params).toMatchObject({ formId: "form-1" });
+        return {
+          importId: "import-1",
+          formId: "form-1",
+          title: "Customer survey",
+          responseCount: 2,
+          questionCount: 3,
+        };
+      }
+      throw new Error(`Unexpected method ${request.method}`);
+    });
+
+    await expect(listForms({ query: "Customer" }, { invoke })).resolves.toMatchObject({
+      items: [{ formId: "form-1", title: "Customer survey" }],
+      nextCursor: "page-2",
+    });
+    await expect(importForm("form-1" as FormId, { invoke })).resolves.toMatchObject({
+      importId: "import-1",
+      responseCount: 2,
+    });
+    await expect(importForm("form-1" as FormId, "operation-1", { invoke })).resolves.toMatchObject({
+      importId: "import-1",
+      responseCount: 2,
+    });
+    expect(invoke).toHaveBeenCalledTimes(3);
   });
 });

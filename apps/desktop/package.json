@@ -10,6 +10,7 @@
     "test": "pnpm --filter @survey-synth/contracts build && vitest run test"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.90.0",
     "@survey-synth/contracts": "workspace:*",
     "@tauri-apps/api": "^2.8.0",
     "react": "^19.1.1",

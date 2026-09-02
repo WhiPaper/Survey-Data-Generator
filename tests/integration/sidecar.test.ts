@@ -88,6 +88,22 @@ describe("packaged-shape sidecar process boundary", () => {
         `${JSON.stringify({
           v: VERSIONS.protocolVersion,
           type: "request",
+          id: "integration_forms",
+          method: "forms.list",
+          params: { query: "Customer" },
+        })}\n`,
+      );
+      const forms = parseResponseEnvelope(await sidecar.nextMessage());
+      expect(forms).toMatchObject({
+        id: "integration_forms",
+        ok: false,
+        error: { code: "UNAUTHENTICATED" },
+      });
+
+      sidecar.child.stdin.write(
+        `${JSON.stringify({
+          v: VERSIONS.protocolVersion,
+          type: "request",
           id: "integration_shutdown",
           method: "system.shutdown",
           params: {},

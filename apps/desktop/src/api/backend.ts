@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   BackendErrorSchema,
+  type FormId,
+  type FormImportSummary,
+  type FormsListParams,
+  type FormsListResult,
   type GoogleAccountId,
   type GoogleAccountView,
   type SessionView,
@@ -109,3 +113,27 @@ export const revokeAccess = (
   id: GoogleAccountId,
   backend?: BackendInvoker,
 ): Promise<{ ok: true }> => callBackend("auth.revokeAccess", { id }, backend);
+
+export const listForms = (
+  params: FormsListParams = {},
+  backend?: BackendInvoker,
+): Promise<FormsListResult> => callBackend("forms.list", params, backend);
+
+export const importForm = (
+  formId: FormId,
+  operationIdOrBackend?: string | BackendInvoker,
+  backend?: BackendInvoker,
+): Promise<FormImportSummary> => {
+  const operationId = typeof operationIdOrBackend === "string" ? operationIdOrBackend : undefined;
+  const invoker = typeof operationIdOrBackend === "string" ? backend : operationIdOrBackend;
+  return callBackend(
+    "forms.import",
+    { formId, ...(operationId === undefined ? {} : { operationId }) },
+    invoker,
+  );
+};
+
+export const cancelFormImport = (
+  operationId: string,
+  backend?: BackendInvoker,
+): Promise<{ ok: true }> => callBackend("forms.import.cancel", { operationId }, backend);

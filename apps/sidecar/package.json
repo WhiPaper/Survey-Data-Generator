@@ -8,6 +8,10 @@
       "types": "./dist/main.d.ts",
       "import": "./dist/main.js"
     },
+    "./forms": {
+      "types": "./dist/forms/index.d.ts",
+      "import": "./dist/forms/index.js"
+    },
     "./rpc": {
       "types": "./dist/rpc/index.d.ts",
       "import": "./dist/rpc/index.js"

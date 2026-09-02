@@ -1,149 +1,199 @@
 import { useEffect, useState } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { GoogleAccountId, GoogleAccountView, SessionView } from "@survey-synth/contracts";
+import type { FormId, FormListItem, GoogleAccountId, SessionView } from "@survey-synth/contracts";
 
 import {
   BackendClientError,
   addAccount,
+  cancelFormImport,
   getAccounts,
   getSession,
+  importForm,
+  listForms,
   login,
   logout,
   revokeAccess,
   switchAccount,
 } from "./api/backend";
 
-type AuthState =
-  | { status: "loading" }
-  | { status: "signed_out"; error?: string }
-  | { status: "signed_in"; session: SessionView; accounts: GoogleAccountView[]; error?: string };
+export const sessionQueryKey = ["session.get"] as const;
 
-type BusyAction = "login" | "add_account" | "switch_account" | "logout" | "revoke" | null;
-type SignedInState = Extract<AuthState, { status: "signed_in" }>;
+export const accountsQueryKey = (accountId: GoogleAccountId | null) =>
+  ["auth.accounts", accountId] as const;
+
+export const formsQueryKey = (accountId: GoogleAccountId | null, query: string) =>
+  ["forms.list", accountId, query] as const;
 
 const errorMessage = (error: unknown): string => {
   if (error instanceof BackendClientError) return error.backendError.message;
   return "Backend unavailable";
 };
 
-const withActiveAccount = (
-  accounts: readonly GoogleAccountView[],
-  active: GoogleAccountView,
-): GoogleAccountView[] => {
-  const existing = accounts.findIndex((account) => account.id === active.id);
-  if (existing === -1) return [...accounts, active];
-  return accounts.map((account, index) => (index === existing ? active : account));
+const mergeForms = (
+  current: readonly FormListItem[],
+  next: readonly FormListItem[],
+): FormListItem[] => {
+  const merged = new Map(current.map((item) => [item.formId, item]));
+  for (const item of next) merged.set(item.formId, item);
+  return [...merged.values()];
 };
 
-const signedInState = async (
-  session: SessionView,
-  fallbackAccounts: readonly GoogleAccountView[],
-): Promise<SignedInState> => {
-  try {
-    return { status: "signed_in", session, accounts: await getAccounts() };
-  } catch (error: unknown) {
-    return {
-      status: "signed_in",
-      session,
-      accounts: withActiveAccount(fallbackAccounts, session.account),
-      error: errorMessage(error),
-    };
-  }
+const formatModifiedAt = (value: string | undefined): string | undefined => {
+  if (value === undefined) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" }).format(date);
+};
+
+const useDebouncedValue = (value: string, delayMs: number): string => {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
 };
 
 export function App() {
-  const [auth, setAuth] = useState<AuthState>({ status: "loading" });
-  const [busy, setBusy] = useState<BusyAction>(null);
+  const queryClient = useQueryClient();
+  const [formQuery, setFormQuery] = useState("");
+  const debouncedFormQuery = useDebouncedValue(formQuery, 250);
+
+  const sessionQuery = useQuery({
+    queryKey: sessionQueryKey,
+    queryFn: () => getSession(),
+    retry: false,
+  });
+  const session = sessionQuery.data;
+  const activeAccountId = session?.account.id ?? null;
+  const accountsQuery = useQuery({
+    queryKey: accountsQueryKey(activeAccountId),
+    queryFn: () => getAccounts(),
+    enabled: activeAccountId !== null,
+    retry: false,
+  });
+  const formsQuery = useInfiniteQuery({
+    queryKey: formsQueryKey(activeAccountId, debouncedFormQuery),
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      listForms({
+        ...(debouncedFormQuery.length === 0 ? {} : { query: debouncedFormQuery }),
+        ...(pageParam === undefined ? {} : { cursor: pageParam }),
+      }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    enabled: activeAccountId !== null,
+    retry: false,
+  });
+
+  const loginMutation = useMutation({
+    mutationFn: () => login(),
+    onSuccess: (nextSession: SessionView) => {
+      queryClient.setQueryData(sessionQueryKey, nextSession);
+      void queryClient.invalidateQueries({ queryKey: ["auth.accounts"] });
+    },
+  });
+  const addAccountMutation = useMutation({
+    mutationFn: () => addAccount(),
+    onSuccess: (nextSession: SessionView) => {
+      queryClient.setQueryData(sessionQueryKey, nextSession);
+      void queryClient.invalidateQueries({ queryKey: ["auth.accounts"] });
+    },
+  });
+  const switchAccountMutation = useMutation({
+    mutationFn: (id: GoogleAccountId) => switchAccount(id),
+    onSuccess: (nextSession: SessionView) => {
+      queryClient.setQueryData(sessionQueryKey, nextSession);
+      void queryClient.invalidateQueries({ queryKey: ["auth.accounts"] });
+    },
+  });
+  const logoutMutation = useMutation({
+    mutationFn: () => logout(),
+    onSuccess: () => {
+      queryClient.setQueryData(sessionQueryKey, null);
+      queryClient.removeQueries({ queryKey: ["auth.accounts"] });
+      queryClient.removeQueries({ queryKey: ["forms.list"] });
+    },
+  });
+  const revokeMutation = useMutation({
+    mutationFn: (id: GoogleAccountId) => revokeAccess(id),
+    onSuccess: () => {
+      queryClient.setQueryData(sessionQueryKey, null);
+      queryClient.removeQueries({ queryKey: ["auth.accounts"] });
+      queryClient.removeQueries({ queryKey: ["forms.list"] });
+    },
+  });
+  const importMutation = useMutation({
+    mutationFn: ({ formId, operationId }: { formId: FormId; operationId: string }) =>
+      importForm(formId, operationId),
+  });
+  const cancelMutation = useMutation({
+    mutationFn: (operationId: string) => cancelFormImport(operationId),
+  });
+
+  const importOperationId = importMutation.variables?.operationId;
+  const authBusy =
+    loginMutation.isPending ||
+    addAccountMutation.isPending ||
+    switchAccountMutation.isPending ||
+    logoutMutation.isPending ||
+    revokeMutation.isPending;
+  const importBusy = importMutation.isPending || cancelMutation.isPending;
+  const busy = authBusy || importBusy;
+  const forms = (formsQuery.data?.pages ?? []).reduce<FormListItem[]>(
+    (current, page) => mergeForms(current, page.items),
+    [],
+  );
+  const formsLoading = formsQuery.isPending || formsQuery.isFetchingNextPage;
+  const sessionError = sessionQuery.error;
+  const actionError =
+    loginMutation.error ??
+    addAccountMutation.error ??
+    switchAccountMutation.error ??
+    logoutMutation.error ??
+    revokeMutation.error;
+  const importError =
+    importMutation.error instanceof BackendClientError &&
+    importMutation.error.backendError.code === "JOB_CANCELLED"
+      ? undefined
+      : importMutation.error;
 
   useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        const session = await getSession();
-        if (!active) return;
-        if (session === null) {
-          setAuth({ status: "signed_out" });
-          return;
-        }
-        const nextAuth = await signedInState(session, []);
-        if (active) setAuth(nextAuth);
-      } catch (error: unknown) {
-        if (active) setAuth({ status: "signed_out", error: errorMessage(error) });
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
+    importMutation.reset();
+    cancelMutation.reset();
+  }, [activeAccountId]);
 
-  const handleLogin = async (): Promise<void> => {
-    setBusy("login");
-    try {
-      const session = await login();
-      setAuth(await signedInState(session, []));
-    } catch (error: unknown) {
-      setAuth({ status: "signed_out", error: errorMessage(error) });
-    } finally {
-      setBusy(null);
-    }
+  const handleLogin = (): void => {
+    loginMutation.mutate();
   };
 
-  const handleAddAccount = async (): Promise<void> => {
-    if (auth.status !== "signed_in") return;
-    const previous = auth;
-    setBusy("add_account");
-    try {
-      const session = await addAccount();
-      setAuth(await signedInState(session, previous.accounts));
-    } catch (error: unknown) {
-      setAuth({ ...previous, error: errorMessage(error) });
-    } finally {
-      setBusy(null);
-    }
+  const handleAddAccount = (): void => {
+    addAccountMutation.mutate();
   };
 
-  const handleSwitchAccount = async (id: GoogleAccountId): Promise<void> => {
-    if (auth.status !== "signed_in") return;
-    const previous = auth;
-    setBusy("switch_account");
-    try {
-      const session = await switchAccount(id);
-      setAuth(await signedInState(session, previous.accounts));
-    } catch (error: unknown) {
-      setAuth({ ...previous, error: errorMessage(error) });
-    } finally {
-      setBusy(null);
-    }
+  const handleSwitchAccount = (id: GoogleAccountId): void => {
+    switchAccountMutation.mutate(id);
   };
 
-  const handleLogout = async (): Promise<void> => {
-    setBusy("logout");
-    try {
-      await logout();
-      setAuth({ status: "signed_out" });
-    } catch (error: unknown) {
-      if (auth.status === "signed_in") setAuth({ ...auth, error: errorMessage(error) });
-    } finally {
-      setBusy(null);
-    }
+  const handleLogout = (): void => {
+    logoutMutation.mutate();
   };
 
-  const handleRevoke = async (): Promise<void> => {
-    if (auth.status !== "signed_in") return;
-    if (!window.confirm("Google 접근 권한을 해제하시겠습니까?")) return;
-    const previous = auth;
-    setBusy("revoke");
-    try {
-      await revokeAccess(auth.session.account.id);
-      setAuth({ status: "signed_out" });
-    } catch (error: unknown) {
-      setAuth({ ...previous, error: errorMessage(error) });
-    } finally {
-      setBusy(null);
-    }
+  const handleRevoke = (): void => {
+    if (activeAccountId === null || !window.confirm("Google 접근 권한을 해제하시겠습니까?")) return;
+    revokeMutation.mutate(activeAccountId);
   };
 
-  if (auth.status === "loading") {
+  const handleImport = (formId: FormId): void => {
+    importMutation.mutate({ formId, operationId: crypto.randomUUID() });
+  };
+
+  const handleCancelImport = (): void => {
+    if (importOperationId === undefined) return;
+    cancelMutation.mutate(importOperationId);
+  };
+
+  if (sessionQuery.isPending) {
     return (
       <main>
         <h1>Survey Synth</h1>
@@ -152,51 +202,127 @@ export function App() {
     );
   }
 
-  if (auth.status === "signed_out") {
+  if (session === null || session === undefined) {
     return (
       <main>
         <h1>Survey Synth</h1>
-        <button type="button" onClick={() => void handleLogin()} disabled={busy !== null}>
-          {busy === "login" ? "Google 로그인 중…" : "Google로 계속하기"}
+        <button type="button" onClick={handleLogin} disabled={busy}>
+          {loginMutation.isPending ? "Google 로그인 중…" : "Google로 계속하기"}
         </button>
-        {auth.error !== undefined && <p role="alert">{auth.error}</p>}
+        {(sessionError ?? actionError) !== null && (sessionError ?? actionError) !== undefined && (
+          <p role="alert">{errorMessage(sessionError ?? actionError)}</p>
+        )}
       </main>
     );
   }
 
+  const accounts = accountsQuery.data ?? [session.account];
+  const formsError = formsQuery.error;
+  const importStatus =
+    importMutation.isSuccess && importMutation.data !== undefined
+      ? `${importMutation.data.title} 가져오기 완료`
+      : importMutation.error instanceof BackendClientError &&
+          importMutation.error.backendError.code === "JOB_CANCELLED"
+        ? "가져오기를 취소했습니다"
+        : undefined;
+
   return (
     <main>
       <h1>Survey Synth</h1>
-      <p>{auth.session.account.email}</p>
+      <p>{session.account.email}</p>
       <details>
         <summary>계정 메뉴</summary>
         <div className="account-menu">
           <p>저장된 Google 계정</p>
           <ul>
-            {auth.accounts.map((account) => (
+            {accounts.map((account) => (
               <li key={account.id}>
                 <button
                   type="button"
-                  onClick={() => void handleSwitchAccount(account.id)}
-                  disabled={busy !== null || account.id === auth.session.account.id}
+                  onClick={() => handleSwitchAccount(account.id)}
+                  disabled={busy || account.id === session.account.id}
                 >
                   {account.email}
                 </button>
               </li>
             ))}
           </ul>
-          <button type="button" onClick={() => void handleAddAccount()} disabled={busy !== null}>
-            {busy === "add_account" ? "Google 계정 추가 중…" : "Google 계정 추가"}
+          <button type="button" onClick={handleAddAccount} disabled={busy}>
+            {addAccountMutation.isPending ? "Google 계정 추가 중…" : "Google 계정 추가"}
           </button>
-          <button type="button" onClick={() => void handleLogout()} disabled={busy !== null}>
+          <button type="button" onClick={handleLogout} disabled={busy}>
             로그아웃
           </button>
-          <button type="button" onClick={() => void handleRevoke()} disabled={busy !== null}>
+          <button type="button" onClick={handleRevoke} disabled={busy}>
             Google 접근 권한 해제
           </button>
         </div>
       </details>
-      {auth.error !== undefined && <p role="alert">{auth.error}</p>}
+      {(accountsQuery.error ?? actionError) !== null &&
+        (accountsQuery.error ?? actionError) !== undefined && (
+          <p role="alert">{errorMessage(accountsQuery.error ?? actionError)}</p>
+        )}
+
+      <section className="new-project" aria-labelledby="new-project-title">
+        <h2 id="new-project-title">새 프로젝트</h2>
+        <label className="visually-hidden" htmlFor="form-search">
+          Google Form 검색
+        </label>
+        <input
+          id="form-search"
+          type="search"
+          placeholder="Google Form 검색..."
+          value={formQuery}
+          onChange={(event) => setFormQuery(event.target.value)}
+          disabled={importBusy}
+        />
+        {formsError !== null && formsError !== undefined && (
+          <p role="alert">{errorMessage(formsError)}</p>
+        )}
+        {importError !== null && importError !== undefined && (
+          <p role="alert">{errorMessage(importError)}</p>
+        )}
+        {cancelMutation.error !== null && cancelMutation.error !== undefined && (
+          <p role="alert">{errorMessage(cancelMutation.error)}</p>
+        )}
+        {importBusy && (
+          <button type="button" onClick={handleCancelImport} disabled={cancelMutation.isPending}>
+            {cancelMutation.isPending ? "가져오기 취소 중…" : "가져오기 취소"}
+          </button>
+        )}
+        {formsLoading && <p>불러오는 중…</p>}
+        {!formsLoading && forms.length === 0 && formsError === null && formsError === undefined && (
+          <p>Google Form이 없습니다.</p>
+        )}
+        <ul className="form-list">
+          {forms.map((form) => {
+            const modifiedAt = formatModifiedAt(form.modifiedAt);
+            return (
+              <li key={form.formId}>
+                <button
+                  className="form-item"
+                  type="button"
+                  onClick={() => handleImport(form.formId)}
+                  disabled={busy}
+                >
+                  <span>{form.title}</span>
+                  {modifiedAt !== undefined && <time dateTime={form.modifiedAt}>{modifiedAt}</time>}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        {formsQuery.hasNextPage && (
+          <button
+            type="button"
+            onClick={() => void formsQuery.fetchNextPage()}
+            disabled={busy || formsQuery.isFetchingNextPage}
+          >
+            더 보기
+          </button>
+        )}
+        {importStatus !== undefined && <p role="status">{importStatus}</p>}
+      </section>
     </main>
   );
 }

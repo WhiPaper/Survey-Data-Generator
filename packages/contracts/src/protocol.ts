@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import type { GoogleAccountId } from "@survey-synth/domain";
+import type { FormId, GoogleAccountId } from "@survey-synth/domain";
 
-export type { GoogleAccountId } from "@survey-synth/domain";
+export type { FormId, GoogleAccountId } from "@survey-synth/domain";
 
 import { VERSIONS } from "./version.js";
 
@@ -159,6 +159,65 @@ export type AuthLogoutParams = z.infer<typeof AuthLogoutParamsSchema>;
 export const AuthRevokeAccessParamsSchema = z.object({ id: GoogleAccountIdSchema }).strict();
 export type AuthRevokeAccessParams = z.infer<typeof AuthRevokeAccessParamsSchema>;
 
+export const FormIdSchema = z
+  .string()
+  .min(1)
+  .transform((value) => value as FormId);
+
+export const FormListItemSchema = z
+  .object({
+    formId: FormIdSchema,
+    title: z.string().min(1),
+    modifiedAt: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type FormListItem = z.infer<typeof FormListItemSchema>;
+
+export const FormsListParamsSchema = z
+  .object({
+    query: z.string().max(200).optional(),
+    cursor: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type FormsListParams = z.infer<typeof FormsListParamsSchema>;
+
+export const FormsListResultSchema = z
+  .object({
+    items: z.array(FormListItemSchema),
+    nextCursor: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type FormsListResult = z.infer<typeof FormsListResultSchema>;
+
+export const FormsImportParamsSchema = z
+  .object({
+    formId: FormIdSchema,
+    operationId: z.string().min(1).max(200).optional(),
+  })
+  .strict();
+export type FormsImportParams = z.infer<typeof FormsImportParamsSchema>;
+
+export const FormsImportCancelParamsSchema = z
+  .object({ operationId: z.string().min(1).max(200) })
+  .strict();
+export type FormsImportCancelParams = z.infer<typeof FormsImportCancelParamsSchema>;
+
+export const FormImportSummarySchema = z
+  .object({
+    importId: z.string().min(1),
+    formId: FormIdSchema,
+    title: z.string().min(1),
+    responseCount: z.number().int().nonnegative(),
+    questionCount: z.number().int().nonnegative(),
+    unsupportedQuestionCount: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export type FormImportSummary = z.infer<typeof FormImportSummarySchema>;
+
 export const HostCapabilityMethodSchema = z.enum([
   "host.secret.get",
   "host.secret.set",
@@ -248,6 +307,18 @@ export interface BackendRpc {
     input: AuthRevokeAccessParams;
     output: AuthActionResult;
   };
+  "forms.list": {
+    input: FormsListParams;
+    output: FormsListResult;
+  };
+  "forms.import": {
+    input: FormsImportParams;
+    output: FormImportSummary;
+  };
+  "forms.import.cancel": {
+    input: FormsImportCancelParams;
+    output: AuthActionResult;
+  };
 }
 
 export type RpcMethod = keyof BackendRpc;
@@ -262,6 +333,9 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "auth.switchAccount": SessionViewSchema,
   "auth.logout": AuthActionResultSchema,
   "auth.revokeAccess": AuthActionResultSchema,
+  "forms.list": FormsListResultSchema,
+  "forms.import": FormImportSummarySchema,
+  "forms.import.cancel": AuthActionResultSchema,
 };
 
 const parseKnownParams = (method: string, params: unknown): void => {
@@ -283,6 +357,12 @@ const parseKnownParams = (method: string, params: unknown): void => {
     AuthLogoutParamsSchema.parse(params);
   } else if (method === "auth.revokeAccess") {
     AuthRevokeAccessParamsSchema.parse(params);
+  } else if (method === "forms.list") {
+    FormsListParamsSchema.parse(params);
+  } else if (method === "forms.import") {
+    FormsImportParamsSchema.parse(params);
+  } else if (method === "forms.import.cancel") {
+    FormsImportCancelParamsSchema.parse(params);
   }
 };
 

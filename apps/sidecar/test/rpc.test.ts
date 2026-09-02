@@ -97,6 +97,44 @@ describe("sidecar NDJSON boundary", () => {
     });
   });
 
+  it("routes compact Form discovery results through the generic RPC boundary", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    createSidecarServer({
+      input,
+      output,
+      logger: silentLogger,
+      handlers: {
+        "forms.list": () => ({
+          items: [{ formId: "form-1", title: "Survey", modifiedAt: "2026-08-28" }],
+          nextCursor: "next-page",
+        }),
+      },
+    });
+    output.read();
+
+    input.write(
+      `${JSON.stringify({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "r_forms",
+        method: "forms.list",
+        params: {},
+      })}\n`,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const lines = new NdjsonDecoder().push(output.read()?.toString() ?? "");
+    expect(lines).toHaveLength(1);
+    expect(parseResponseEnvelope(JSON.parse(lines[0] ?? "") as unknown)).toMatchObject({
+      id: "r_forms",
+      ok: true,
+      result: {
+        items: [{ formId: "form-1", title: "Survey" }],
+        nextCursor: "next-page",
+      },
+    });
+  });
+
   it("shuts down through the protocol", async () => {
     const input = new PassThrough();
     const output = new PassThrough();

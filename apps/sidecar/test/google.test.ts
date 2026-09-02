@@ -72,4 +72,17 @@ describe("Google HTTP token client", () => {
     );
     await expect(client.refreshAccessToken("refresh-token")).rejects.not.toThrow("secret detail");
   });
+
+  it("classifies provider quota errors separately from permission errors", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: "rateLimitExceeded" }), { status: 403 }),
+      );
+    const client = new GoogleHttpClient({ getConfig: async () => config, fetchImpl });
+
+    await expect(client.refreshAccessToken("refresh-token")).rejects.toEqual(
+      new GoogleProviderError("rate_limited", 403),
+    );
+  });
 });

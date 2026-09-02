@@ -18,6 +18,9 @@ const EXPECTED_APP_VERSION: &str = env!("SURVEY_SYNTH_APPVERSION");
 const EXPECTED_PROTOCOL_VERSION_TEXT: &str = env!("SURVEY_SYNTH_PROTOCOLVERSION");
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+// M2 sidecar import deadline is five minutes; bridge keeps a short transport
+// grace period so it does not abandon an import that is finishing cleanup.
+const IMPORT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5 * 60 + 10);
 // Interactive OAuth may legitimately wait for user input for five minutes.
 // Keep only those RPCs bounded by the sidecar's OAuth timeout plus the
 // bounded token exchange and identity requests.
@@ -32,6 +35,7 @@ fn expected_protocol_version() -> u64 {
 fn response_timeout(method: &str) -> Duration {
     match method {
         "auth.login" | "auth.addAccount" => INTERACTIVE_RESPONSE_TIMEOUT,
+        "forms.import" => IMPORT_RESPONSE_TIMEOUT,
         _ => RESPONSE_TIMEOUT,
     }
 }
@@ -693,7 +697,8 @@ mod tests {
     use super::{
         execute_host_request, expected_protocol_version, host_request_fields, open_external,
         parse_transport_request, response_timeout, validate_ready, SecretStore, BASE64,
-        EXPECTED_APP_VERSION, INTERACTIVE_RESPONSE_TIMEOUT, RESPONSE_TIMEOUT,
+        EXPECTED_APP_VERSION, IMPORT_RESPONSE_TIMEOUT, INTERACTIVE_RESPONSE_TIMEOUT,
+        RESPONSE_TIMEOUT,
     };
     use base64::Engine as _;
     use serde_json::json;
@@ -745,6 +750,7 @@ mod tests {
             response_timeout("auth.addAccount"),
             INTERACTIVE_RESPONSE_TIMEOUT
         );
+        assert_eq!(response_timeout("forms.import"), IMPORT_RESPONSE_TIMEOUT);
         assert_eq!(response_timeout("system.ping"), RESPONSE_TIMEOUT);
     }
 

@@ -18,11 +18,13 @@ export const sidecarError = (
   code: BackendErrorCode,
   message: string,
   recoverable: boolean,
+  details?: Record<string, unknown>,
 ): SidecarError =>
   new SidecarError(
     BackendErrorSchema.parse({
       code,
       message,
+      ...(details === undefined ? {} : { details }),
       recoverable,
     }),
   );

@@ -43,7 +43,7 @@ export interface GoogleHttpClientOptions {
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const nonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
@@ -55,9 +55,42 @@ const providerErrorKind = (status: number, body: unknown): GoogleProviderErrorKi
   const code = isRecord(body) && typeof body.error === "string" ? body.error : undefined;
   if (code === "invalid_grant") return "invalid_grant";
   if (status === 401) return "unauthorized";
-  if (status === 403) return "permission_denied";
+  if (status === 403) return isRateLimitedBody(body) ? "rate_limited" : "permission_denied";
   if (status === 429) return "rate_limited";
   return "api";
+};
+
+const isRateLimitedBody = (value: unknown): boolean => {
+  if (!isRecord(value)) return false;
+  const reasons: unknown[] = [];
+  const error = value.error;
+  if (typeof error === "string") reasons.push(error);
+  if (isRecord(error)) {
+    reasons.push(error.reason, error.status);
+    if (Array.isArray(error.errors)) {
+      for (const item of error.errors) {
+        if (isRecord(item)) reasons.push(item.reason);
+      }
+    }
+  }
+  if (Array.isArray(value.errors)) {
+    for (const item of value.errors) {
+      if (isRecord(item)) reasons.push(item.reason);
+    }
+  }
+  return reasons.some(
+    (reason) =>
+      typeof reason === "string" &&
+      [
+        "backenderror",
+        "dailylimitexceeded",
+        "quotaexceeded",
+        "ratelimitexceeded",
+        "resource_exhausted",
+        "resourceexhausted",
+        "userratelimitexceeded",
+      ].includes(reason.toLowerCase().replaceAll("-", "")),
+  );
 };
 
 const parseBody = async (response: Response): Promise<unknown> => {
