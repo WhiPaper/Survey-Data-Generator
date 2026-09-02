@@ -327,9 +327,35 @@ export const ProjectTargetsSchema = z
       .optional(),
   })
   .strict();
+export const TargetMigrationIssueSchema = z
+  .object({
+    id: z.string().min(1),
+    code: z.enum([
+      "question_deleted",
+      "question_type_changed",
+      "option_removed",
+      "option_ambiguous",
+      "semantic_incompatible",
+      "form_logic_changed",
+      "group_changed",
+      "unsupported",
+    ]),
+    message: z.string().min(1),
+    questionId: z.string().min(1).optional(),
+    optionKey: z.string().min(1).optional(),
+    severity: z.enum(["warning", "blocking"]),
+    originalTarget: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+export type TargetMigrationIssueView = z.infer<typeof TargetMigrationIssueSchema>;
+
 export const TargetsGetParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
 export const TargetsGetResultSchema = z
-  .object({ revision: z.number().int().nonnegative(), targets: ProjectTargetsSchema })
+  .object({
+    revision: z.number().int().nonnegative(),
+    targets: ProjectTargetsSchema,
+    issues: z.array(TargetMigrationIssueSchema).optional(),
+  })
   .strict();
 export const TargetsUpdateParamsSchema = z
   .object({
@@ -373,11 +399,65 @@ export const ProjectDetailSchema = ProjectSummarySchema.extend({
   targetRevision: z.number().int().nonnegative(),
   profiles: z.array(z.record(z.string(), z.unknown())),
   relationships: z.array(z.record(z.string(), z.unknown())),
+  migrationIssues: z.array(TargetMigrationIssueSchema).optional(),
 }).strict();
 export type ProjectDetailView = z.infer<typeof ProjectDetailSchema>;
 export const ProjectsListParamsSchema = z.object({}).strict();
 export const ProjectsGetParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
 export const ProjectsDeleteParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
+
+export const ProjectsRefreshSourceParamsSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    expectedTargetRevision: z.number().int().nonnegative(),
+    operationId: z.string().min(1).max(200).optional(),
+  })
+  .strict();
+export type ProjectsRefreshSourceParams = z.infer<typeof ProjectsRefreshSourceParamsSchema>;
+
+export const ProjectsRefreshSourceCancelParamsSchema = z
+  .object({
+    operationId: z.string().min(1).max(200),
+  })
+  .strict();
+export type ProjectsRefreshSourceCancelParams = z.infer<
+  typeof ProjectsRefreshSourceCancelParamsSchema
+>;
+
+export const ProjectsRefreshSourceResultSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("no_change"),
+      sourceRevisionId: z.string().min(1),
+      sourceResponseCount: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("updated"),
+      sourceRevisionId: z.string().min(1),
+      sourceResponseCount: z.number().int().nonnegative(),
+      addedResponseCount: z.number().int().nonnegative(),
+      changedResponseCount: z.number().int().nonnegative(),
+      removedResponseCount: z.number().int().nonnegative(),
+      targetRevision: z.number().int().nonnegative(),
+      schemaSeverity: z.enum(["none", "compatible", "breaking"]),
+      issues: z.array(TargetMigrationIssueSchema),
+    })
+    .strict(),
+]);
+export type ProjectsRefreshSourceResult = z.infer<typeof ProjectsRefreshSourceResultSchema>;
+
+export const ProjectsResolveMigrationIssueParamsSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    issueId: z.string().min(1),
+    resolution: z.enum(["acknowledge", "remove_target"]).optional(),
+  })
+  .strict();
+export type ProjectsResolveMigrationIssueParams = z.infer<
+  typeof ProjectsResolveMigrationIssueParamsSchema
+>;
 
 export const SynthesisStartParamsSchema = z
   .object({
@@ -529,6 +609,18 @@ export interface BackendRpc {
     input: z.infer<typeof ProjectsDeleteParamsSchema>;
     output: AuthActionResult;
   };
+  "projects.refreshSource": {
+    input: ProjectsRefreshSourceParams;
+    output: ProjectsRefreshSourceResult;
+  };
+  "projects.refreshSource.cancel": {
+    input: ProjectsRefreshSourceCancelParams;
+    output: AuthActionResult;
+  };
+  "projects.resolveMigrationIssue": {
+    input: ProjectsResolveMigrationIssueParams;
+    output: AuthActionResult;
+  };
   "targets.get": { input: z.infer<typeof TargetsGetParamsSchema>; output: TargetsGetResult };
   "targets.update": { input: TargetsUpdateParams; output: TargetsGetResult };
   "targets.checkFeasibility": {
@@ -564,6 +656,9 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "projects.list": z.array(ProjectSummarySchema),
   "projects.get": ProjectDetailSchema.nullable(),
   "projects.delete": AuthActionResultSchema,
+  "projects.refreshSource": ProjectsRefreshSourceResultSchema,
+  "projects.refreshSource.cancel": AuthActionResultSchema,
+  "projects.resolveMigrationIssue": AuthActionResultSchema,
   "targets.get": TargetsGetResultSchema,
   "targets.update": TargetsGetResultSchema,
   "targets.checkFeasibility": TargetsCheckFeasibilityResultSchema,
@@ -603,6 +698,12 @@ const parseKnownParams = (method: string, params: unknown): void => {
     ProjectsGetParamsSchema.parse(params);
   } else if (method === "projects.delete") {
     ProjectsDeleteParamsSchema.parse(params);
+  } else if (method === "projects.refreshSource") {
+    ProjectsRefreshSourceParamsSchema.parse(params);
+  } else if (method === "projects.refreshSource.cancel") {
+    ProjectsRefreshSourceCancelParamsSchema.parse(params);
+  } else if (method === "projects.resolveMigrationIssue") {
+    ProjectsResolveMigrationIssueParamsSchema.parse(params);
   } else if (method === "targets.get") {
     TargetsGetParamsSchema.parse(params);
   } else if (method === "targets.update") {

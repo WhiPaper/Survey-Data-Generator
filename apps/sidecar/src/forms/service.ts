@@ -113,8 +113,11 @@ export class FormImportService {
     }
   }
 
-  public async importForm(formId: FormId, signal?: AbortSignal): Promise<FormImportSummary> {
-    const accountId = await this.activeAccountId();
+  public async fetchAndNormalize(
+    accountId: GoogleAccountId,
+    formId: FormId,
+    signal?: AbortSignal,
+  ): Promise<{ form: FormSnapshot; responses: readonly NormalizedResponse[] }> {
     const startedAt = this.now();
     const budget = new M2ImportSafetyBudget(this.limits, this.now, startedAt);
     const operation = createImportOperation(signal, this.limits.timeoutMs);
@@ -126,6 +129,7 @@ export class FormImportService {
         budget.addPayload(providerPayloadBytes(rawForm), operation.signal);
         return rawForm;
       });
+    void rawFormPromise.catch(() => {});
     let rawResponsesPromise: Promise<RawGoogleFormResponse[]> | undefined;
 
     try {
@@ -145,36 +149,12 @@ export class FormImportService {
           this.options.google.listResponses(accountId, formId, pageToken, pageSignal),
         { signal: operation.signal, budget },
       );
+      void rawResponsesPromise.catch(() => {});
       const rawResponses = await Promise.race([rawResponsesPromise, operation.termination]);
       ensureDeadline(operation, budget);
-      if (rawResponses.length === 0) {
-        throw sidecarError("VALIDATION_FAILED", "선택한 Google Form에 응답이 없습니다", true);
-      }
       const responses = this.responseNormalizer.normalizeAll(form, rawResponses);
       ensureDeadline(operation, budget);
-      const latestAccountId = await this.options.accounts.getLastAccountId();
-      if (latestAccountId !== accountId) {
-        throw cancelledError();
-      }
-      const importId = randomUUID();
-      this.store.save({ importId, accountId, form, responses });
-      const unsupportedQuestionCount = form.questions.filter(
-        (question) => question.kind === "unsupported",
-      ).length;
-      const summary = FormImportSummarySchema.parse({
-        importId,
-        formId: form.formId,
-        title: form.title,
-        responseCount: responses.length,
-        questionCount: form.questions.length,
-        ...(unsupportedQuestionCount === 0 ? {} : { unsupportedQuestionCount }),
-      });
-      this.options.logger.info("form_import_success", {
-        responses: responses.length,
-        questions: form.questions.length,
-        durationMs: Math.max(0, this.now() - startedAt),
-      });
-      return summary;
+      return { form, responses };
     } catch (error: unknown) {
       const normalizedError = importFailure(error, operation, signal, budget, this.now);
       operation.cancel();
@@ -182,14 +162,43 @@ export class FormImportService {
         rawFormPromise,
         ...(rawResponsesPromise === undefined ? [] : [rawResponsesPromise]),
       ]);
-      this.options.logger.error("form_import_failed", {
-        errorCode: normalizedError.backendError.code,
-      });
       throw normalizedError;
     } finally {
       operation.dispose();
       this.activeImportCancellers.delete(operation.cancel);
     }
+  }
+
+  public async importForm(formId: FormId, signal?: AbortSignal): Promise<FormImportSummary> {
+    const accountId = await this.activeAccountId();
+    const startedAt = this.now();
+    const { form, responses } = await this.fetchAndNormalize(accountId, formId, signal);
+    if (responses.length === 0) {
+      throw sidecarError("VALIDATION_FAILED", "선택한 Google Form에 응답이 없습니다", true);
+    }
+    const latestAccountId = await this.options.accounts.getLastAccountId();
+    if (latestAccountId !== accountId) {
+      throw cancelledError();
+    }
+    const importId = randomUUID();
+    this.store.save({ importId, accountId, form, responses });
+    const unsupportedQuestionCount = form.questions.filter(
+      (question) => question.kind === "unsupported",
+    ).length;
+    const summary = FormImportSummarySchema.parse({
+      importId,
+      formId: form.formId,
+      title: form.title,
+      responseCount: responses.length,
+      questionCount: form.questions.length,
+      ...(unsupportedQuestionCount === 0 ? {} : { unsupportedQuestionCount }),
+    });
+    this.options.logger.info("form_import_success", {
+      responses: responses.length,
+      questions: form.questions.length,
+      durationMs: Math.max(0, this.now() - startedAt),
+    });
+    return summary;
   }
 
   public getImport(importId: string): FormImportSession | null {

@@ -137,6 +137,65 @@ export class ProjectDatabase {
           this.db.exec("ALTER TABLE responses ADD COLUMN path_json TEXT NOT NULL DEFAULT '{}'");
         this.db.pragma("user_version = 6");
       });
+      current = 6;
+    }
+    if (current < 7) {
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS response_versions (
+            id TEXT PRIMARY KEY,
+            response_id TEXT NOT NULL,
+            created_at TEXT,
+            last_submitted_at TEXT,
+            content_hash TEXT NOT NULL,
+            origin TEXT NOT NULL CHECK(origin = 'original'),
+            path_json TEXT NOT NULL DEFAULT '{}'
+          );
+          CREATE TABLE IF NOT EXISTS response_version_answers (
+            version_id TEXT NOT NULL REFERENCES response_versions(id) ON DELETE CASCADE,
+            question_id TEXT NOT NULL,
+            slot_json TEXT NOT NULL,
+            PRIMARY KEY(version_id, question_id)
+          );
+          CREATE TABLE IF NOT EXISTS revision_response_versions (
+            revision_id TEXT NOT NULL REFERENCES source_revisions(id) ON DELETE CASCADE,
+            response_version_id TEXT NOT NULL REFERENCES response_versions(id),
+            PRIMARY KEY(revision_id, response_version_id)
+          );
+          CREATE TABLE IF NOT EXISTS target_migration_issues (
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            source_revision_id TEXT NOT NULL REFERENCES source_revisions(id) ON DELETE CASCADE,
+            issue_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            resolved INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(project_id, source_revision_id, issue_id)
+          );
+          CREATE TABLE IF NOT EXISTS semantic_overrides (
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            question_id TEXT NOT NULL,
+            semantic_type TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(project_id, question_id)
+          );
+          CREATE INDEX IF NOT EXISTS idx_response_versions_lookup ON response_versions(response_id, content_hash);
+          CREATE INDEX IF NOT EXISTS idx_revision_response_versions_rev ON revision_response_versions(revision_id);
+          CREATE INDEX IF NOT EXISTS idx_target_migration_issues_proj ON target_migration_issues(project_id, source_revision_id);
+
+          INSERT OR IGNORE INTO response_versions (id, response_id, created_at, last_submitted_at, content_hash, origin, path_json)
+          SELECT id || ':' || content_hash, id, created_at, last_submitted_at, content_hash, origin, path_json FROM responses;
+
+          INSERT OR IGNORE INTO response_version_answers (version_id, question_id, slot_json)
+          SELECT r.id || ':' || r.content_hash, a.question_id, a.slot_json
+          FROM answers a JOIN responses r ON r.id = a.response_id;
+
+          INSERT OR IGNORE INTO revision_response_versions (revision_id, response_version_id)
+          SELECT rr.revision_id, r.id || ':' || r.content_hash
+          FROM revision_responses rr JOIN responses r ON r.id = rr.response_id;
+
+          PRAGMA user_version = 7;
+        `);
+      });
+      current = 7;
     }
   }
 }

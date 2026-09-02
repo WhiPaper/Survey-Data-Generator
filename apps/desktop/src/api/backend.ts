@@ -11,6 +11,7 @@ import {
   type BackendError,
   type ProjectSummaryView,
   type ProjectDetailView,
+  type ProjectsRefreshSourceResult,
   type BackendRpc,
   createRequest,
   parseRpcResult,
@@ -150,6 +151,35 @@ export const getProject = (
 ): Promise<ProjectDetailView | null> => callBackend("projects.get", { projectId }, backend);
 export const deleteProject = (projectId: string, backend?: BackendInvoker): Promise<{ ok: true }> =>
   callBackend("projects.delete", { projectId }, backend);
+
+export const refreshSource = (
+  projectId: string,
+  expectedTargetRevision: number,
+  operationId?: string,
+  backend?: BackendInvoker,
+): Promise<ProjectsRefreshSourceResult> =>
+  callBackend(
+    "projects.refreshSource",
+    { projectId, expectedTargetRevision, operationId },
+    backend,
+  );
+
+export const cancelRefreshSource = (
+  operationId: string,
+  backend?: BackendInvoker,
+): Promise<{ ok: true }> => callBackend("projects.refreshSource.cancel", { operationId }, backend);
+
+export const resolveMigrationIssue = (
+  projectId: string,
+  issueId: string,
+  resolution?: "acknowledge" | "remove_target",
+  backend?: BackendInvoker,
+): Promise<{ ok: true }> =>
+  callBackend(
+    "projects.resolveMigrationIssue",
+    { projectId, issueId, ...(resolution ? { resolution } : {}) },
+    backend,
+  );
 
 export const getTargets = (projectId: string, backend?: BackendInvoker) =>
   callBackend("targets.get", { projectId }, backend);

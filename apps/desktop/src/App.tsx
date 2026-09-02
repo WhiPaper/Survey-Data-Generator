@@ -25,6 +25,9 @@ import {
   updateTargets,
   checkTargetFeasibility,
   getRun,
+  refreshSource,
+  cancelRefreshSource,
+  resolveMigrationIssue,
 } from "./api/backend";
 
 export const sessionQueryKey = ["session.get"] as const;
@@ -546,6 +549,7 @@ export function App() {
     onSuccess: (result, variables) => {
       if (variables.sequence < appliedSaveSequence.current) return;
       appliedSaveSequence.current = variables.sequence;
+      if (result.revision < targetRevision.current) return;
       targetRevision.current = result.revision;
       if (JSON.stringify(targetForm.getValues()) === JSON.stringify(result.targets))
         targetForm.reset(result.targets as unknown as ProjectTargets);
@@ -560,6 +564,62 @@ export function App() {
     mutationFn: (operationId: string) => cancelSynthesis(operationId),
   });
 
+  const [refreshOperationId, setRefreshOperationId] = useState<string | undefined>(undefined);
+  const [refreshStatusMessage, setRefreshStatusMessage] = useState<string | undefined>(undefined);
+
+  const refreshMutation = useMutation({
+    mutationFn: async (projectId: string) => {
+      await flushTargets();
+      const opId = crypto.randomUUID();
+      setRefreshOperationId(opId);
+      return refreshSource(projectId, targetRevision.current, opId);
+    },
+    onSuccess: (result) => {
+      setRefreshOperationId(undefined);
+      if (result.status === "no_change") {
+        setRefreshStatusMessage("새로운 응답 또는 변경사항이 없습니다.");
+      } else {
+        targetRevision.current = result.targetRevision;
+        setRefreshStatusMessage(
+          `최신 응답을 반영했습니다 (추가 ${result.addedResponseCount}건, 변경 ${result.changedResponseCount}건, 삭제 ${result.removedResponseCount}건).`,
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+      if (selectedProjectId) {
+        void queryClient.invalidateQueries({ queryKey: ["projects.get", selectedProjectId] });
+        void queryClient.invalidateQueries({ queryKey: ["targets.get", selectedProjectId] });
+      }
+    },
+    onError: (error) => {
+      setRefreshOperationId(undefined);
+      if (error instanceof BackendClientError && error.backendError.code === "JOB_CANCELLED") {
+        setRefreshStatusMessage("가져오기를 취소했습니다.");
+      }
+    },
+  });
+
+  const cancelRefreshMutation = useMutation({
+    mutationFn: (operationId: string) => cancelRefreshSource(operationId),
+  });
+
+  const resolveIssueMutation = useMutation({
+    mutationFn: ({
+      projectId,
+      issueId,
+      resolution,
+    }: {
+      projectId: string;
+      issueId: string;
+      resolution?: "acknowledge" | "remove_target";
+    }) => resolveMigrationIssue(projectId, issueId, resolution),
+    onSuccess: () => {
+      if (selectedProjectId) {
+        void queryClient.invalidateQueries({ queryKey: ["projects.get", selectedProjectId] });
+        void queryClient.invalidateQueries({ queryKey: ["targets.get", selectedProjectId] });
+      }
+    },
+  });
+
   const importOperationId = importMutation.variables?.operationId;
   const synthesisOperationId = synthesisMutation.variables?.operationId;
   const authBusy =
@@ -569,7 +629,8 @@ export function App() {
     logoutMutation.isPending ||
     revokeMutation.isPending;
   const importBusy = importMutation.isPending || cancelMutation.isPending;
-  const busy = authBusy || importBusy;
+  const refreshBusy = refreshMutation.isPending || cancelRefreshMutation.isPending;
+  const busy = authBusy || importBusy || refreshBusy;
   const forms = (formsQuery.data?.pages ?? []).reduce<FormListItem[]>(
     (current, page) => mergeForms(current, page.items),
     [],
@@ -698,6 +759,29 @@ export function App() {
   };
   const handleCancelSynthesis = (): void => {
     if (synthesisOperationId !== undefined) cancelSynthesisMutation.mutate(synthesisOperationId);
+  };
+  const handleRefreshSource = (): void => {
+    if (selectedProjectId === null) return;
+    const currentDraft = draftTargets as ProjectTargets;
+    if (
+      !Number.isInteger(currentDraft.targetResponseCount) ||
+      currentDraft.targetResponseCount < 0
+    ) {
+      setRefreshStatusMessage("목표 설정에 오류가 있어 최신 응답을 가져올 수 없습니다.");
+      return;
+    }
+    setRefreshStatusMessage(undefined);
+    refreshMutation.mutate(selectedProjectId);
+  };
+  const handleCancelRefresh = (): void => {
+    if (refreshOperationId !== undefined) cancelRefreshMutation.mutate(refreshOperationId);
+  };
+  const handleResolveIssue = (
+    issueId: string,
+    resolution: "acknowledge" | "remove_target",
+  ): void => {
+    if (selectedProjectId === null) return;
+    resolveIssueMutation.mutate({ projectId: selectedProjectId, issueId, resolution });
   };
 
   if (sessionQuery.isPending) {
@@ -852,101 +936,174 @@ export function App() {
             </li>
           ))}
         </ul>
-        {projectQuery.data !== undefined && projectQuery.data !== null && (
-          <div aria-live="polite">
-            <p className="project-title">{projectQuery.data.name}</p>
-            {targetsQuery.isPending && <p>불러오는 중…</p>}
-            {targetsQuery.error !== null && targetsQuery.error !== undefined && (
-              <p role="alert">{errorMessage(targetsQuery.error)}</p>
-            )}
-            {targetsQuery.data !== undefined && (
-              <TargetEditor
-                form={projectQuery.data.form as unknown as FormSnapshot}
-                sourceCount={projectQuery.data.responseCount}
-                targets={draftTargets as unknown as ProjectTargets}
-                profiles={projectQuery.data.profiles}
-                onChange={(targets) => targetForm.reset(targets, { keepDirty: true })}
-                onGenerate={handleGenerate}
-                disabled={
-                  synthesisMutation.isPending ||
-                  targetUpdateMutation.isPending ||
-                  feasibilityMutation.data?.status === "infeasible"
-                }
-                error={
-                  targetUpdateMutation.error !== null && targetUpdateMutation.error !== undefined
-                    ? errorMessage(targetUpdateMutation.error)
-                    : feasibilityMutation.data?.issues.length
-                      ? feasibilityMutation.data.issues.map((issue) => issue.message).join(" ")
-                      : undefined
-                }
-              />
-            )}
-            {completedRun !== null && (
-              <section className="result-summary" aria-labelledby="result-title">
-                <h3 id="result-title">{projectQuery.data.name}</h3>
-                <p>
-                  {completedRun.syntheticCount}명 증강 (최종 {completedRun.count}명)
-                </p>
-                {runQuery.data !== undefined && (
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>목표</th>
-                        <th>결과</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(
-                        (runQuery.data.validation.metrics as
-                          | Array<{
-                              requested: { kind: string; value?: number };
-                              actual: number | null;
-                            }>
-                          | undefined) ?? []
-                      ).map((metric, index) => (
-                        <tr key={index}>
-                          <td>{metric.requested.value ?? "-"}</td>
-                          <td>{metric.actual ?? "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+        {projectQuery.data !== undefined &&
+          projectQuery.data !== null &&
+          (() => {
+            const migrationIssues =
+              projectQuery.data.migrationIssues ?? targetsQuery.data?.issues ?? [];
+            const hasBlockingIssues = migrationIssues.some(
+              (issue) => issue.severity === "blocking",
+            );
+
+            return (
+              <div aria-live="polite">
+                <div className="project-header">
+                  <p className="project-title">{projectQuery.data.name}</p>
+                  <button
+                    type="button"
+                    onClick={handleRefreshSource}
+                    disabled={busy || refreshMutation.isPending || hasBlockingIssues}
+                  >
+                    새 응답 가져오기
+                  </button>
+                </div>
+                {refreshMutation.isPending && (
+                  <div role="status">
+                    <p>설문지 구조 및 응답을 가져오는 중…</p>
+                    <button
+                      type="button"
+                      onClick={handleCancelRefresh}
+                      disabled={cancelRefreshMutation.isPending}
+                    >
+                      가져오기 취소
+                    </button>
+                  </div>
                 )}
-                <button
-                  type="button"
-                  onClick={handleGenerate}
-                  disabled={synthesisMutation.isPending}
-                >
-                  결과 다시 만들기
-                </button>
-              </section>
-            )}
-            {synthesisMutation.isPending && (
-              <button
-                type="button"
-                onClick={handleCancelSynthesis}
-                disabled={cancelSynthesisMutation.isPending}
-              >
-                생성 취소
-              </button>
-            )}
-            {synthesisMutation.data?.status === "success" && (
-              <p role="status">
-                {synthesisMutation.data.syntheticResponseCount}명 증강 (최종{" "}
-                {synthesisMutation.data.finalResponseCount}명)
-              </p>
-            )}
-            {synthesisMutation.data !== undefined &&
-              synthesisMutation.data.status !== "success" && (
-                <p role="alert">
-                  {synthesisMutation.data.issues.map((issue) => issue.message).join(" ")}
-                </p>
-              )}
-            {synthesisMutation.error !== null && (
-              <p role="alert">{errorMessage(synthesisMutation.error)}</p>
-            )}
-          </div>
-        )}
+                {refreshStatusMessage && <p role="status">{refreshStatusMessage}</p>}
+                {migrationIssues.length > 0 && (
+                  <div role="alert" className="migration-issues-banner">
+                    <h3>목표 확인이 필요합니다</h3>
+                    <ul>
+                      {migrationIssues.map((issue) => (
+                        <li key={issue.id}>
+                          <span>{issue.message}</span>
+                          {issue.severity === "blocking" ? (
+                            <>
+                              <strong> (해결 필요)</strong>
+                              <button
+                                type="button"
+                                onClick={() => handleResolveIssue(issue.id, "remove_target")}
+                                disabled={resolveIssueMutation.isPending}
+                              >
+                                목표 제거
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span> (참고)</span>
+                              <button
+                                type="button"
+                                onClick={() => handleResolveIssue(issue.id, "acknowledge")}
+                                disabled={resolveIssueMutation.isPending}
+                              >
+                                확인
+                              </button>
+                            </>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {targetsQuery.isPending && <p>불러오는 중…</p>}
+                {targetsQuery.error !== null && targetsQuery.error !== undefined && (
+                  <p role="alert">{errorMessage(targetsQuery.error)}</p>
+                )}
+                {targetsQuery.data !== undefined && (
+                  <TargetEditor
+                    form={projectQuery.data.form as unknown as FormSnapshot}
+                    sourceCount={projectQuery.data.responseCount}
+                    targets={draftTargets as unknown as ProjectTargets}
+                    profiles={projectQuery.data.profiles}
+                    onChange={(targets) => targetForm.reset(targets, { keepDirty: true })}
+                    onGenerate={handleGenerate}
+                    disabled={
+                      synthesisMutation.isPending ||
+                      targetUpdateMutation.isPending ||
+                      feasibilityMutation.data?.status === "infeasible" ||
+                      hasBlockingIssues
+                    }
+                    error={
+                      targetUpdateMutation.error !== null &&
+                      targetUpdateMutation.error !== undefined
+                        ? errorMessage(targetUpdateMutation.error)
+                        : hasBlockingIssues
+                          ? "해결되지 않은 목표 변경사항이 있어 생성을 진행할 수 없습니다."
+                          : feasibilityMutation.data?.issues.length
+                            ? feasibilityMutation.data.issues
+                                .map((issue) => issue.message)
+                                .join(" ")
+                            : undefined
+                    }
+                  />
+                )}
+                {completedRun !== null && (
+                  <section className="result-summary" aria-labelledby="result-title">
+                    <h3 id="result-title">{projectQuery.data.name}</h3>
+                    <p>
+                      {completedRun.syntheticCount}명 증강 (최종 {completedRun.count}명)
+                    </p>
+                    {runQuery.data !== undefined && (
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>목표</th>
+                            <th>결과</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(
+                            (runQuery.data.validation.metrics as
+                              | Array<{
+                                  requested: { kind: string; value?: number };
+                                  actual: number | null;
+                                }>
+                              | undefined) ?? []
+                          ).map((metric, index) => (
+                            <tr key={index}>
+                              <td>{metric.requested.value ?? "-"}</td>
+                              <td>{metric.actual ?? "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleGenerate}
+                      disabled={synthesisMutation.isPending}
+                    >
+                      결과 다시 만들기
+                    </button>
+                  </section>
+                )}
+                {synthesisMutation.isPending && (
+                  <button
+                    type="button"
+                    onClick={handleCancelSynthesis}
+                    disabled={cancelSynthesisMutation.isPending}
+                  >
+                    생성 취소
+                  </button>
+                )}
+                {synthesisMutation.data?.status === "success" && (
+                  <p role="status">
+                    {synthesisMutation.data.syntheticResponseCount}명 증강 (최종{" "}
+                    {synthesisMutation.data.finalResponseCount}명)
+                  </p>
+                )}
+                {synthesisMutation.data !== undefined &&
+                  synthesisMutation.data.status !== "success" && (
+                    <p role="alert">
+                      {synthesisMutation.data.issues.map((issue) => issue.message).join(" ")}
+                    </p>
+                  )}
+                {synthesisMutation.error !== null && (
+                  <p role="alert">{errorMessage(synthesisMutation.error)}</p>
+                )}
+              </div>
+            );
+          })()}
       </section>
     </main>
   );

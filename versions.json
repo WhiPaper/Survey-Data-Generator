@@ -1,7 +1,7 @@
 {
   "appVersion": "0.1.0",
   "protocolVersion": 1,
-  "databaseSchemaVersion": 6,
+  "databaseSchemaVersion": 7,
   "domainSchemaVersion": 2,
   "engineVersion": 2,
   "profilerVersion": 1

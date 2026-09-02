@@ -9,6 +9,9 @@ import {
   FormsListParamsSchema,
   ProjectsDeleteParamsSchema,
   ProjectsGetParamsSchema,
+  ProjectsRefreshSourceCancelParamsSchema,
+  ProjectsRefreshSourceParamsSchema,
+  ProjectsResolveMigrationIssueParamsSchema,
   TargetsGetParamsSchema,
   TargetsUpdateParamsSchema,
   TargetsCheckFeasibilityParamsSchema,
@@ -38,6 +41,7 @@ import { stderrLogger } from "./rpc/logger.js";
 import { createSidecarServer } from "./rpc/server.js";
 import { ProjectDatabase, ProjectRepository, defaultDatabasePath } from "./persistence/index.js";
 import { SynthesisJobs } from "./application/synthesis-jobs.js";
+import { RefreshService } from "./application/refresh-service.js";
 import { sidecarError } from "./errors.js";
 
 const hostClient = createHostCapabilityClient(process.stdout);
@@ -68,6 +72,7 @@ const auth = new GoogleAuthServiceImpl({
 let database: Promise<ProjectDatabase | null> = Promise.resolve(null);
 let projects: Promise<ProjectRepository | null> = Promise.resolve(null);
 let synthesisJobs: Promise<SynthesisJobs | null> = Promise.resolve(null);
+let refreshService: Promise<RefreshService | null> = Promise.resolve(null);
 
 const server = createSidecarServer({
   input: process.stdin,
@@ -95,6 +100,25 @@ const server = createSidecarServer({
       (await projects)?.delete(ProjectsDeleteParamsSchema.parse(params).projectId as never);
       return authActionResult();
     },
+    "projects.refreshSource": async (params) => {
+      const input = ProjectsRefreshSourceParamsSchema.parse(params);
+      const service = await refreshService;
+      if (service === null) throw new Error("Refresh service unavailable");
+      return service.refreshSource(input);
+    },
+    "projects.refreshSource.cancel": async (params) => {
+      const input = ProjectsRefreshSourceCancelParamsSchema.parse(params);
+      const service = await refreshService;
+      if (service) service.cancel(input.operationId);
+      return authActionResult();
+    },
+    "projects.resolveMigrationIssue": async (params) => {
+      const input = ProjectsResolveMigrationIssueParamsSchema.parse(params);
+      const repository = await projects;
+      if (repository === null) throw new Error("Project database unavailable");
+      repository.resolveMigrationIssue(input.projectId as never, input.issueId);
+      return authActionResult();
+    },
     "targets.get": async (params) => {
       const input = TargetsGetParamsSchema.parse(params);
       const repository = await projects;
@@ -115,6 +139,14 @@ const server = createSidecarServer({
       const input = TargetsCheckFeasibilityParamsSchema.parse(params);
       const repository = await projects;
       if (repository === null) throw new Error("Project database unavailable");
+      const migrationIssues = repository.getMigrationIssues(input.projectId as never);
+      const blockingIssues = migrationIssues.filter((i) => i.severity === "blocking");
+      if (blockingIssues.length > 0) {
+        return {
+          status: "infeasible",
+          issues: blockingIssues.map((i) => ({ code: i.code, message: i.message })),
+        };
+      }
       const source = repository.loadSynthesisSource(input.projectId as never);
       if (source === null)
         throw sidecarError("NOT_FOUND", "Project source revision is unavailable", true);
@@ -136,6 +168,14 @@ const server = createSidecarServer({
       const input = SynthesisStartParamsSchema.parse(params);
       const repository = await projects;
       if (repository === null) throw new Error("Project database unavailable");
+      const migrationIssues = repository.getMigrationIssues(input.projectId as never);
+      const blockingIssues = migrationIssues.filter((i) => i.severity === "blocking");
+      if (blockingIssues.length > 0) {
+        return {
+          status: "infeasible" as const,
+          issues: blockingIssues.map((i) => ({ code: i.code, message: i.message })),
+        };
+      }
       const targetState = repository.getTargets(input.projectId as never);
       if (input.targetRevision !== undefined && input.targetRevision !== targetState.revision)
         throw sidecarError(
@@ -256,6 +296,11 @@ database =
 projects = database.then((db) => (db === null ? null : new ProjectRepository(db)));
 synthesisJobs = projects.then((repository) =>
   repository === null ? null : new SynthesisJobs(repository),
+);
+refreshService = projects.then((repository) =>
+  repository === null
+    ? null
+    : new RefreshService({ projectRepository: repository, formImportService: forms }),
 );
 void database.catch(() => {
   stderrLogger.error("sidecar_startup_failed", { errorCode: "BACKEND_UNAVAILABLE" });

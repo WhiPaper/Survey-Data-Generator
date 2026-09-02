@@ -38,7 +38,7 @@ describe("encrypted project database", () => {
       reopened.prepare<{ name: string }>("SELECT name FROM projects WHERE id='p'").get(),
     ).toEqual({ name: "marker" });
     expect(reopened.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 6,
+      user_version: 7,
     });
     reopened.close();
     const wrong = new TestSecrets();
@@ -64,7 +64,7 @@ describe("encrypted project database", () => {
       .map((column) => column.name);
     expect(columns).toContain("target_revision");
     expect(migrated.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 6,
+      user_version: 7,
     });
     migrated.close();
     await rm(directory, { recursive: true, force: true });
@@ -270,6 +270,7 @@ describe("encrypted project database", () => {
         targetSnapshot: { targetResponseCount: 2, questionTargets: [] },
         finalResponseCount: 2,
         targetRevision: 3,
+        appVersion: "0.1.0",
       });
       expect(
         db.prepare<{ count: number }>("SELECT COUNT(*) AS count FROM synthesis_runs").get(),
@@ -279,5 +280,87 @@ describe("encrypted project database", () => {
       ).toEqual({ count: 1 });
     }
     db.close();
+  });
+
+  it("migrates pre-v7 database backfilling response_versions and revision_response_versions", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "survey-synth-v7-backfill-"));
+    const path = join(directory, "projects.db");
+    const secrets = new TestSecrets();
+
+    // 1. Create a DB at user_version = 6 with pre-v7 schema
+    const rawDb = await ProjectDatabase.open(path, secrets);
+    rawDb.transaction(() => {
+      // Revert user_version to 6 and drop v7 tables
+      rawDb.prepare("DROP TABLE IF EXISTS revision_response_versions").run();
+      rawDb.prepare("DROP TABLE IF EXISTS response_version_answers").run();
+      rawDb.prepare("DROP TABLE IF EXISTS response_versions").run();
+      rawDb.prepare("DROP TABLE IF EXISTS target_migration_issues").run();
+      rawDb.prepare("DROP TABLE IF EXISTS semantic_overrides").run();
+      rawDb.prepare("PRAGMA user_version = 6").run();
+
+      // Insert mock pre-v7 records
+      rawDb
+        .prepare(
+          "INSERT INTO projects VALUES ('p-v6','acc','f1','V6 Project','rev-1','2026-01-01','2026-01-01')",
+        )
+        .run();
+      rawDb
+        .prepare(
+          'INSERT INTO form_snapshots VALUES (\'snap-1\',\'f1\',\'hash\',\'2026-01-01\',\'{"formId":"f1","title":"V6 Form","schemaHash":"hash","capturedAt":"2026-01-01","sections":[],"questions":[{"id":"q1","title":"Q1","sectionId":"s1","required":false,"affectsNavigation":false,"kind":"single_choice","presentation":"radio","options":[{"key":"opt-1","label":"Yes"}],"shuffle":false}],"groups":[],"logic":{"entrySectionId":"s1","sections":[],"transitions":[],"coverage":"none","hasRestartFlow":false}}\')',
+        )
+        .run();
+      rawDb
+        .prepare(
+          "INSERT INTO source_revisions VALUES ('rev-1','p-v6','snap-1',1,'hash','hash','2026-01-01','2026-01-01',NULL)",
+        )
+        .run();
+      rawDb
+        .prepare(
+          "INSERT INTO responses VALUES ('resp-v6','2026-01-01','2026-01-01','hash-v6','original','{}')",
+        )
+        .run();
+      rawDb.prepare("INSERT INTO revision_responses VALUES ('rev-1','resp-v6')").run();
+      rawDb
+        .prepare(
+          'INSERT INTO answers VALUES (\'resp-v6\',\'q1\',\'{"state":"answered","value":{"kind":"single_choice","optionKey":"opt-1","label":"Yes"}}\')',
+        )
+        .run();
+    });
+    rawDb.close();
+
+    // 2. Reopen DB - will trigger v7 migration
+    const migratedDb = await ProjectDatabase.open(path, secrets);
+    expect(migratedDb.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
+      user_version: 7,
+    });
+
+    // 3. Verify backfilled records
+    const vRows = migratedDb
+      .prepare<{ id: string; response_id: string }>("SELECT id, response_id FROM response_versions")
+      .all();
+    expect(vRows).toHaveLength(1);
+    expect(vRows[0]?.response_id).toBe("resp-v6");
+
+    const rrvRows = migratedDb
+      .prepare<{ revision_id: string; response_version_id: string }>(
+        "SELECT revision_id, response_version_id FROM revision_response_versions",
+      )
+      .all();
+    expect(rrvRows).toHaveLength(1);
+    expect(rrvRows[0]?.revision_id).toBe("rev-1");
+
+    // 4. Verify ProjectRepository loads historical source via version tables
+    const repo = new ProjectRepository(migratedDb);
+    const source = repo.loadSynthesisSource("p-v6" as never, "rev-1" as never);
+    expect(source).not.toBeNull();
+    expect(source!.responses).toHaveLength(1);
+    expect(source!.responses[0]!.responseId).toBe("resp-v6");
+    expect(source!.responses[0]!.answers["q1"]).toMatchObject({
+      state: "answered",
+      value: { label: "Yes" },
+    });
+
+    migratedDb.close();
+    await rm(directory, { recursive: true, force: true });
   });
 });

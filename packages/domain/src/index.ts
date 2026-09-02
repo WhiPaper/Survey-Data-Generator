@@ -428,3 +428,5 @@ export const resolveResponsePath = (
   }
   return { questions, confidence };
 };
+
+export * from "./migration.js";

@@ -11,6 +11,8 @@ import {
   login,
   logout,
   pingBackend,
+  refreshSource,
+  resolveMigrationIssue,
   revokeAccess,
   switchAccount,
 } from "../src/api/backend";
@@ -140,5 +142,39 @@ describe("typed desktop backend client", () => {
       responseCount: 2,
     });
     expect(invoke).toHaveBeenCalledTimes(3);
+  });
+
+  it("passes expectedTargetRevision on refreshSource and resolution on resolveMigrationIssue", async () => {
+    const invoke = vi.fn(async (_command: string, args?: Record<string, unknown>) => {
+      const request = parseRpcRequest(JSON.parse(String(args?.request)) as unknown);
+      if (request.method === "projects.refreshSource") {
+        expect(request.params).toMatchObject({
+          projectId: "proj-1",
+          expectedTargetRevision: 3,
+        });
+        return {
+          status: "no_change",
+          sourceRevisionId: "rev-1",
+          sourceResponseCount: 10,
+        };
+      }
+      if (request.method === "projects.resolveMigrationIssue") {
+        expect(request.params).toMatchObject({
+          projectId: "proj-1",
+          issueId: "iss-1",
+          resolution: "remove_target",
+        });
+        return { ok: true };
+      }
+      throw new Error(`Unexpected method ${request.method}`);
+    });
+
+    await expect(refreshSource("proj-1", 3, undefined, { invoke })).resolves.toMatchObject({
+      status: "no_change",
+    });
+    await expect(
+      resolveMigrationIssue("proj-1", "iss-1", "remove_target", { invoke }),
+    ).resolves.toEqual({ ok: true });
+    expect(invoke).toHaveBeenCalledTimes(2);
   });
 });
