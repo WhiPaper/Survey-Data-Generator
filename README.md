@@ -13,10 +13,25 @@ Requirements: Node.js, pnpm, and Rust.
 ```text
 pnpm install
 pnpm check
+pnpm tauri dev
 ```
 
 The sidecar uses local Node tooling in M0. Its production replacement is staged through
 `src-tauri/binaries/` without changing the NDJSON protocol.
+
+### Google OAuth development configuration
+
+By default, development reads `google_oauth.local.json` from the repository root. To
+override it for the current PowerShell session:
+
+```powershell
+$env:SURVEY_SYNTH_GOOGLE_OAUTH_CONFIG = "$PWD\google_oauth.local.json"
+pnpm tauri dev
+```
+
+Alternatively, set `SURVEY_SYNTH_GOOGLE_CLIENT_ID` and, when required,
+`SURVEY_SYNTH_GOOGLE_CLIENT_SECRET` in the environment before starting Tauri. Do not
+commit credentials or place them in frontend-exposed Vite variables.
 
 ## Google authentication
 

@@ -18,11 +18,11 @@
     "test:typescript": "pnpm run build:packages && pnpm --filter @survey-synth/contracts test && pnpm --filter @survey-synth/synthesis-core test && pnpm --filter @survey-synth/sidecar test && pnpm --filter @survey-synth/desktop test && pnpm run test:integration",
     "rust:check": "cargo check --workspace && cargo clippy --workspace --all-targets -- -D warnings",
     "build:sidecar": "pnpm run build:packages && pnpm --filter @survey-synth/sidecar build",
-    "test:integration": "pnpm run build:sidecar && pnpm exec vitest run tests/integration",
-    "tauri:dev": "node scripts/tauri-dev.mjs"
+    "test:integration": "pnpm run build:sidecar && pnpm exec vitest run tests/integration"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
+    "@tauri-apps/cli": "^2.11.4",
     "@survey-synth/contracts": "workspace:*",
     "@survey-synth/sidecar": "workspace:*",
     "@types/node": "^24.3.0",
