@@ -18,11 +18,22 @@ const EXPECTED_APP_VERSION: &str = env!("SURVEY_SYNTH_APPVERSION");
 const EXPECTED_PROTOCOL_VERSION_TEXT: &str = env!("SURVEY_SYNTH_PROTOCOLVERSION");
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+// Interactive OAuth may legitimately wait for user input for five minutes.
+// Keep only those RPCs bounded by the sidecar's OAuth timeout plus the
+// bounded token exchange and identity requests.
+const INTERACTIVE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(6 * 60);
 
 fn expected_protocol_version() -> u64 {
     EXPECTED_PROTOCOL_VERSION_TEXT
         .parse()
         .expect("shared protocolVersion must be an unsigned integer")
+}
+
+fn response_timeout(method: &str) -> Duration {
+    match method {
+        "auth.login" | "auth.addAccount" => INTERACTIVE_RESPONSE_TIMEOUT,
+        _ => RESPONSE_TIMEOUT,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -182,6 +193,11 @@ impl BackendBridge {
             .and_then(Value::as_str)
             .ok_or_else(|| BackendErrorDto::validation("Request id is missing"))?
             .to_owned();
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .ok_or_else(|| BackendErrorDto::validation("Request method is missing"))?
+            .to_owned();
         let encoded = serde_json::to_string(&request)
             .map_err(|_| BackendErrorDto::validation("Request cannot be encoded"))?;
 
@@ -226,7 +242,7 @@ impl BackendBridge {
             return Err(error);
         }
 
-        match receiver.recv_timeout(RESPONSE_TIMEOUT) {
+        match receiver.recv_timeout(response_timeout(&method)) {
             Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 remove_pending(&self.shared, &id);
@@ -676,7 +692,8 @@ fn startup_failure<T>(child: &mut Child, message: &str) -> Result<T, String> {
 mod tests {
     use super::{
         execute_host_request, expected_protocol_version, host_request_fields, open_external,
-        parse_transport_request, validate_ready, SecretStore, BASE64, EXPECTED_APP_VERSION,
+        parse_transport_request, response_timeout, validate_ready, SecretStore, BASE64,
+        EXPECTED_APP_VERSION, INTERACTIVE_RESPONSE_TIMEOUT, RESPONSE_TIMEOUT,
     };
     use base64::Engine as _;
     use serde_json::json;
@@ -719,6 +736,16 @@ mod tests {
         });
         assert!(parse_transport_request(&request.to_string()).is_ok());
         assert!(parse_transport_request(&json!({ "v": 99 }).to_string()).is_err());
+    }
+
+    #[test]
+    fn gives_interactive_auth_requests_a_bounded_longer_timeout() {
+        assert_eq!(response_timeout("auth.login"), INTERACTIVE_RESPONSE_TIMEOUT);
+        assert_eq!(
+            response_timeout("auth.addAccount"),
+            INTERACTIVE_RESPONSE_TIMEOUT
+        );
+        assert_eq!(response_timeout("system.ping"), RESPONSE_TIMEOUT);
     }
 
     #[test]
