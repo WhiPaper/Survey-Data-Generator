@@ -234,14 +234,6 @@ export const ProjectSummarySchema = z
   })
   .strict();
 export type ProjectSummaryView = z.infer<typeof ProjectSummarySchema>;
-export const ProjectDetailSchema = ProjectSummarySchema.extend({
-  profiles: z.array(z.record(z.string(), z.unknown())),
-  relationships: z.array(z.record(z.string(), z.unknown())),
-}).strict();
-export type ProjectDetailView = z.infer<typeof ProjectDetailSchema>;
-export const ProjectsListParamsSchema = z.object({}).strict();
-export const ProjectsGetParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
-export const ProjectsDeleteParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
 
 const TargetValueSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("count"), value: z.number().int().nonnegative() }).strict(),
@@ -286,10 +278,62 @@ export const ProjectTargetsSchema = z
     ),
   })
   .strict();
+export const TargetsGetParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
+export const TargetsGetResultSchema = z
+  .object({ revision: z.number().int().nonnegative(), targets: ProjectTargetsSchema })
+  .strict();
+export const TargetsUpdateParamsSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    expectedRevision: z.number().int().nonnegative(),
+    targets: ProjectTargetsSchema,
+  })
+  .strict();
+export type TargetsUpdateParams = z.infer<typeof TargetsUpdateParamsSchema>;
+export type TargetsGetResult = z.infer<typeof TargetsGetResultSchema>;
+export const TargetsCheckFeasibilityParamsSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    targets: ProjectTargetsSchema,
+  })
+  .strict();
+export const TargetsCheckFeasibilityResultSchema = z
+  .object({
+    status: z.enum(["feasible", "infeasible", "unknown"]),
+    issues: z.array(z.object({ code: z.string(), message: z.string() }).strict()),
+  })
+  .strict();
+export type TargetsCheckFeasibilityResult = z.infer<typeof TargetsCheckFeasibilityResultSchema>;
+export const RunsGetParamsSchema = z.object({ runId: z.string().min(1) }).strict();
+export const RunsGetResultSchema = z
+  .object({
+    runId: z.string().min(1),
+    projectId: ProjectIdSchema,
+    sourceRevisionId: z.string().min(1),
+    targetSnapshot: ProjectTargetsSchema,
+    validation: z.record(z.string(), z.unknown()),
+    finalResponseCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type RunsGetResult = z.infer<typeof RunsGetResultSchema>;
+
+export const ProjectDetailSchema = ProjectSummarySchema.extend({
+  form: z.record(z.string(), z.unknown()),
+  targets: ProjectTargetsSchema,
+  targetRevision: z.number().int().nonnegative(),
+  profiles: z.array(z.record(z.string(), z.unknown())),
+  relationships: z.array(z.record(z.string(), z.unknown())),
+}).strict();
+export type ProjectDetailView = z.infer<typeof ProjectDetailSchema>;
+export const ProjectsListParamsSchema = z.object({}).strict();
+export const ProjectsGetParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
+export const ProjectsDeleteParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
+
 export const SynthesisStartParamsSchema = z
   .object({
     projectId: ProjectIdSchema,
     targets: ProjectTargetsSchema,
+    targetRevision: z.number().int().nonnegative().optional(),
     seed: z.number().int(),
     operationId: z.string().min(1).max(200).optional(),
   })
@@ -302,6 +346,7 @@ export const SynthesisStartResultSchema = z.discriminatedUnion("status", [
     .object({
       status: z.literal("success"),
       runId: z.string().min(1),
+      syntheticResponseCount: z.number().int().nonnegative(),
       finalResponseCount: z.number().int().nonnegative(),
     })
     .strict(),
@@ -434,6 +479,13 @@ export interface BackendRpc {
     input: z.infer<typeof ProjectsDeleteParamsSchema>;
     output: AuthActionResult;
   };
+  "targets.get": { input: z.infer<typeof TargetsGetParamsSchema>; output: TargetsGetResult };
+  "targets.update": { input: TargetsUpdateParams; output: TargetsGetResult };
+  "targets.checkFeasibility": {
+    input: z.infer<typeof TargetsCheckFeasibilityParamsSchema>;
+    output: TargetsCheckFeasibilityResult;
+  };
+  "runs.get": { input: z.infer<typeof RunsGetParamsSchema>; output: RunsGetResult };
   "synthesis.start": {
     input: SynthesisStartParams;
     output: SynthesisStartResult;
@@ -462,6 +514,10 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "projects.list": z.array(ProjectSummarySchema),
   "projects.get": ProjectDetailSchema.nullable(),
   "projects.delete": AuthActionResultSchema,
+  "targets.get": TargetsGetResultSchema,
+  "targets.update": TargetsGetResultSchema,
+  "targets.checkFeasibility": TargetsCheckFeasibilityResultSchema,
+  "runs.get": RunsGetResultSchema,
   "synthesis.start": SynthesisStartResultSchema,
   "synthesis.cancel": AuthActionResultSchema,
 };
@@ -497,6 +553,14 @@ const parseKnownParams = (method: string, params: unknown): void => {
     ProjectsGetParamsSchema.parse(params);
   } else if (method === "projects.delete") {
     ProjectsDeleteParamsSchema.parse(params);
+  } else if (method === "targets.get") {
+    TargetsGetParamsSchema.parse(params);
+  } else if (method === "targets.update") {
+    TargetsUpdateParamsSchema.parse(params);
+  } else if (method === "targets.checkFeasibility") {
+    TargetsCheckFeasibilityParamsSchema.parse(params);
+  } else if (method === "runs.get") {
+    RunsGetParamsSchema.parse(params);
   } else if (method === "synthesis.start") {
     SynthesisStartParamsSchema.parse(params);
   } else if (method === "synthesis.cancel") {

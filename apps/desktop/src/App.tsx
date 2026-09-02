@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useForm, useWatch } from "react-hook-form";
 
 import type { FormId, FormListItem, GoogleAccountId, SessionView } from "@survey-synth/contracts";
-import type { ProjectTargets } from "@survey-synth/domain";
+import type { FormSnapshot, ProjectTargets, QuestionTarget } from "@survey-synth/domain";
 
 import {
   BackendClientError,
@@ -20,6 +21,10 @@ import {
   switchAccount,
   cancelSynthesis,
   startSynthesis,
+  getTargets,
+  updateTargets,
+  checkTargetFeasibility,
+  getRun,
 } from "./api/backend";
 
 export const sessionQueryKey = ["session.get"] as const;
@@ -61,14 +66,351 @@ const useDebouncedValue = (value: string, delayMs: number): string => {
   return debounced;
 };
 
+type ProjectEditorProps = {
+  form: FormSnapshot;
+  sourceCount: number;
+  targets: ProjectTargets;
+  onChange: (targets: ProjectTargets) => void;
+  onGenerate: () => void;
+  disabled: boolean;
+  error?: string;
+};
+
+const profileFor = (profiles: readonly Record<string, unknown>[], questionId: string) =>
+  profiles.find((profile) => profile.questionId === questionId);
+
+const isNumericText = (profiles: readonly Record<string, unknown>[], questionId: string): boolean =>
+  (profileFor(profiles, questionId)?.semanticInference as { inferred?: string } | undefined)
+    ?.inferred === "numeric";
+
+const TargetEditor = ({
+  form,
+  sourceCount,
+  targets,
+  onChange,
+  onGenerate,
+  disabled,
+  error,
+  profiles = [],
+}: ProjectEditorProps & { profiles?: readonly Record<string, unknown>[] }) => {
+  const [selectedQuestionId, setSelectedQuestionId] = useState("");
+  const [unit, setUnit] = useState<"ratio" | "count">("ratio");
+  const adjustableQuestions = form.questions.filter(
+    (question) =>
+      question.kind === "single_choice" ||
+      question.kind === "ordinal" ||
+      (question.kind === "text" && isNumericText(profiles, question.id)),
+  );
+  const targetFor = (questionId: string) =>
+    targets.questionTargets.filter((target) => target.questionId === questionId);
+  const addQuestion = (questionId: string) => {
+    if (questionId === "") return;
+    const question = form.questions.find((item) => item.id === questionId);
+    if (question?.kind === "single_choice" && question.options[0] !== undefined) {
+      onChange({
+        ...targets,
+        questionTargets: [
+          ...targets.questionTargets,
+          {
+            kind: "option",
+            questionId: question.id,
+            optionKey: question.options[0].key,
+            target: { kind: "ratio", value: 0.5 },
+          },
+        ],
+      });
+    } else if (question?.kind === "ordinal") {
+      onChange({
+        ...targets,
+        questionTargets: [
+          ...targets.questionTargets,
+          {
+            kind: "mean",
+            questionId: question.id,
+            target: { kind: "mean", value: (question.min + question.max) / 2 },
+          },
+        ],
+      });
+    } else if (question?.kind === "text" && isNumericText(profiles, question.id)) {
+      const mean =
+        (profileFor(profiles, question.id)?.numeric as { mean?: number } | undefined)?.mean ?? 0;
+      onChange({
+        ...targets,
+        questionTargets: [
+          ...targets.questionTargets,
+          { kind: "mean", questionId: question.id, target: { kind: "mean", value: mean } },
+        ],
+      });
+    }
+    setSelectedQuestionId("");
+  };
+  const removeQuestion = (questionId: string) =>
+    onChange({
+      ...targets,
+      questionTargets: targets.questionTargets.filter((target) => target.questionId !== questionId),
+    });
+  const updateTarget = (
+    questionId: string,
+    optionKey: string,
+    value: string,
+    semantic: "ratio" | "count",
+  ) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return;
+    const nextValue = semantic === "ratio" ? numeric / 100 : numeric;
+    const next = targets.questionTargets.map((target) =>
+      target.kind === "option" && target.questionId === questionId && target.optionKey === optionKey
+        ? { ...target, target: { kind: semantic, value: nextValue } }
+        : target,
+    );
+    onChange({ ...targets, questionTargets: next as QuestionTarget[] });
+  };
+  const updateMean = (questionId: string, value: string) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return;
+    const question = form.questions.find((item) => item.id === questionId);
+    if (question?.kind === "ordinal" && (numeric < question.min || numeric > question.max)) return;
+    onChange({
+      ...targets,
+      questionTargets: targets.questionTargets.map((target) =>
+        target.kind === "mean" && target.questionId === questionId
+          ? { ...target, target: { kind: "mean", value: numeric } }
+          : target,
+      ),
+    });
+  };
+  return (
+    <section className="target-editor" aria-labelledby="target-editor-title">
+      <div className="count-editor">
+        <span>{sourceCount} →</span>
+        <label>
+          <span className="visually-hidden">최종 응답 수</span>
+          <input
+            type="number"
+            min={sourceCount}
+            step="1"
+            value={Number.isNaN(targets.targetResponseCount) ? "" : targets.targetResponseCount}
+            onChange={(event) =>
+              onChange({
+                ...targets,
+                targetResponseCount: event.target.value === "" ? NaN : Number(event.target.value),
+              })
+            }
+            disabled={disabled}
+            aria-invalid={
+              targets.targetResponseCount < sourceCount ||
+              !Number.isInteger(targets.targetResponseCount)
+            }
+          />
+        </label>
+        <span>명</span>
+      </div>
+      <h3 id="target-editor-title">조정할 문항</h3>
+      <div className="question-picker">
+        <select
+          aria-label="조정할 문항 추가"
+          value={selectedQuestionId}
+          onChange={(event) => addQuestion(event.target.value)}
+          disabled={disabled}
+        >
+          <option value="">+ 문항 추가</option>
+          {adjustableQuestions
+            .filter((question) => targetFor(question.id).length === 0)
+            .map((question) => (
+              <option key={question.id} value={question.id}>
+                {question.title}
+              </option>
+            ))}
+        </select>
+      </div>
+      <div className="target-list">
+        {adjustableQuestions
+          .filter((question) => targetFor(question.id).length > 0)
+          .map((question) => {
+            const target = targetFor(question.id)[0];
+            if (target === undefined) return null;
+            if (question.kind === "single_choice" && target.kind === "option") {
+              const option = question.options.find((item) => item.key === target.optionKey);
+              if (option === undefined) return null;
+              const current = (
+                profileFor(profiles, question.id)?.choices as
+                  Record<string, { share: number }> | undefined
+              )?.[String(option.key)]?.share;
+              if (target.target.kind !== "ratio" && target.target.kind !== "count") return null;
+              const displayValue =
+                target.target.kind === "ratio" ? target.target.value * 100 : target.target.value;
+              const derived =
+                target.target.kind === "ratio"
+                  ? 1 - target.target.value
+                  : targets.targetResponseCount - target.target.value;
+              return (
+                <div className="target-row" key={question.id}>
+                  <div className="target-row-head">
+                    <strong>{question.title}</strong>
+                    <button
+                      type="button"
+                      onClick={() => removeQuestion(question.id)}
+                      aria-label={`${question.title} 목표 제거`}
+                      disabled={disabled}
+                    >
+                      제거
+                    </button>
+                  </div>
+                  <div className="unit-toggle" role="group" aria-label="표시 단위">
+                    <button
+                      type="button"
+                      aria-pressed={unit === "ratio"}
+                      onClick={() => setUnit("ratio")}
+                    >
+                      %
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={unit === "count"}
+                      onClick={() => setUnit("count")}
+                    >
+                      명
+                    </button>
+                  </div>
+                  <div className="choice-target">
+                    <span>{option.label}</span>
+                    <span className="muted">
+                      현재 {current === undefined ? "-" : `${Math.round(current * 100)}%`}
+                    </span>
+                    <label>
+                      <span className="visually-hidden">{option.label} 목표</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max={unit === "ratio" ? 100 : targets.targetResponseCount}
+                        step={unit === "ratio" ? 1 : 1}
+                        value={
+                          unit === "ratio"
+                            ? displayValue
+                            : target.target.kind === "ratio"
+                              ? Math.round((displayValue * targets.targetResponseCount) / 100)
+                              : displayValue
+                        }
+                        onChange={(event) =>
+                          updateTarget(question.id, String(option.key), event.target.value, unit)
+                        }
+                        disabled={disabled}
+                      />
+                      {unit === "ratio" ? "%" : "명"}
+                    </label>
+                    <span className="derived">
+                      ≈{" "}
+                      {unit === "ratio"
+                        ? `${Math.round(derived * 100)}%`
+                        : `${Math.round(target.target.kind === "ratio" ? target.target.value * targets.targetResponseCount : derived)}명`}
+                    </span>
+                  </div>
+                </div>
+              );
+            }
+            if (question.kind === "ordinal" && target.kind === "mean")
+              return (
+                <div className="target-row" key={question.id}>
+                  <div className="target-row-head">
+                    <strong>{question.title}</strong>
+                    <button
+                      type="button"
+                      onClick={() => removeQuestion(question.id)}
+                      aria-label={`${question.title} 목표 제거`}
+                      disabled={disabled}
+                    >
+                      제거
+                    </button>
+                  </div>
+                  <p className="muted">현재 평균</p>
+                  <label>
+                    목표 평균{" "}
+                    <input
+                      type="number"
+                      min={question.min}
+                      max={question.max}
+                      step="0.1"
+                      value={target.target.value}
+                      onChange={(event) => updateMean(question.id, event.target.value)}
+                      disabled={disabled}
+                    />
+                  </label>
+                </div>
+              );
+            if (
+              question.kind === "text" &&
+              target.kind === "mean" &&
+              isNumericText(profiles, question.id)
+            ) {
+              const current = (
+                profileFor(profiles, question.id)?.numeric as { mean?: number } | undefined
+              )?.mean;
+              return (
+                <div className="target-row" key={question.id}>
+                  <div className="target-row-head">
+                    <strong>{question.title}</strong>
+                    <button
+                      type="button"
+                      onClick={() => removeQuestion(question.id)}
+                      aria-label={`${question.title} 목표 제거`}
+                      disabled={disabled}
+                    >
+                      제거
+                    </button>
+                  </div>
+                  <p className="muted">
+                    현재 평균 {current === undefined ? "-" : current.toFixed(1)}
+                  </p>
+                  <label>
+                    목표 평균{" "}
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={target.target.value}
+                      onChange={(event) => updateMean(question.id, event.target.value)}
+                      disabled={disabled}
+                    />
+                  </label>
+                </div>
+              );
+            }
+            return null;
+          })}
+      </div>
+      {error !== undefined && <p role="alert">{error}</p>}
+      <button
+        type="button"
+        onClick={onGenerate}
+        disabled={
+          disabled ||
+          !Number.isInteger(targets.targetResponseCount) ||
+          targets.targetResponseCount < sourceCount
+        }
+      >
+        데이터 생성
+      </button>
+    </section>
+  );
+};
+
 export function App() {
   const queryClient = useQueryClient();
   const [formQuery, setFormQuery] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [finalResponseCount, setFinalResponseCount] = useState(0);
-  const [targetQuestionId, setTargetQuestionId] = useState("");
-  const [targetOptionKey, setTargetOptionKey] = useState("");
-  const [targetRatio, setTargetRatio] = useState("0.5");
+  const [completedRun, setCompletedRun] = useState<{
+    runId: string;
+    count: number;
+    syntheticCount: number;
+  } | null>(null);
+  const targetForm = useForm<ProjectTargets>({
+    defaultValues: { targetResponseCount: 0, questionTargets: [] },
+    mode: "onChange",
+  });
+  const draftTargets = useWatch({ control: targetForm.control });
+  const targetReady = useRef(false);
+  const targetRevision = useRef(0);
+  const saveSequence = useRef(0);
+  const appliedSaveSequence = useRef(0);
   const debouncedFormQuery = useDebouncedValue(formQuery, 250);
 
   const sessionQuery = useQuery({
@@ -87,6 +429,18 @@ export function App() {
     queryKey: ["projects.get", selectedProjectId],
     queryFn: () => getProject(selectedProjectId ?? ""),
     enabled: selectedProjectId !== null,
+    retry: false,
+  });
+  const targetsQuery = useQuery({
+    queryKey: ["targets.get", selectedProjectId],
+    queryFn: () => getTargets(selectedProjectId ?? ""),
+    enabled: selectedProjectId !== null,
+    retry: false,
+  });
+  const runQuery = useQuery({
+    queryKey: ["runs.get", completedRun?.runId],
+    queryFn: () => getRun(completedRun?.runId ?? ""),
+    enabled: completedRun !== null,
     retry: false,
   });
   const accountsQuery = useQuery({
@@ -162,7 +516,38 @@ export function App() {
       projectId: string;
       targets: ProjectTargets;
       operationId: string;
-    }) => startSynthesis(projectId, targets, 1, operationId),
+    }) => startSynthesis(projectId, targets, 1, operationId, undefined, targetRevision.current),
+    onSuccess: (result) => {
+      if (result.status !== "success" || selectedProjectId === null) return;
+      setCompletedRun({
+        runId: result.runId,
+        count: result.finalResponseCount,
+        syntheticCount: result.syntheticResponseCount,
+      });
+      window.history.pushState({}, "", `/projects/${selectedProjectId}/runs/${result.runId}`);
+    },
+  });
+  const targetUpdateMutation = useMutation({
+    mutationFn: ({
+      revision,
+      targets,
+    }: {
+      revision: number;
+      targets: ProjectTargets;
+      sequence: number;
+    }) => updateTargets(selectedProjectId ?? "", revision, targets),
+    onSuccess: (result, variables) => {
+      if (variables.sequence < appliedSaveSequence.current) return;
+      appliedSaveSequence.current = variables.sequence;
+      targetRevision.current = result.revision;
+      if (JSON.stringify(targetForm.getValues()) === JSON.stringify(result.targets))
+        targetForm.reset(result.targets as unknown as ProjectTargets);
+      void queryClient.invalidateQueries({ queryKey: ["targets.get", selectedProjectId] });
+    },
+  });
+  const feasibilityMutation = useMutation({
+    mutationFn: (targets: ProjectTargets) =>
+      checkTargetFeasibility(selectedProjectId ?? "", targets),
   });
   const cancelSynthesisMutation = useMutation({
     mutationFn: (operationId: string) => cancelSynthesis(operationId),
@@ -201,25 +586,72 @@ export function App() {
     cancelMutation.reset();
   }, [activeAccountId]);
 
+  useEffect(() => {
+    if (selectedProjectId === null || targetsQuery.data === undefined) return;
+    targetRevision.current = targetsQuery.data.revision;
+    targetForm.reset(targetsQuery.data.targets as unknown as ProjectTargets);
+    targetReady.current = true;
+  }, [selectedProjectId, targetsQuery.data, targetForm]);
+
+  useEffect(() => {
+    if (!targetReady.current || selectedProjectId === null) return;
+    const timer = window.setTimeout(() => {
+      const targets = draftTargets as ProjectTargets;
+      if (!Number.isInteger(targets.targetResponseCount) || targets.targetResponseCount < 0) return;
+      saveSequence.current += 1;
+      targetUpdateMutation.mutate({
+        revision: targetRevision.current,
+        targets,
+        sequence: saveSequence.current,
+      });
+      feasibilityMutation.mutate(targets);
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [draftTargets, selectedProjectId]);
+
+  useEffect(() => {
+    const flush = (): void => {
+      const targets = targetForm.getValues() as ProjectTargets;
+      if (selectedProjectId === null || !Number.isInteger(targets.targetResponseCount)) return;
+      void targetUpdateMutation.mutateAsync({
+        revision: targetRevision.current,
+        targets,
+        sequence: ++saveSequence.current,
+      });
+    };
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, [selectedProjectId, targetForm, targetUpdateMutation]);
+
+  const flushTargets = async (): Promise<void> => {
+    const targets = targetForm.getValues() as ProjectTargets;
+    if (selectedProjectId === null || !Number.isInteger(targets.targetResponseCount)) return;
+    await targetUpdateMutation.mutateAsync({
+      revision: targetRevision.current,
+      targets,
+      sequence: ++saveSequence.current,
+    });
+  };
+
   const handleLogin = (): void => {
     loginMutation.mutate();
   };
 
   const handleAddAccount = (): void => {
-    addAccountMutation.mutate();
+    void flushTargets().then(() => addAccountMutation.mutate());
   };
 
   const handleSwitchAccount = (id: GoogleAccountId): void => {
-    switchAccountMutation.mutate(id);
+    void flushTargets().then(() => switchAccountMutation.mutate(id));
   };
 
   const handleLogout = (): void => {
-    logoutMutation.mutate();
+    void flushTargets().then(() => logoutMutation.mutate());
   };
 
   const handleRevoke = (): void => {
     if (activeAccountId === null || !window.confirm("Google 접근 권한을 해제하시겠습니까?")) return;
-    revokeMutation.mutate(activeAccountId);
+    void flushTargets().then(() => revokeMutation.mutate(activeAccountId));
   };
 
   const handleImport = (formId: FormId): void => {
@@ -230,29 +662,32 @@ export function App() {
     if (importOperationId === undefined) return;
     cancelMutation.mutate(importOperationId);
   };
-  const handleGenerate = (): void => {
-    if (
-      selectedProjectId === null ||
-      !Number.isInteger(finalResponseCount) ||
-      finalResponseCount < 0
-    )
-      return;
-    const questionTargets =
-      targetQuestionId.trim() === "" || targetOptionKey.trim() === ""
-        ? []
-        : [
-            {
-              kind: "option" as const,
-              questionId: targetQuestionId.trim() as never,
-              optionKey: targetOptionKey.trim() as never,
-              target: { kind: "ratio" as const, value: Number(targetRatio) },
-            },
-          ];
-    synthesisMutation.mutate({
-      projectId: selectedProjectId,
-      targets: { targetResponseCount: finalResponseCount, questionTargets },
-      operationId: crypto.randomUUID(),
+  const handleProjectSelect = (projectId: string): void => {
+    void flushTargets().then(() => {
+      setCompletedRun(null);
+      setSelectedProjectId(projectId);
     });
+  };
+  const handleGenerate = (): void => {
+    if (selectedProjectId === null) return;
+    const targets = draftTargets as ProjectTargets;
+    if (!Number.isInteger(targets.targetResponseCount) || targets.targetResponseCount < 0) return;
+    saveSequence.current += 1;
+    targetUpdateMutation.mutate(
+      {
+        revision: targetRevision.current,
+        targets,
+        sequence: saveSequence.current,
+      },
+      {
+        onSuccess: (result) =>
+          synthesisMutation.mutate({
+            projectId: selectedProjectId,
+            targets: result.targets as unknown as ProjectTargets,
+            operationId: crypto.randomUUID(),
+          }),
+      },
+    );
   };
   const handleCancelSynthesis = (): void => {
     if (synthesisOperationId !== undefined) cancelSynthesisMutation.mutate(synthesisOperationId);
@@ -402,7 +837,7 @@ export function App() {
               <button
                 type="button"
                 className="project-item"
-                onClick={() => setSelectedProjectId(project.id)}
+                onClick={() => handleProjectSelect(project.id)}
               >
                 <span>{project.name}</span>
                 <span>{project.responseCount}개 응답</span>
@@ -412,55 +847,73 @@ export function App() {
         </ul>
         {projectQuery.data !== undefined && projectQuery.data !== null && (
           <div aria-live="polite">
-            <p>{projectQuery.data.name}</p>
-            <p>
-              질문 {projectQuery.data.questionCount}개 · 프로필 {projectQuery.data.profileCount}개 ·
-              로컬 저장됨
-            </p>
-            <label>
-              최종 응답 수
-              <input
-                type="number"
-                min="0"
-                value={finalResponseCount || projectQuery.data.responseCount}
-                onChange={(event) => setFinalResponseCount(Number(event.target.value))}
-                disabled={synthesisMutation.isPending}
+            <p className="project-title">{projectQuery.data.name}</p>
+            {targetsQuery.isPending && <p>불러오는 중…</p>}
+            {targetsQuery.error !== null && targetsQuery.error !== undefined && (
+              <p role="alert">{errorMessage(targetsQuery.error)}</p>
+            )}
+            {targetsQuery.data !== undefined && (
+              <TargetEditor
+                form={projectQuery.data.form as unknown as FormSnapshot}
+                sourceCount={projectQuery.data.responseCount}
+                targets={draftTargets as unknown as ProjectTargets}
+                profiles={projectQuery.data.profiles}
+                onChange={(targets) => targetForm.reset(targets, { keepDirty: true })}
+                onGenerate={handleGenerate}
+                disabled={
+                  synthesisMutation.isPending ||
+                  targetUpdateMutation.isPending ||
+                  feasibilityMutation.data?.status === "infeasible"
+                }
+                error={
+                  targetUpdateMutation.error !== null && targetUpdateMutation.error !== undefined
+                    ? errorMessage(targetUpdateMutation.error)
+                    : feasibilityMutation.data?.issues.length
+                      ? feasibilityMutation.data.issues.map((issue) => issue.message).join(" ")
+                      : undefined
+                }
               />
-            </label>
-            <details>
-              <summary>기본 비율 목표</summary>
-              <label>
-                질문 ID
-                <input
-                  value={targetQuestionId}
-                  onChange={(event) => setTargetQuestionId(event.target.value)}
+            )}
+            {completedRun !== null && (
+              <section className="result-summary" aria-labelledby="result-title">
+                <h3 id="result-title">{projectQuery.data.name}</h3>
+                <p>
+                  {completedRun.syntheticCount}명 증강 (최종 {completedRun.count}명)
+                </p>
+                {runQuery.data !== undefined && (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>목표</th>
+                        <th>결과</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(
+                        (runQuery.data.validation.metrics as
+                          | Array<{
+                              requested: { kind: string; value?: number };
+                              actual: number | null;
+                            }>
+                          | undefined) ?? []
+                      ).map((metric, index) => (
+                        <tr key={index}>
+                          <td>{metric.requested.value ?? "-"}</td>
+                          <td>{metric.actual ?? "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                <button
+                  type="button"
+                  onClick={handleGenerate}
                   disabled={synthesisMutation.isPending}
-                />
-              </label>
-              <label>
-                옵션 키
-                <input
-                  value={targetOptionKey}
-                  onChange={(event) => setTargetOptionKey(event.target.value)}
-                  disabled={synthesisMutation.isPending}
-                />
-              </label>
-              <label>
-                비율
-                <input
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={targetRatio}
-                  onChange={(event) => setTargetRatio(event.target.value)}
-                  disabled={synthesisMutation.isPending}
-                />
-              </label>
-            </details>
-            <button type="button" onClick={handleGenerate} disabled={synthesisMutation.isPending}>
-              생성
-            </button>
+                >
+                  결과 다시 만들기
+                </button>
+              </section>
+            )}
             {synthesisMutation.isPending && (
               <button
                 type="button"
@@ -471,7 +924,10 @@ export function App() {
               </button>
             )}
             {synthesisMutation.data?.status === "success" && (
-              <p role="status">{synthesisMutation.data.finalResponseCount}개 응답 생성</p>
+              <p role="status">
+                {synthesisMutation.data.syntheticResponseCount}명 증강 (최종{" "}
+                {synthesisMutation.data.finalResponseCount}명)
+              </p>
             )}
             {synthesisMutation.data !== undefined &&
               synthesisMutation.data.status !== "success" && (

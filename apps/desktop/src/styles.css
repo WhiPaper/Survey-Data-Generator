@@ -1,7 +1,7 @@
 :root {
   color: #1f2937;
-  font-family: system-ui, sans-serif;
-  background: #ffffff;
+  font-family: Georgia, "Times New Roman", serif;
+  background: #f7f5ef;
 }
 
 body {
@@ -9,9 +9,9 @@ body {
 }
 
 main {
-  max-width: 40rem;
-  margin: 4rem auto;
-  padding: 0 1.5rem;
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
 }
 
 h1 {
@@ -31,6 +31,133 @@ p {
 button {
   margin: 0.25rem 0;
   padding: 0.5rem 0.75rem;
+  border: 1px solid #c9c4b8;
+  border-radius: 3px;
+  background: #fffdf8;
+  color: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+input,
+select {
+  font: inherit;
+}
+.project-title {
+  margin: 2.5rem 0 1.5rem;
+  font-size: 1.5rem;
+  color: #20251f;
+}
+.target-editor {
+  display: grid;
+  gap: 1.1rem;
+  max-width: 38rem;
+}
+.count-editor {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-size: 1.15rem;
+}
+.count-editor input {
+  width: 7rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid #aaa497;
+  background: #fffdf8;
+  font-size: 1.2rem;
+}
+.target-editor h3 {
+  margin: 1.5rem 0 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.question-picker select {
+  padding: 0.45rem;
+  border: 0;
+  border-bottom: 1px solid #aaa497;
+  background: transparent;
+}
+.target-list {
+  display: grid;
+  gap: 1.25rem;
+}
+.target-row {
+  padding-top: 1rem;
+  border-top: 1px solid #d8d3c8;
+}
+.target-row-head,
+.choice-target,
+.unit-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.target-row-head {
+  justify-content: space-between;
+}
+.target-row-head button {
+  border: 0;
+  padding: 0.2rem;
+  background: transparent;
+  color: #756e63;
+  font-size: 0.8rem;
+}
+.unit-toggle {
+  justify-content: flex-end;
+  margin: -1.7rem 0 0.8rem;
+}
+.unit-toggle button {
+  padding: 0.2rem 0.45rem;
+  border: 0;
+  background: transparent;
+  color: #756e63;
+}
+.unit-toggle button[aria-pressed="true"] {
+  color: #20251f;
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+.choice-target {
+  flex-wrap: wrap;
+}
+.choice-target label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.choice-target input,
+.target-row label input {
+  width: 4.5rem;
+  padding: 0.3rem;
+  border: 1px solid #aaa497;
+  background: #fffdf8;
+}
+.muted,
+.derived {
+  color: #756e63;
+  font-size: 0.9rem;
+}
+.target-editor > button {
+  justify-self: end;
+  margin-top: 1rem;
+  background: #263b2d;
+  color: #fffdf8;
+  border-color: #263b2d;
+}
+.result-summary {
+  margin-top: 2.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid #d8d3c8;
+}
+.result-summary h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.result-summary p {
+  margin: 0.5rem 0 1rem;
 }
 
 summary {

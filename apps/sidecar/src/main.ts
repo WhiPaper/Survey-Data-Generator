@@ -9,9 +9,14 @@ import {
   FormsListParamsSchema,
   ProjectsDeleteParamsSchema,
   ProjectsGetParamsSchema,
+  TargetsGetParamsSchema,
+  TargetsUpdateParamsSchema,
+  TargetsCheckFeasibilityParamsSchema,
+  RunsGetParamsSchema,
   SynthesisCancelParamsSchema,
   SynthesisStartParamsSchema,
 } from "@survey-synth/contracts";
+import { checkFeasibility } from "@survey-synth/synthesis-core";
 
 import {
   FileGoogleAccountRepository,
@@ -33,6 +38,7 @@ import { stderrLogger } from "./rpc/logger.js";
 import { createSidecarServer } from "./rpc/server.js";
 import { ProjectDatabase, ProjectRepository, defaultDatabasePath } from "./persistence/index.js";
 import { SynthesisJobs } from "./application/synthesis-jobs.js";
+import { sidecarError } from "./errors.js";
 
 const hostClient = createHostCapabilityClient(process.stdout);
 const accountStatePath = process.env.SURVEY_SYNTH_ACCOUNT_STORE_PATH;
@@ -89,9 +95,54 @@ const server = createSidecarServer({
       (await projects)?.delete(ProjectsDeleteParamsSchema.parse(params).projectId as never);
       return authActionResult();
     },
+    "targets.get": async (params) => {
+      const input = TargetsGetParamsSchema.parse(params);
+      const repository = await projects;
+      if (repository === null) throw new Error("Project database unavailable");
+      return repository.getTargets(input.projectId as never);
+    },
+    "targets.update": async (params) => {
+      const input = TargetsUpdateParamsSchema.parse(params);
+      const repository = await projects;
+      if (repository === null) throw new Error("Project database unavailable");
+      return repository.updateTargets(
+        input.projectId as never,
+        input.expectedRevision,
+        input.targets as never,
+      );
+    },
+    "targets.checkFeasibility": async (params) => {
+      const input = TargetsCheckFeasibilityParamsSchema.parse(params);
+      const repository = await projects;
+      if (repository === null) throw new Error("Project database unavailable");
+      const source = repository.loadSynthesisSource(input.projectId as never);
+      if (source === null)
+        throw sidecarError("NOT_FOUND", "Project source revision is unavailable", true);
+      const report = checkFeasibility(source.form, source.responses, input.targets as never);
+      return {
+        status: report.status,
+        issues: report.issues.map((issue) => ({ code: issue.code, message: issue.message })),
+      };
+    },
+    "runs.get": async (params) => {
+      const input = RunsGetParamsSchema.parse(params);
+      const repository = await projects;
+      if (repository === null) throw new Error("Project database unavailable");
+      const run = repository.getRun(input.runId as never);
+      if (run === null) throw sidecarError("NOT_FOUND", "Run was not found", true);
+      return run;
+    },
     "synthesis.start": async (params) => {
       const input = SynthesisStartParamsSchema.parse(params);
       const repository = await projects;
+      if (repository === null) throw new Error("Project database unavailable");
+      const targetState = repository.getTargets(input.projectId as never);
+      if (input.targetRevision !== undefined && input.targetRevision !== targetState.revision)
+        throw sidecarError(
+          "TARGET_CONFLICT",
+          "Target revision changed before synthesis started",
+          true,
+        );
       const source = repository?.loadSynthesisSource(input.projectId as never) ?? null;
       if (source === null)
         return {
@@ -104,7 +155,7 @@ const server = createSidecarServer({
         input.operationId ?? randomUUID(),
         input.projectId,
         source,
-        input.targets as never,
+        targetState.targets,
         input.seed,
       );
       return "issues" in outcome
@@ -112,6 +163,7 @@ const server = createSidecarServer({
         : {
             status: "success" as const,
             runId: outcome.runId,
+            syntheticResponseCount: outcome.syntheticResponseCount,
             finalResponseCount: outcome.finalResponseCount,
           };
     },
@@ -162,8 +214,20 @@ const server = createSidecarServer({
         const session = forms.getImport(summary.importId);
         try {
           const repository = await projects;
-          if (session !== null && repository !== null)
-            repository.createFromImport(session.accountId, session.form, session.responses);
+          if (session !== null && repository !== null) {
+            try {
+              repository.createFromImport(session.accountId, session.form, session.responses);
+            } catch {
+              stderrLogger.error("project_import_persistence_failed", {
+                errorCode: "PROJECT_PERSISTENCE_FAILED",
+              });
+              throw sidecarError(
+                "BACKEND_UNAVAILABLE",
+                "프로젝트를 저장하지 못했습니다. 다시 시도해주세요.",
+                true,
+              );
+            }
+          }
         } finally {
           forms.clearStoredImport();
         }

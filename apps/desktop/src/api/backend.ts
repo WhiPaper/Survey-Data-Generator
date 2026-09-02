@@ -151,18 +151,55 @@ export const getProject = (
 export const deleteProject = (projectId: string, backend?: BackendInvoker): Promise<{ ok: true }> =>
   callBackend("projects.delete", { projectId }, backend);
 
+export const getTargets = (projectId: string, backend?: BackendInvoker) =>
+  callBackend("targets.get", { projectId }, backend);
+export const updateTargets = (
+  projectId: string,
+  expectedRevision: number,
+  targets: ProjectTargets,
+  backend?: BackendInvoker,
+) =>
+  callBackend(
+    "targets.update",
+    {
+      projectId,
+      expectedRevision,
+      targets: { ...targets, questionTargets: [...targets.questionTargets] },
+    },
+    backend,
+  );
+
+export const checkTargetFeasibility = (
+  projectId: string,
+  targets: ProjectTargets,
+  backend?: BackendInvoker,
+) =>
+  callBackend(
+    "targets.checkFeasibility",
+    {
+      projectId,
+      targets: { ...targets, questionTargets: [...targets.questionTargets] },
+    },
+    backend,
+  );
+
+export const getRun = (runId: string, backend?: BackendInvoker) =>
+  callBackend("runs.get", { runId }, backend);
+
 export const startSynthesis = (
   projectId: string,
   targets: ProjectTargets,
   seed: number,
   operationId: string,
   backend?: BackendInvoker,
+  targetRevision?: number,
 ): Promise<SynthesisStartResult> =>
   callBackend(
     "synthesis.start",
     {
       projectId,
       targets: { ...targets, questionTargets: [...targets.questionTargets] },
+      ...(targetRevision === undefined ? {} : { targetRevision }),
       seed,
       operationId,
     },

@@ -101,6 +101,14 @@ export class ProjectDatabase {
         `);
       });
     }
+    if (current < 4) {
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS target_revisions (project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, revision INTEGER NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(project_id, revision));
+          PRAGMA user_version = 4;
+        `);
+      });
+    }
   }
 }
 

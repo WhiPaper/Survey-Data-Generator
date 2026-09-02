@@ -39,20 +39,24 @@ port.on("message", (work: SynthesisWork) => {
     void new HighsOptimizationBackend()
       .solveMixedInteger(plan.problem)
       .then((solution) => {
-        if (solution.status === "infeasible") {
+        if (
+          solution.status === "infeasible" ||
+          solution.status === "error" ||
+          solution.status === "unbounded"
+        ) {
           port.postMessage(synthesize(work.form, work.source, work.targets, work.seed));
           return;
         }
         const allocated =
           solution.status === "optimal" ? allocateTemplateWeights(plan, solution.values) : null;
         if (allocated === null) {
-          port.postMessage({ kind: "worker_error" });
+          port.postMessage(synthesize(work.form, work.source, work.targets, work.seed));
           return;
         }
         port.postMessage(synthesize(work.form, work.source, work.targets, work.seed, allocated));
       })
       .catch(() => port.postMessage({ kind: "worker_error" }));
   } catch {
-    port.postMessage({ kind: "worker_error" });
+    port.postMessage({ kind: "worker_error", code: "WORKER_EXCEPTION" });
   }
 });

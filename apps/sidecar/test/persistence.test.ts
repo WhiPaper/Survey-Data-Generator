@@ -38,7 +38,7 @@ describe("encrypted project database", () => {
       reopened.prepare<{ name: string }>("SELECT name FROM projects WHERE id='p'").get(),
     ).toEqual({ name: "marker" });
     expect(reopened.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 3,
+      user_version: 4,
     });
     reopened.close();
     const wrong = new TestSecrets();
@@ -181,6 +181,21 @@ describe("encrypted project database", () => {
       source,
       "imported",
     ).project;
+    expect(repository.getTargets(project.id)).toEqual({
+      revision: 0,
+      targets: { targetResponseCount: 1, questionTargets: [] },
+    });
+    const firstTargetSave = repository.updateTargets(project.id, 0, {
+      targetResponseCount: 2,
+      questionTargets: [],
+    });
+    expect(firstTargetSave.revision).toBe(1);
+    expect(repository.updateTargets(project.id, 1, firstTargetSave.targets)).toEqual(
+      firstTargetSave,
+    );
+    expect(() =>
+      repository.updateTargets(project.id, 0, { targetResponseCount: 3, questionTargets: [] }),
+    ).toThrow();
     const sourceSnapshot = repository.loadSynthesisSource(project.id)!;
     const result = synthesize(
       sourceSnapshot.form,
@@ -202,6 +217,11 @@ describe("encrypted project database", () => {
         sourceRevisionId: sourceSnapshot.sourceRevisionId,
         seed: 42,
         engineVersion: 1,
+      });
+      expect(repository.getRun(run.id)).toMatchObject({
+        runId: run.id,
+        targetSnapshot: { targetResponseCount: 2, questionTargets: [] },
+        finalResponseCount: 2,
       });
       expect(
         db.prepare<{ count: number }>("SELECT COUNT(*) AS count FROM synthesis_runs").get(),

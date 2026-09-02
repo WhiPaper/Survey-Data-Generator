@@ -30,7 +30,11 @@ export class SynthesisJobs {
     targets: ProjectTargets,
     seed: number,
   ): Promise<
-    | { readonly runId: string; readonly finalResponseCount: number }
+    | {
+        readonly runId: string;
+        readonly syntheticResponseCount: number;
+        readonly finalResponseCount: number;
+      }
     | {
         readonly status: "infeasible" | "unsupported";
         readonly issues: readonly { code: string; message: string }[];
@@ -42,9 +46,11 @@ export class SynthesisJobs {
       const worker = this.createWorker();
       this.active.set(operationId, worker);
       worker.once("message", (message) => {
-        const result = message as SynthesisResult | { kind: "worker_error" };
+        const result = message as SynthesisResult | { kind: "worker_error"; code?: string };
         if ("kind" in result && result.kind === "worker_error")
-          reject(sidecarError("INTERNAL", "Synthesis worker failed", true));
+          reject(
+            sidecarError("INTERNAL", `Synthesis worker failed (${result.code ?? "unknown"})`, true),
+          );
         else resolve(result);
       });
       worker.once("error", () => reject(sidecarError("INTERNAL", "Synthesis worker failed", true)));
@@ -74,7 +80,11 @@ export class SynthesisJobs {
       synthetic: result.synthetic,
       validation: result.validation!,
     });
-    return { runId: run.id, finalResponseCount: result.validation!.finalResponseCount };
+    return {
+      runId: run.id,
+      syntheticResponseCount: result.synthetic.length,
+      finalResponseCount: result.validation!.finalResponseCount,
+    };
   }
 
   public cancel(operationId: string): boolean {

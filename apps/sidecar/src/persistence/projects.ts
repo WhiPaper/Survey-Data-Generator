@@ -20,6 +20,7 @@ import {
   type RelationshipProfile,
 } from "@survey-synth/statistics";
 import { ProjectDatabase } from "./database.js";
+import { sidecarError } from "../errors.js";
 
 export interface CreatedProject {
   readonly project: SynthesisProject;
@@ -28,6 +29,9 @@ export interface CreatedProject {
 }
 
 export interface ProjectDetail extends ProjectSummary {
+  readonly form: FormSnapshot;
+  readonly targets: ProjectTargets;
+  readonly targetRevision: number;
   readonly profiles: readonly QuestionProfile[];
   readonly relationships: readonly RelationshipProfile[];
 }
@@ -160,6 +164,13 @@ export class ProjectRepository {
     const summary = this.list().find((project) => project.id === id);
     if (summary === undefined) return null;
     const revisionId = summary.currentSourceRevisionId;
+    const formRow = this.database
+      .prepare<{ payload_json: string }>(
+        "SELECT fs.payload_json FROM form_snapshots fs JOIN source_revisions sr ON sr.form_snapshot_id=fs.id WHERE sr.id=?",
+      )
+      .get(revisionId);
+    if (formRow === undefined) return null;
+    const targetState = this.getTargets(id);
     const profiles = this.database
       .prepare<{ payload_json: string }>(
         "SELECT payload_json FROM question_profiles WHERE revision_id=?",
@@ -172,7 +183,50 @@ export class ProjectRepository {
       )
       .all(revisionId)
       .map((row) => JSON.parse(row.payload_json) as RelationshipProfile);
-    return { ...summary, profiles, relationships };
+    return {
+      ...summary,
+      form: JSON.parse(formRow.payload_json) as FormSnapshot,
+      targets: targetState.targets,
+      targetRevision: targetState.revision,
+      profiles,
+      relationships,
+    };
+  }
+
+  public getTargets(id: ProjectId): { revision: number; targets: ProjectTargets } {
+    const row = this.database
+      .prepare<{ revision: number; payload_json: string }>(
+        "SELECT revision, payload_json FROM target_revisions WHERE project_id=? ORDER BY revision DESC LIMIT 1",
+      )
+      .get(id);
+    if (row !== undefined)
+      return { revision: row.revision, targets: JSON.parse(row.payload_json) as ProjectTargets };
+    const project = this.list().find((item) => item.id === id);
+    if (project === undefined) throw sidecarError("NOT_FOUND", "Project was not found", true);
+    return {
+      revision: 0,
+      targets: { targetResponseCount: project.responseCount, questionTargets: [] },
+    };
+  }
+
+  public updateTargets(
+    id: ProjectId,
+    expectedRevision: number,
+    targets: ProjectTargets,
+  ): { revision: number; targets: ProjectTargets } {
+    return this.database.transaction(() => {
+      const current = this.getTargets(id);
+      if (current.revision !== expectedRevision)
+        throw sidecarError("TARGET_CONFLICT", "Target revision is out of date", true);
+      if (JSON.stringify(current.targets) === JSON.stringify(targets)) return current;
+      const next = { revision: current.revision + 1, targets };
+      this.database
+        .prepare(
+          "INSERT INTO target_revisions (project_id, revision, payload_json, created_at) VALUES (?,?,?,?)",
+        )
+        .run(id, next.revision, JSON.stringify(targets), new Date().toISOString());
+      return next;
+    });
   }
 
   public loadSynthesisSource(id: ProjectId): SynthesisSource | null {
@@ -255,6 +309,38 @@ export class ProjectRepository {
     });
     return run;
   }
+
+  public getRun(id: RunId): {
+    runId: string;
+    projectId: string;
+    sourceRevisionId: string;
+    targetSnapshot: ProjectTargets;
+    validation: ValidationResult;
+    finalResponseCount: number;
+  } | null {
+    const row = this.database
+      .prepare<{
+        id: string;
+        project_id: string;
+        source_revision_id: string;
+        payload_json: string;
+        validation_json: string;
+      }>(
+        "SELECT sr.id, sr.project_id, sr.source_revision_id, ts.payload_json, sr.validation_json FROM synthesis_runs sr JOIN target_snapshots ts ON ts.id=sr.target_snapshot_id WHERE sr.id=?",
+      )
+      .get(id);
+    if (row === undefined) return null;
+    const validation = JSON.parse(row.validation_json) as ValidationResult;
+    return {
+      runId: row.id,
+      projectId: row.project_id,
+      sourceRevisionId: row.source_revision_id,
+      targetSnapshot: JSON.parse(row.payload_json) as ProjectTargets,
+      validation,
+      finalResponseCount: validation.finalResponseCount,
+    };
+  }
+
   public delete(id: ProjectId): void {
     this.database.transaction(() => {
       this.database.prepare(`DELETE FROM projects WHERE id=?`).run(id);
