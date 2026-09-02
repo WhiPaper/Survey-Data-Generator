@@ -521,9 +521,19 @@ const normalizeOptions = (
   if (!Array.isArray(value)) throw invalidImport("Google choice options are invalid");
   return value.map((rawOption, index) => {
     const option = requireRecord(rawOption);
-    if (typeof option.value !== "string") throw invalidImport("Google choice value is invalid");
-    const key = `option:${scope}:${index}` as OptionKey;
     const isOther = optionalBoolean(option.isOther) ?? false;
+    const optionValue =
+      typeof option.value === "string"
+        ? option.value
+        : option.value === undefined && isOther
+          ? "Other"
+          : undefined;
+    if (optionValue === undefined) {
+      throw invalidImport(
+        `Google choice value is invalid at ${scope} option ${index} (received ${jsonType(option.value)})`,
+      );
+    }
+    const key = `option:${scope}:${index}` as OptionKey;
     if (routing !== undefined && allowNavigation && hasRoute(option)) {
       routing.state.routing.push({
         sourceQuestionId: routing.sourceQuestionId,
@@ -536,7 +546,7 @@ const normalizeOptions = (
           : { goToSectionId: optionalString(option.goToSectionId) }),
       });
     }
-    return { key, label: option.value, ...(isOther ? { isOther: true } : {}) };
+    return { key, label: optionValue, ...(isOther ? { isOther: true } : {}) };
   });
 };
 
@@ -978,6 +988,9 @@ const optionalStringArray = (value: unknown): string[] => {
   }
   return [...value];
 };
+
+const jsonType = (value: unknown): string =>
+  value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
 
 const invalidImport = (message: string): ReturnType<typeof sidecarError> =>
   sidecarError("VALIDATION_FAILED", message, true);

@@ -245,6 +245,33 @@ const response = (
 });
 
 describe("Google Form normalization", () => {
+  it("uses the standard label for a Google Other option without a value", () => {
+    const form = new GoogleFormNormalizer().normalize({
+      formId: "other-form",
+      info: { title: "Other option" },
+      items: [
+        {
+          itemId: "other-item",
+          title: "Choice",
+          questionItem: {
+            question: {
+              questionId: "other-question",
+              choiceQuestion: {
+                type: "RADIO",
+                options: [{ value: "Known" }, { isOther: true }],
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(form.questions[0]).toMatchObject({
+      kind: "single_choice",
+      options: [{ label: "Known" }, { label: "Other", isOther: true }],
+    });
+  });
+
   it("normalizes supported questions, grouped grid rows, unsupported types, and routing", () => {
     const snapshot = new GoogleFormNormalizer().normalize(fixtureForm(), "2026-09-02T00:00:00Z");
 

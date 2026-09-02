@@ -16,6 +16,14 @@ describe("compiled sidecar native dependency smoke", () => {
     const secret = Buffer.from("packaged-test-key").toString("base64");
     const lines: unknown[] = [];
     let buffered = "";
+    let resolveHostRequest!: () => void;
+    const hostRequestSeen = new Promise<void>((resolve) => {
+      resolveHostRequest = resolve;
+    });
+    let resolveProjectList!: () => void;
+    const projectListSeen = new Promise<void>((resolve) => {
+      resolveProjectList = resolve;
+    });
     const result = await new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("compiled sidecar smoke timed out")), 10_000);
       child.stdout.on("data", (chunk: Buffer) => {
@@ -27,6 +35,7 @@ describe("compiled sidecar native dependency smoke", () => {
           const message = JSON.parse(line) as { type?: string; id?: string; method?: string };
           lines.push(message);
           if (message.type === "host_request" && message.id !== undefined) {
+            resolveHostRequest();
             const isGet = message.method === "host.secret.get";
             child.stdin.write(
               `${JSON.stringify({ v: VERSIONS.protocolVersion, type: "host_response", id: message.id, ok: true, result: isGet ? { value: secret } : { ok: true } })}\n`,
@@ -40,10 +49,8 @@ describe("compiled sidecar native dependency smoke", () => {
           if (message.type === "response" && message.id === "ping") {
             clearTimeout(timer);
             resolve(message);
-            child.stdin.write(
-              `${JSON.stringify({ v: VERSIONS.protocolVersion, type: "request", id: "shutdown", method: "system.shutdown", params: {} })}\n`,
-            );
           }
+          if (message.type === "response" && message.id === "projects") resolveProjectList();
         }
       });
       child.on("error", (error) => {
@@ -56,6 +63,22 @@ describe("compiled sidecar native dependency smoke", () => {
     });
     expect(result).toMatchObject({ type: "response", id: "ping", ok: true });
     expect(lines.some((message) => (message as { type?: string }).type === "ready")).toBe(true);
+    const readyIndex = lines.findIndex(
+      (message) => (message as { type?: string }).type === "ready",
+    );
+    const hostRequestIndex = lines.findIndex(
+      (message) => (message as { type?: string }).type === "host_request",
+    );
+    expect(readyIndex).toBe(0);
+    expect(hostRequestIndex).toBeGreaterThan(readyIndex);
+    await hostRequestSeen;
+    child.stdin.write(
+      `${JSON.stringify({ v: VERSIONS.protocolVersion, type: "request", id: "projects", method: "projects.list", params: {} })}\n`,
+    );
+    await projectListSeen;
+    child.stdin.write(
+      `${JSON.stringify({ v: VERSIONS.protocolVersion, type: "request", id: "shutdown", method: "system.shutdown", params: {} })}\n`,
+    );
     const database = await readFile(join(directory, "projects.db"));
     expect(database.subarray(0, 15).toString("utf8")).not.toBe("SQLite format 3");
     await new Promise<void>((resolve) => child.once("exit", () => resolve()));

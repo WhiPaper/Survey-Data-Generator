@@ -56,11 +56,8 @@ const auth = new GoogleAuthServiceImpl({
   oauth,
   tokenStore,
 });
-const database =
-  defaultDatabasePath() === null
-    ? Promise.resolve(null)
-    : ProjectDatabase.open(defaultDatabasePath()!, new RemoteSecureSecretStore(hostClient));
-const projects = database.then((db) => (db === null ? null : new ProjectRepository(db)));
+let database: Promise<ProjectDatabase | null> = Promise.resolve(null);
+let projects: Promise<ProjectRepository | null> = Promise.resolve(null);
 
 const server = createSidecarServer({
   input: process.stdin,
@@ -147,7 +144,17 @@ const server = createSidecarServer({
     },
   },
   hostClient,
-  ready: database.then(() => undefined),
+});
+
+const databasePath = defaultDatabasePath();
+database =
+  databasePath === null
+    ? Promise.resolve(null)
+    : ProjectDatabase.open(databasePath, new RemoteSecureSecretStore(hostClient));
+projects = database.then((db) => (db === null ? null : new ProjectRepository(db)));
+void database.catch(() => {
+  stderrLogger.error("sidecar_startup_failed", { errorCode: "BACKEND_UNAVAILABLE" });
+  server.shutdown();
 });
 
 const signalShutdown = (): void => {

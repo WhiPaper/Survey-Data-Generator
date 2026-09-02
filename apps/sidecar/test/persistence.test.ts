@@ -87,6 +87,15 @@ describe("encrypted project database", () => {
           options: [{ key: "yes" as never, label: "Yes" }],
           shuffle: false,
         },
+        {
+          id: "second-question" as never,
+          title: "Second",
+          sectionId: "section" as never,
+          required: false,
+          affectsNavigation: false,
+          kind: "text",
+          presentation: "short",
+        },
       ],
     };
     const responses: NormalizedResponse[] = [
@@ -107,12 +116,12 @@ describe("encrypted project database", () => {
     expect(repository.list()[0]).toMatchObject({
       id: created.project.id,
       responseCount: 1,
-      questionCount: 1,
-      profileCount: 1,
+      questionCount: 2,
+      profileCount: 2,
     });
     expect(repository.get(created.project.id)).toMatchObject({
       name: "Local form",
-      profiles: [{ questionKind: "single_choice" }],
+      profiles: [{ questionKind: "single_choice" }, { questionKind: "text" }],
       relationships: [],
     });
     repository.delete(created.project.id);

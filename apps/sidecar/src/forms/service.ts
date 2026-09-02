@@ -18,6 +18,7 @@ import { isSidecarError, sidecarError } from "../errors.js";
 import type { GoogleAccountRepository } from "../auth/account-store.js";
 import type { SafeLogger } from "../rpc/logger.js";
 import type { GoogleFormsApi } from "./client.js";
+import type { RawGoogleFormResponse } from "./google-types.js";
 import {
   DEFAULT_M2_IMPORT_LIMITS,
   m2ImportLimitError,
@@ -125,17 +126,10 @@ export class FormImportService {
         budget.addPayload(providerPayloadBytes(rawForm), operation.signal);
         return rawForm;
       });
-    const rawResponsesPromise = fetchAllResponses(
-      (pageToken, pageSignal) =>
-        this.options.google.listResponses(accountId, formId, pageToken, pageSignal),
-      { signal: operation.signal, budget },
-    );
+    let rawResponsesPromise: Promise<RawGoogleFormResponse[]> | undefined;
 
     try {
-      const [rawForm, rawResponses] = await Promise.race([
-        Promise.all([rawFormPromise, rawResponsesPromise]),
-        operation.termination,
-      ]);
+      const rawForm = await Promise.race([rawFormPromise, operation.termination]);
       ensureDeadline(operation, budget);
       const form = this.formNormalizer.normalize(rawForm, new Date(startedAt).toISOString());
       ensureDeadline(operation, budget);
@@ -146,6 +140,13 @@ export class FormImportService {
           true,
         );
       }
+      rawResponsesPromise = fetchAllResponses(
+        (pageToken, pageSignal) =>
+          this.options.google.listResponses(accountId, formId, pageToken, pageSignal),
+        { signal: operation.signal, budget },
+      );
+      const rawResponses = await Promise.race([rawResponsesPromise, operation.termination]);
+      ensureDeadline(operation, budget);
       if (rawResponses.length === 0) {
         throw sidecarError("VALIDATION_FAILED", "선택한 Google Form에 응답이 없습니다", true);
       }
@@ -177,7 +178,10 @@ export class FormImportService {
     } catch (error: unknown) {
       const normalizedError = importFailure(error, operation, signal, budget, this.now);
       operation.cancel();
-      void Promise.allSettled([rawFormPromise, rawResponsesPromise]);
+      void Promise.allSettled([
+        rawFormPromise,
+        ...(rawResponsesPromise === undefined ? [] : [rawResponsesPromise]),
+      ]);
       this.options.logger.error("form_import_failed", {
         errorCode: normalizedError.backendError.code,
       });

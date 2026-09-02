@@ -19,7 +19,7 @@
     "rust:check": "cargo check --workspace && cargo clippy --workspace --all-targets -- -D warnings",
     "build:sidecar": "pnpm run build:packages && pnpm --filter @survey-synth/sidecar build",
     "test:integration": "pnpm run build:sidecar && pnpm exec vitest run tests/integration",
-    "tauri:dev": "pnpm run build:sidecar && pnpm --filter @survey-synth/desktop build && cargo run --manifest-path src-tauri/Cargo.toml"
+    "tauri:dev": "node scripts/tauri-dev.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",

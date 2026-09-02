@@ -45,7 +45,7 @@ export class ProjectRepository {
   public list(): ProjectSummary[] {
     return this.database
       .prepare<ProjectSummary>(
-        `SELECT p.id, p.google_account_id AS googleAccountId, p.google_form_id AS googleFormId, p.name, p.current_source_revision_id AS currentSourceRevisionId, p.created_at AS createdAt, p.updated_at AS updatedAt, (SELECT COUNT(*) FROM revision_responses rr WHERE rr.revision_id = p.current_source_revision_id) AS responseCount, (SELECT COUNT(*) FROM form_snapshots fs JOIN source_revisions sr ON sr.form_snapshot_id=fs.id WHERE sr.id=p.current_source_revision_id) AS questionCount, (SELECT COUNT(*) FROM question_profiles qp WHERE qp.revision_id=p.current_source_revision_id) AS profileCount FROM projects p ORDER BY p.updated_at DESC`,
+        `SELECT p.id, p.google_account_id AS googleAccountId, p.google_form_id AS googleFormId, p.name, p.current_source_revision_id AS currentSourceRevisionId, p.created_at AS createdAt, p.updated_at AS updatedAt, (SELECT COUNT(*) FROM revision_responses rr WHERE rr.revision_id = p.current_source_revision_id) AS responseCount, (SELECT json_array_length(fs.payload_json, '$.questions') FROM form_snapshots fs JOIN source_revisions sr ON sr.form_snapshot_id=fs.id WHERE sr.id=p.current_source_revision_id) AS questionCount, (SELECT COUNT(*) FROM question_profiles qp WHERE qp.revision_id=p.current_source_revision_id) AS profileCount FROM projects p ORDER BY p.updated_at DESC`,
       )
       .all();
   }
