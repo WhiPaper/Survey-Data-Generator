@@ -243,6 +243,84 @@ export const ProjectsListParamsSchema = z.object({}).strict();
 export const ProjectsGetParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
 export const ProjectsDeleteParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
 
+const TargetValueSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("count"), value: z.number().int().nonnegative() }).strict(),
+  z.object({ kind: z.literal("ratio"), value: z.number().min(0).max(1) }).strict(),
+  z
+    .object({
+      kind: z.literal("count_range"),
+      min: z.number().int().nonnegative(),
+      max: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("ratio_range"),
+      min: z.number().min(0).max(1),
+      max: z.number().min(0).max(1),
+    })
+    .strict(),
+  z.object({ kind: z.literal("mean"), value: z.number().finite() }).strict(),
+]);
+export const ProjectTargetsSchema = z
+  .object({
+    targetResponseCount: z.number().int().nonnegative(),
+    questionTargets: z.array(
+      z.discriminatedUnion("kind", [
+        z
+          .object({
+            kind: z.literal("option"),
+            questionId: z.string().min(1),
+            optionKey: z.string().min(1),
+            target: TargetValueSchema,
+          })
+          .strict(),
+        z
+          .object({
+            kind: z.literal("mean"),
+            questionId: z.string().min(1),
+            target: z.object({ kind: z.literal("mean"), value: z.number().finite() }).strict(),
+          })
+          .strict(),
+      ]),
+    ),
+  })
+  .strict();
+export const SynthesisStartParamsSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    targets: ProjectTargetsSchema,
+    seed: z.number().int(),
+    operationId: z.string().min(1).max(200).optional(),
+  })
+  .strict();
+export const SynthesisCancelParamsSchema = z
+  .object({ operationId: z.string().min(1).max(200) })
+  .strict();
+export const SynthesisStartResultSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("success"),
+      runId: z.string().min(1),
+      finalResponseCount: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("infeasible"),
+      issues: z.array(z.object({ code: z.string(), message: z.string() }).strict()),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("unsupported"),
+      issues: z.array(z.object({ code: z.string(), message: z.string() }).strict()),
+    })
+    .strict(),
+]);
+export type SynthesisStartParams = z.infer<typeof SynthesisStartParamsSchema>;
+export type SynthesisStartResult = z.infer<typeof SynthesisStartResultSchema>;
+
 export const HostCapabilityMethodSchema = z.enum([
   "host.secret.get",
   "host.secret.set",
@@ -356,6 +434,14 @@ export interface BackendRpc {
     input: z.infer<typeof ProjectsDeleteParamsSchema>;
     output: AuthActionResult;
   };
+  "synthesis.start": {
+    input: SynthesisStartParams;
+    output: SynthesisStartResult;
+  };
+  "synthesis.cancel": {
+    input: z.infer<typeof SynthesisCancelParamsSchema>;
+    output: AuthActionResult;
+  };
 }
 
 export type RpcMethod = keyof BackendRpc;
@@ -376,6 +462,8 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "projects.list": z.array(ProjectSummarySchema),
   "projects.get": ProjectDetailSchema.nullable(),
   "projects.delete": AuthActionResultSchema,
+  "synthesis.start": SynthesisStartResultSchema,
+  "synthesis.cancel": AuthActionResultSchema,
 };
 
 const parseKnownParams = (method: string, params: unknown): void => {
@@ -409,6 +497,10 @@ const parseKnownParams = (method: string, params: unknown): void => {
     ProjectsGetParamsSchema.parse(params);
   } else if (method === "projects.delete") {
     ProjectsDeleteParamsSchema.parse(params);
+  } else if (method === "synthesis.start") {
+    SynthesisStartParamsSchema.parse(params);
+  } else if (method === "synthesis.cancel") {
+    SynthesisCancelParamsSchema.parse(params);
   }
 };
 

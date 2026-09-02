@@ -90,6 +90,17 @@ export class ProjectDatabase {
         `);
       });
     }
+    if (current < 3) {
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS target_snapshots (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, payload_json TEXT NOT NULL, created_at TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS synthesis_runs (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, source_revision_id TEXT NOT NULL REFERENCES source_revisions(id), target_snapshot_id TEXT NOT NULL REFERENCES target_snapshots(id), seed INTEGER NOT NULL, engine_version INTEGER NOT NULL, profiler_version INTEGER NOT NULL, created_at TEXT NOT NULL, validation_json TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS synthetic_responses (run_id TEXT NOT NULL REFERENCES synthesis_runs(id) ON DELETE CASCADE, response_id TEXT NOT NULL, payload_json TEXT NOT NULL, PRIMARY KEY(run_id, response_id));
+          CREATE INDEX IF NOT EXISTS idx_synthesis_runs_project_created ON synthesis_runs(project_id, created_at DESC);
+          PRAGMA user_version = 3;
+        `);
+      });
+    }
   }
 }
 

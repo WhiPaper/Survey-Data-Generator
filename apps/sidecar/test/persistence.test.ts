@@ -6,6 +6,7 @@ import type { SecureSecretStore } from "../src/host.js";
 import { ProjectDatabase } from "../src/persistence/database.js";
 import { ProjectRepository } from "../src/persistence/projects.js";
 import type { FormSnapshot, NormalizedResponse } from "@survey-synth/domain";
+import { synthesize } from "@survey-synth/synthesis-core";
 
 class TestSecrets implements SecureSecretStore {
   public readonly values = new Map<string, Uint8Array>();
@@ -37,7 +38,7 @@ describe("encrypted project database", () => {
       reopened.prepare<{ name: string }>("SELECT name FROM projects WHERE id='p'").get(),
     ).toEqual({ name: "marker" });
     expect(reopened.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 2,
+      user_version: 3,
     });
     reopened.close();
     const wrong = new TestSecrets();
@@ -126,6 +127,89 @@ describe("encrypted project database", () => {
     });
     repository.delete(created.project.id);
     expect(repository.list()).toHaveLength(0);
+    db.close();
+  });
+
+  it("persists only a validated immutable M4 Run with frozen inputs", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "survey-synth-db-"));
+    const db = await ProjectDatabase.open(join(directory, "projects.db"), new TestSecrets());
+    const form: FormSnapshot = {
+      formId: "form" as never,
+      title: "Run form",
+      capturedAt: "now",
+      schemaHash: "schema",
+      sections: [],
+      groups: [],
+      logic: {
+        entrySectionId: "section" as never,
+        sections: [],
+        transitions: [],
+        coverage: "none",
+        hasRestartFlow: false,
+      },
+      questions: [
+        {
+          id: "choice" as never,
+          title: "Choice",
+          sectionId: "section" as never,
+          required: false,
+          affectsNavigation: false,
+          kind: "single_choice",
+          presentation: "radio",
+          options: [{ key: "yes" as never, label: "Yes" }],
+          shuffle: false,
+        },
+      ],
+    };
+    const source: NormalizedResponse[] = [
+      {
+        responseId: "source" as never,
+        origin: "original",
+        path: { questions: {}, confidence: "certain" },
+        answers: {
+          choice: {
+            state: "answered",
+            value: { kind: "single_choice", optionKey: "yes" as never, label: "Yes" },
+          },
+        },
+      },
+    ];
+    const repository = new ProjectRepository(db);
+    const project = repository.createFromImport(
+      "account" as never,
+      form,
+      source,
+      "imported",
+    ).project;
+    const sourceSnapshot = repository.loadSynthesisSource(project.id)!;
+    const result = synthesize(
+      sourceSnapshot.form,
+      sourceSnapshot.responses,
+      { targetResponseCount: 2, questionTargets: [] },
+      42,
+    );
+    expect(result.kind).toBe("success");
+    if (result.kind === "success") {
+      const run = repository.saveRun({
+        projectId: project.id,
+        sourceRevisionId: sourceSnapshot.sourceRevisionId,
+        targets: { targetResponseCount: 2, questionTargets: [] },
+        seed: 42,
+        synthetic: result.synthetic,
+        validation: result.validation!,
+      });
+      expect(run).toMatchObject({
+        sourceRevisionId: sourceSnapshot.sourceRevisionId,
+        seed: 42,
+        engineVersion: 1,
+      });
+      expect(
+        db.prepare<{ count: number }>("SELECT COUNT(*) AS count FROM synthesis_runs").get(),
+      ).toEqual({ count: 1 });
+      expect(
+        db.prepare<{ count: number }>("SELECT COUNT(*) AS count FROM synthetic_responses").get(),
+      ).toEqual({ count: 1 });
+    }
     db.close();
   });
 });

@@ -11,10 +11,14 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "test": "pnpm build && vitest run test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@survey-synth/domain": "workspace:*",
     "@survey-synth/statistics": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "3.2.4"
   }
 }

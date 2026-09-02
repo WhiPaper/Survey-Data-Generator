@@ -4,10 +4,14 @@ import type {
   GoogleAccountId,
   NormalizedResponse,
   ProjectId,
+  ProjectTargets,
+  RunId,
   ProjectSummary,
   SourceRevisionId,
   SynthesisProject,
 } from "@survey-synth/domain";
+import { resolveResponsePath, type SynthesisRun } from "@survey-synth/domain";
+import type { ValidationResult } from "@survey-synth/synthesis-core";
 import { VERSIONS } from "@survey-synth/contracts";
 import {
   analyzeRelationships,
@@ -26,6 +30,12 @@ export interface CreatedProject {
 export interface ProjectDetail extends ProjectSummary {
   readonly profiles: readonly QuestionProfile[];
   readonly relationships: readonly RelationshipProfile[];
+}
+
+export interface SynthesisSource {
+  readonly form: FormSnapshot;
+  readonly responses: readonly NormalizedResponse[];
+  readonly sourceRevisionId: SourceRevisionId;
 }
 
 const hash = (value: unknown): string =>
@@ -163,6 +173,87 @@ export class ProjectRepository {
       .all(revisionId)
       .map((row) => JSON.parse(row.payload_json) as RelationshipProfile);
     return { ...summary, profiles, relationships };
+  }
+
+  public loadSynthesisSource(id: ProjectId): SynthesisSource | null {
+    const summary = this.list().find((project) => project.id === id);
+    if (summary === undefined) return null;
+    const snapshot = this.database
+      .prepare<{ payload_json: string }>(
+        "SELECT fs.payload_json FROM form_snapshots fs JOIN source_revisions sr ON sr.form_snapshot_id=fs.id WHERE sr.id=?",
+      )
+      .get(summary.currentSourceRevisionId);
+    if (snapshot === undefined) return null;
+    const form = JSON.parse(snapshot.payload_json) as FormSnapshot;
+    const rows = this.database
+      .prepare<{ id: string; created_at: string | null; last_submitted_at: string | null }>(
+        "SELECT r.id, r.created_at, r.last_submitted_at FROM responses r JOIN revision_responses rr ON rr.response_id=r.id WHERE rr.revision_id=? ORDER BY r.id",
+      )
+      .all(summary.currentSourceRevisionId);
+    const answers = this.database.prepare<{ question_id: string; slot_json: string }>(
+      "SELECT question_id, slot_json FROM answers WHERE response_id=?",
+    );
+    const responses = rows.map((row) => {
+      const responseAnswers = Object.fromEntries(
+        answers.all(row.id).map((answer) => [answer.question_id, JSON.parse(answer.slot_json)]),
+      ) as NormalizedResponse["answers"];
+      return {
+        responseId: row.id as never,
+        createdAt: row.created_at ?? undefined,
+        lastSubmittedAt: row.last_submitted_at ?? undefined,
+        answers: responseAnswers,
+        origin: "original" as const,
+        path: resolveResponsePath(form, responseAnswers),
+      };
+    });
+    return { form, responses, sourceRevisionId: summary.currentSourceRevisionId };
+  }
+
+  public saveRun(input: {
+    readonly projectId: ProjectId;
+    readonly sourceRevisionId: SourceRevisionId;
+    readonly targets: ProjectTargets;
+    readonly seed: number;
+    readonly synthetic: readonly NormalizedResponse[];
+    readonly validation: ValidationResult;
+    readonly createdAt?: string;
+  }): SynthesisRun {
+    if (!input.validation.valid) throw new Error("Invalid synthesis Run cannot be persisted");
+    const id = randomUUID() as RunId;
+    const targetSnapshotId = randomUUID();
+    const createdAt = input.createdAt ?? new Date().toISOString();
+    const run: SynthesisRun = {
+      id,
+      projectId: input.projectId,
+      sourceRevisionId: input.sourceRevisionId,
+      targetSnapshot: input.targets,
+      seed: input.seed,
+      engineVersion: VERSIONS.engineVersion,
+      profilerVersion: VERSIONS.profilerVersion,
+      createdAt,
+    };
+    this.database.transaction(() => {
+      this.database
+        .prepare("INSERT INTO target_snapshots VALUES (?,?,?,?)")
+        .run(targetSnapshotId, input.projectId, JSON.stringify(input.targets), createdAt);
+      this.database
+        .prepare("INSERT INTO synthesis_runs VALUES (?,?,?,?,?,?,?,?,?)")
+        .run(
+          id,
+          input.projectId,
+          input.sourceRevisionId,
+          targetSnapshotId,
+          input.seed,
+          run.engineVersion,
+          run.profilerVersion,
+          createdAt,
+          JSON.stringify(input.validation),
+        );
+      const insert = this.database.prepare("INSERT INTO synthetic_responses VALUES (?,?,?)");
+      for (const response of input.synthetic)
+        insert.run(id, response.responseId, JSON.stringify(response));
+    });
+    return run;
   }
   public delete(id: ProjectId): void {
     this.database.transaction(() => {

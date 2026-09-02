@@ -15,7 +15,9 @@ import {
   createRequest,
   parseRpcResult,
   type RpcMethod,
+  type SynthesisStartResult,
 } from "@survey-synth/contracts";
+import type { ProjectTargets } from "@survey-synth/domain";
 
 export interface BackendInvoker {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
@@ -148,3 +150,26 @@ export const getProject = (
 ): Promise<ProjectDetailView | null> => callBackend("projects.get", { projectId }, backend);
 export const deleteProject = (projectId: string, backend?: BackendInvoker): Promise<{ ok: true }> =>
   callBackend("projects.delete", { projectId }, backend);
+
+export const startSynthesis = (
+  projectId: string,
+  targets: ProjectTargets,
+  seed: number,
+  operationId: string,
+  backend?: BackendInvoker,
+): Promise<SynthesisStartResult> =>
+  callBackend(
+    "synthesis.start",
+    {
+      projectId,
+      targets: { ...targets, questionTargets: [...targets.questionTargets] },
+      seed,
+      operationId,
+    },
+    backend,
+  );
+
+export const cancelSynthesis = (
+  operationId: string,
+  backend?: BackendInvoker,
+): Promise<{ ok: true }> => callBackend("synthesis.cancel", { operationId }, backend);

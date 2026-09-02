@@ -14,6 +14,34 @@ export type GoogleAccountId = Brand<string, "GoogleAccountId">;
 export type SourceRevisionId = Brand<string, "SourceRevisionId">;
 export type FormSnapshotId = Brand<string, "FormSnapshotId">;
 
+/** User intent. Values always describe the final combined dataset. */
+export interface ProjectTargets {
+  targetResponseCount: number;
+  questionTargets: readonly QuestionTarget[];
+}
+
+export type TargetValue =
+  | { kind: "count"; value: number }
+  | { kind: "ratio"; value: number }
+  | { kind: "count_range"; min: number; max: number }
+  | { kind: "ratio_range"; min: number; max: number }
+  | { kind: "mean"; value: number };
+
+export type QuestionTarget =
+  | { kind: "option"; questionId: QuestionId; optionKey: OptionKey; target: TargetValue }
+  | { kind: "mean"; questionId: QuestionId; target: Extract<TargetValue, { kind: "mean" }> };
+
+export interface SynthesisRun {
+  id: RunId;
+  projectId: ProjectId;
+  sourceRevisionId: SourceRevisionId;
+  targetSnapshot: ProjectTargets;
+  seed: number;
+  engineVersion: number;
+  profilerVersion: number;
+  createdAt: string;
+}
+
 export interface SynthesisProject {
   id: ProjectId;
   googleAccountId: GoogleAccountId;
@@ -228,7 +256,7 @@ export interface NormalizedResponse {
   createdAt?: string;
   lastSubmittedAt?: string;
   answers: Readonly<Record<QuestionId, AnswerSlot>>;
-  origin: "original";
+  origin: "original" | "synthetic";
   path: PathResolution;
 }
 

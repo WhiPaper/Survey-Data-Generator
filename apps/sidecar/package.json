@@ -27,7 +27,8 @@
     "@survey-synth/domain": "workspace:*",
     "@survey-synth/statistics": "workspace:*",
     "@survey-synth/synthesis-core": "workspace:*",
-    "better-sqlite3-multiple-ciphers": "13.0.3"
+    "better-sqlite3-multiple-ciphers": "13.0.3",
+    "highs": "1.15.2"
   },
   "devDependencies": {
     "vitest": "^3.2.4"

@@ -9,6 +9,8 @@ import {
   FormsListParamsSchema,
   ProjectsDeleteParamsSchema,
   ProjectsGetParamsSchema,
+  SynthesisCancelParamsSchema,
+  SynthesisStartParamsSchema,
 } from "@survey-synth/contracts";
 
 import {
@@ -30,6 +32,7 @@ import {
 import { stderrLogger } from "./rpc/logger.js";
 import { createSidecarServer } from "./rpc/server.js";
 import { ProjectDatabase, ProjectRepository, defaultDatabasePath } from "./persistence/index.js";
+import { SynthesisJobs } from "./application/synthesis-jobs.js";
 
 const hostClient = createHostCapabilityClient(process.stdout);
 const accountStatePath = process.env.SURVEY_SYNTH_ACCOUNT_STORE_PATH;
@@ -58,6 +61,7 @@ const auth = new GoogleAuthServiceImpl({
 });
 let database: Promise<ProjectDatabase | null> = Promise.resolve(null);
 let projects: Promise<ProjectRepository | null> = Promise.resolve(null);
+let synthesisJobs: Promise<SynthesisJobs | null> = Promise.resolve(null);
 
 const server = createSidecarServer({
   input: process.stdin,
@@ -65,6 +69,7 @@ const server = createSidecarServer({
   logger: stderrLogger,
   onShutdown: async () => {
     for (const controller of activeImportControllers.values()) controller.abort();
+    (await synthesisJobs)?.shutdown();
     forms.cancelImports();
     await oauth.close();
     try {
@@ -82,6 +87,38 @@ const server = createSidecarServer({
       (await projects)?.get(ProjectsGetParamsSchema.parse(params).projectId as never) ?? null,
     "projects.delete": async (params) => {
       (await projects)?.delete(ProjectsDeleteParamsSchema.parse(params).projectId as never);
+      return authActionResult();
+    },
+    "synthesis.start": async (params) => {
+      const input = SynthesisStartParamsSchema.parse(params);
+      const repository = await projects;
+      const source = repository?.loadSynthesisSource(input.projectId as never) ?? null;
+      if (source === null)
+        return {
+          status: "infeasible" as const,
+          issues: [
+            { code: "PROJECT_NOT_FOUND", message: "Project source revision is unavailable" },
+          ],
+        };
+      const outcome = await (await synthesisJobs)!.run(
+        input.operationId ?? randomUUID(),
+        input.projectId,
+        source,
+        input.targets as never,
+        input.seed,
+      );
+      return "issues" in outcome
+        ? { status: outcome.status, issues: outcome.issues }
+        : {
+            status: "success" as const,
+            runId: outcome.runId,
+            finalResponseCount: outcome.finalResponseCount,
+          };
+    },
+    "synthesis.cancel": (params) => {
+      void synthesisJobs.then((jobs) =>
+        jobs?.cancel(SynthesisCancelParamsSchema.parse(params).operationId),
+      );
       return authActionResult();
     },
     "session.get": () => auth.getSession(),
@@ -152,6 +189,9 @@ database =
     ? Promise.resolve(null)
     : ProjectDatabase.open(databasePath, new RemoteSecureSecretStore(hostClient));
 projects = database.then((db) => (db === null ? null : new ProjectRepository(db)));
+synthesisJobs = projects.then((repository) =>
+  repository === null ? null : new SynthesisJobs(repository),
+);
 void database.catch(() => {
   stderrLogger.error("sidecar_startup_failed", { errorCode: "BACKEND_UNAVAILABLE" });
   server.shutdown();

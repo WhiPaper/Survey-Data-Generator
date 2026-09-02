@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { FormId, FormListItem, GoogleAccountId, SessionView } from "@survey-synth/contracts";
+import type { ProjectTargets } from "@survey-synth/domain";
 
 import {
   BackendClientError,
@@ -17,6 +18,8 @@ import {
   logout,
   revokeAccess,
   switchAccount,
+  cancelSynthesis,
+  startSynthesis,
 } from "./api/backend";
 
 export const sessionQueryKey = ["session.get"] as const;
@@ -62,6 +65,10 @@ export function App() {
   const queryClient = useQueryClient();
   const [formQuery, setFormQuery] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [finalResponseCount, setFinalResponseCount] = useState(0);
+  const [targetQuestionId, setTargetQuestionId] = useState("");
+  const [targetOptionKey, setTargetOptionKey] = useState("");
+  const [targetRatio, setTargetRatio] = useState("0.5");
   const debouncedFormQuery = useDebouncedValue(formQuery, 250);
 
   const sessionQuery = useQuery({
@@ -146,8 +153,23 @@ export function App() {
   const cancelMutation = useMutation({
     mutationFn: (operationId: string) => cancelFormImport(operationId),
   });
+  const synthesisMutation = useMutation({
+    mutationFn: ({
+      projectId,
+      targets,
+      operationId,
+    }: {
+      projectId: string;
+      targets: ProjectTargets;
+      operationId: string;
+    }) => startSynthesis(projectId, targets, 1, operationId),
+  });
+  const cancelSynthesisMutation = useMutation({
+    mutationFn: (operationId: string) => cancelSynthesis(operationId),
+  });
 
   const importOperationId = importMutation.variables?.operationId;
+  const synthesisOperationId = synthesisMutation.variables?.operationId;
   const authBusy =
     loginMutation.isPending ||
     addAccountMutation.isPending ||
@@ -207,6 +229,33 @@ export function App() {
   const handleCancelImport = (): void => {
     if (importOperationId === undefined) return;
     cancelMutation.mutate(importOperationId);
+  };
+  const handleGenerate = (): void => {
+    if (
+      selectedProjectId === null ||
+      !Number.isInteger(finalResponseCount) ||
+      finalResponseCount < 0
+    )
+      return;
+    const questionTargets =
+      targetQuestionId.trim() === "" || targetOptionKey.trim() === ""
+        ? []
+        : [
+            {
+              kind: "option" as const,
+              questionId: targetQuestionId.trim() as never,
+              optionKey: targetOptionKey.trim() as never,
+              target: { kind: "ratio" as const, value: Number(targetRatio) },
+            },
+          ];
+    synthesisMutation.mutate({
+      projectId: selectedProjectId,
+      targets: { targetResponseCount: finalResponseCount, questionTargets },
+      operationId: crypto.randomUUID(),
+    });
+  };
+  const handleCancelSynthesis = (): void => {
+    if (synthesisOperationId !== undefined) cancelSynthesisMutation.mutate(synthesisOperationId);
   };
 
   if (sessionQuery.isPending) {
@@ -368,6 +417,71 @@ export function App() {
               질문 {projectQuery.data.questionCount}개 · 프로필 {projectQuery.data.profileCount}개 ·
               로컬 저장됨
             </p>
+            <label>
+              최종 응답 수
+              <input
+                type="number"
+                min="0"
+                value={finalResponseCount || projectQuery.data.responseCount}
+                onChange={(event) => setFinalResponseCount(Number(event.target.value))}
+                disabled={synthesisMutation.isPending}
+              />
+            </label>
+            <details>
+              <summary>기본 비율 목표</summary>
+              <label>
+                질문 ID
+                <input
+                  value={targetQuestionId}
+                  onChange={(event) => setTargetQuestionId(event.target.value)}
+                  disabled={synthesisMutation.isPending}
+                />
+              </label>
+              <label>
+                옵션 키
+                <input
+                  value={targetOptionKey}
+                  onChange={(event) => setTargetOptionKey(event.target.value)}
+                  disabled={synthesisMutation.isPending}
+                />
+              </label>
+              <label>
+                비율
+                <input
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={targetRatio}
+                  onChange={(event) => setTargetRatio(event.target.value)}
+                  disabled={synthesisMutation.isPending}
+                />
+              </label>
+            </details>
+            <button type="button" onClick={handleGenerate} disabled={synthesisMutation.isPending}>
+              생성
+            </button>
+            {synthesisMutation.isPending && (
+              <button
+                type="button"
+                onClick={handleCancelSynthesis}
+                disabled={cancelSynthesisMutation.isPending}
+              >
+                생성 취소
+              </button>
+            )}
+            {synthesisMutation.data?.status === "success" && (
+              <p role="status">{synthesisMutation.data.finalResponseCount}개 응답 생성</p>
+            )}
+            {synthesisMutation.data !== undefined &&
+              synthesisMutation.data.status !== "success" && (
+                <p role="alert">
+                  {synthesisMutation.data.issues.map((issue) => issue.message).join(" ")}
+                </p>
+              )}
+            {synthesisMutation.error !== null && (
+              <p role="alert">{errorMessage(synthesisMutation.error)}</p>
+            )}
           </div>
         )}
       </section>
