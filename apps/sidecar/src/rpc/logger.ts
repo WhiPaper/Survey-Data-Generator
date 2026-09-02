@@ -11,6 +11,7 @@ export interface SafeLogFields {
   readonly questions?: number;
   readonly durationMs?: number;
   readonly errorCode?: string;
+  readonly scopesGranted?: number;
 }
 
 type SafeLogField = keyof SafeLogFields;
@@ -26,6 +27,7 @@ const safeLogFields: readonly SafeLogField[] = [
   "questions",
   "durationMs",
   "errorCode",
+  "scopesGranted",
 ];
 
 export interface SafeLogger {

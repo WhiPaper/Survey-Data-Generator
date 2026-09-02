@@ -76,6 +76,18 @@ describe("packaged-shape sidecar process boundary", () => {
         `${JSON.stringify({
           v: VERSIONS.protocolVersion,
           type: "request",
+          id: "integration_session",
+          method: "session.get",
+          params: {},
+        })}\n`,
+      );
+      const session = parseResponseEnvelope(await sidecar.nextMessage());
+      expect(session).toMatchObject({ id: "integration_session", ok: true, result: null });
+
+      sidecar.child.stdin.write(
+        `${JSON.stringify({
+          v: VERSIONS.protocolVersion,
+          type: "request",
           id: "integration_shutdown",
           method: "system.shutdown",
           params: {},

@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Map, Value};
 
 use crate::error::BackendErrorDto;
@@ -29,6 +30,7 @@ pub struct SidecarCommand {
     pub program: String,
     pub args: Vec<String>,
     pub current_dir: Option<PathBuf>,
+    pub environment: Vec<(String, String)>,
 }
 
 impl SidecarCommand {
@@ -37,7 +39,13 @@ impl SidecarCommand {
             program: program.into(),
             args,
             current_dir: None,
+            environment: Vec::new(),
         }
+    }
+
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.environment.push((key.into(), value.into()));
+        self
     }
 
     pub fn node(script: impl Into<PathBuf>) -> Self {
@@ -66,6 +74,7 @@ impl SidecarCommand {
 struct SharedState {
     pending: Mutex<HashMap<String, mpsc::Sender<Result<Value, BackendErrorDto>>>>,
     status: Mutex<BridgeStatus>,
+    stdin: Mutex<Option<ChildStdin>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +86,6 @@ enum BridgeStatus {
 
 pub struct BackendBridge {
     shared: Arc<SharedState>,
-    stdin: Mutex<Option<ChildStdin>>,
     child: Mutex<Child>,
 }
 
@@ -86,6 +94,7 @@ impl BackendBridge {
         let mut process = Command::new(&command.program);
         process
             .args(&command.args)
+            .envs(command.environment.iter().map(|(key, value)| (key, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -136,6 +145,7 @@ impl BackendBridge {
         let shared = Arc::new(SharedState {
             pending: Mutex::new(HashMap::new()),
             status: Mutex::new(BridgeStatus::Ready),
+            stdin: Mutex::new(Some(stdin)),
         });
 
         let reader_state = Arc::clone(&shared);
@@ -161,7 +171,6 @@ impl BackendBridge {
 
         Ok(Self {
             shared,
-            stdin: Mutex::new(Some(stdin)),
             child: Mutex::new(child),
         })
     }
@@ -199,6 +208,7 @@ impl BackendBridge {
 
         let write_result = (|| {
             let mut stdin = self
+                .shared
                 .stdin
                 .lock()
                 .map_err(|_| BackendErrorDto::internal("Sidecar stdin lock failed"))?;
@@ -334,6 +344,215 @@ fn validate_ready(ready: &Value) -> Result<(), String> {
     Ok(())
 }
 
+trait SecretStore: Send + Sync {
+    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, ()>;
+    fn set(&self, key: &str, value: &[u8]) -> Result<(), ()>;
+    fn delete(&self, key: &str) -> Result<(), ()>;
+}
+
+struct KeyringSecretStore;
+
+const KEYRING_SERVICE: &str = "com.surveysynth.desktop";
+
+impl SecretStore for KeyringSecretStore {
+    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, ()> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, key).map_err(|_| ())?;
+        match entry.get_secret() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(_) => Err(()),
+        }
+    }
+
+    fn set(&self, key: &str, value: &[u8]) -> Result<(), ()> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, key).map_err(|_| ())?;
+        entry.set_secret(value).map_err(|_| ())
+    }
+
+    fn delete(&self, key: &str) -> Result<(), ()> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, key).map_err(|_| ())?;
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(_) => Err(()),
+        }
+    }
+}
+
+fn host_request_fields(message: &Value) -> Result<(String, String, Value), BackendErrorDto> {
+    if message.get("v").and_then(Value::as_u64) != Some(expected_protocol_version()) {
+        return Err(BackendErrorDto::validation(
+            "Host capability protocol version is incompatible",
+        ));
+    }
+    if message.get("type").and_then(Value::as_str) != Some("host_request") {
+        return Err(BackendErrorDto::validation("Message is not a host request"));
+    }
+    let id = message
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty() && !id.contains('\n'))
+        .ok_or_else(|| BackendErrorDto::validation("Host request id is invalid"))?
+        .to_owned();
+    let method = message
+        .get("method")
+        .and_then(Value::as_str)
+        .filter(|method| {
+            matches!(
+                *method,
+                "host.secret.get" | "host.secret.set" | "host.secret.delete" | "host.open_external"
+            )
+        })
+        .ok_or_else(|| BackendErrorDto::validation("Host capability method is invalid"))?
+        .to_owned();
+    let params = message
+        .get("params")
+        .cloned()
+        .ok_or_else(|| BackendErrorDto::validation("Host capability parameters are missing"))?;
+    Ok((id, method, params))
+}
+
+fn string_param(params: &Value, name: &str) -> Result<String, BackendErrorDto> {
+    params
+        .as_object()
+        .and_then(|object| object.get(name))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
+        .map(str::to_owned)
+        .ok_or_else(|| BackendErrorDto::validation("Host capability parameters are invalid"))
+}
+
+fn send_host_response(shared: &Arc<SharedState>, id: &str, result: Result<Value, BackendErrorDto>) {
+    let message = match result {
+        Ok(result) => json!({
+            "v": expected_protocol_version(),
+            "type": "host_response",
+            "id": id,
+            "ok": true,
+            "result": result,
+        }),
+        Err(error) => json!({
+            "v": expected_protocol_version(),
+            "type": "host_response",
+            "id": id,
+            "ok": false,
+            "error": error,
+        }),
+    };
+    let write_result = (|| {
+        let mut stdin = shared
+            .stdin
+            .lock()
+            .map_err(|_| BackendErrorDto::internal("Sidecar stdin lock failed"))?;
+        let stream = stdin
+            .as_mut()
+            .ok_or_else(|| BackendErrorDto::unavailable("Sidecar stdin is closed"))?;
+        let encoded = serde_json::to_string(&message)
+            .map_err(|_| BackendErrorDto::internal("Host response could not be encoded"))?;
+        stream
+            .write_all(format!("{encoded}\n").as_bytes())
+            .and_then(|_| stream.flush())
+            .map_err(|_| BackendErrorDto::unavailable("Could not write host response"))
+    })();
+    if write_result.is_err() {
+        mark_unavailable(shared);
+    }
+}
+
+fn handle_host_request<S: SecretStore>(message: &Value, shared: &Arc<SharedState>, secrets: &S) {
+    let (id, result) = match execute_host_request(message, secrets) {
+        Ok((id, result)) => (id, result),
+        Err(error) => {
+            if let Some(id) = message.get("id").and_then(Value::as_str) {
+                send_host_response(shared, id, Err(error));
+            } else {
+                mark_unavailable(shared);
+            }
+            return;
+        }
+    };
+    send_host_response(shared, &id, result);
+}
+
+fn execute_host_request<S: SecretStore>(
+    message: &Value,
+    secrets: &S,
+) -> Result<(String, Result<Value, BackendErrorDto>), BackendErrorDto> {
+    let (id, method, params) = host_request_fields(message)?;
+    let result = match method.as_str() {
+        "host.secret.get" => string_param(&params, "key").and_then(|key| {
+            secrets
+                .get(&key)
+                .map_err(|_| BackendErrorDto::internal("Secure secret store is unavailable"))
+                .map(|value| json!({ "value": value.map(|bytes| BASE64.encode(bytes)) }))
+        }),
+        "host.secret.set" => {
+            let key = string_param(&params, "key");
+            let value = string_param(&params, "value");
+            key.and_then(|key| value.map(|value| (key, value)))
+                .and_then(|(key, value)| {
+                    BASE64
+                        .decode(value)
+                        .map_err(|_| {
+                            BackendErrorDto::validation("Host capability parameters are invalid")
+                        })
+                        .and_then(|bytes| {
+                            secrets.set(&key, &bytes).map_err(|_| {
+                                BackendErrorDto::internal("Secure secret store is unavailable")
+                            })
+                        })
+                })
+                .map(|()| json!({ "ok": true }))
+        }
+        "host.secret.delete" => string_param(&params, "key").and_then(|key| {
+            secrets
+                .delete(&key)
+                .map_err(|_| BackendErrorDto::internal("Secure secret store is unavailable"))
+                .map(|()| json!({ "ok": true }))
+        }),
+        "host.open_external" => string_param(&params, "url")
+            .and_then(|url| open_external(&url).map(|()| json!({ "ok": true }))),
+        _ => Err(BackendErrorDto::validation(
+            "Host capability method is invalid",
+        )),
+    };
+    Ok((id, result))
+}
+
+fn open_external(url: &str) -> Result<(), BackendErrorDto> {
+    if !url.starts_with("https://accounts.google.com/") || url.chars().any(char::is_control) {
+        return Err(BackendErrorDto::validation("External URL is not allowed"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", url])
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| BackendErrorDto::internal("System browser could not be opened"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| BackendErrorDto::internal("System browser could not be opened"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| BackendErrorDto::internal("System browser could not be opened"))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+    {
+        let _ = url;
+        Err(BackendErrorDto::internal("System browser is unsupported"))
+    }
+}
+
 fn read_ready(
     stdout: ChildStdout,
     sender: mpsc::Sender<Result<(BufReader<ChildStdout>, Value), String>>,
@@ -351,6 +570,7 @@ fn read_ready(
 }
 
 fn read_responses(reader: BufReader<impl std::io::Read>, shared: Arc<SharedState>) {
+    let secrets = KeyringSecretStore;
     for line in reader.lines() {
         let line = match line {
             Ok(line) => line,
@@ -366,6 +586,10 @@ fn read_responses(reader: BufReader<impl std::io::Read>, shared: Arc<SharedState
                 return;
             }
         };
+        if message.get("type").and_then(Value::as_str) == Some("host_request") {
+            handle_host_request(&message, &shared, &secrets);
+            continue;
+        }
         if !is_response(&message) {
             mark_unavailable(&shared);
             return;
@@ -451,9 +675,38 @@ fn startup_failure<T>(child: &mut Child, message: &str) -> Result<T, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        expected_protocol_version, parse_transport_request, validate_ready, EXPECTED_APP_VERSION,
+        execute_host_request, expected_protocol_version, host_request_fields, open_external,
+        parse_transport_request, validate_ready, SecretStore, BASE64, EXPECTED_APP_VERSION,
     };
+    use base64::Engine as _;
     use serde_json::json;
+    use std::{collections::HashMap, sync::Mutex};
+
+    #[derive(Default)]
+    struct TestSecretStore {
+        values: Mutex<HashMap<String, Vec<u8>>>,
+    }
+
+    impl SecretStore for TestSecretStore {
+        fn get(&self, key: &str) -> Result<Option<Vec<u8>>, ()> {
+            self.values
+                .lock()
+                .map_err(|_| ())
+                .map(|values| values.get(key).cloned())
+        }
+
+        fn set(&self, key: &str, value: &[u8]) -> Result<(), ()> {
+            self.values.lock().map_err(|_| ()).map(|mut values| {
+                values.insert(key.to_owned(), value.to_vec());
+            })
+        }
+
+        fn delete(&self, key: &str) -> Result<(), ()> {
+            self.values.lock().map_err(|_| ()).map(|mut values| {
+                values.remove(key);
+            })
+        }
+    }
 
     #[test]
     fn validates_transport_request_without_business_fields() {
@@ -491,5 +744,72 @@ mod tests {
             "profilerVersion": 0
         }))
         .is_err());
+    }
+
+    #[test]
+    fn validates_sidecar_host_capability_requests_and_url_boundary() {
+        let request = json!({
+            "v": expected_protocol_version(),
+            "type": "host_request",
+            "id": "host_1",
+            "method": "host.secret.get",
+            "params": { "key": "google:subject:refresh_token" }
+        });
+        let (id, method, params) = host_request_fields(&request).expect("valid host request");
+        assert_eq!(id, "host_1");
+        assert_eq!(method, "host.secret.get");
+        assert_eq!(params["key"], "google:subject:refresh_token");
+        let missing_key = json!({
+            "v": expected_protocol_version(),
+            "type": "host_request",
+            "id": "host_2",
+            "method": "host.secret.get",
+            "params": {}
+        });
+        assert!(host_request_fields(&missing_key).is_ok());
+        assert!(
+            execute_host_request(&missing_key, &TestSecretStore::default())
+                .expect("valid host request shape")
+                .1
+                .is_err()
+        );
+        assert!(open_external("https://evil.example/").is_err());
+    }
+
+    #[test]
+    fn round_trips_secure_secret_capability_without_plaintext_transport() {
+        let secrets = TestSecretStore::default();
+        let value = BASE64.encode("refresh-secret");
+        let set = json!({
+            "v": expected_protocol_version(),
+            "type": "host_request",
+            "id": "host_set",
+            "method": "host.secret.set",
+            "params": { "key": "google:subject:refresh_token", "value": value }
+        });
+        let (_, result) = execute_host_request(&set, &secrets).expect("valid host request");
+        assert_eq!(result.expect("secret set"), json!({ "ok": true }));
+
+        let get = json!({
+            "v": expected_protocol_version(),
+            "type": "host_request",
+            "id": "host_get",
+            "method": "host.secret.get",
+            "params": { "key": "google:subject:refresh_token" }
+        });
+        let (_, result) = execute_host_request(&get, &secrets).expect("valid host request");
+        assert_eq!(result.expect("secret get"), json!({ "value": value }));
+
+        let delete = json!({
+            "v": expected_protocol_version(),
+            "type": "host_request",
+            "id": "host_delete",
+            "method": "host.secret.delete",
+            "params": { "key": "google:subject:refresh_token" }
+        });
+        let (_, result) = execute_host_request(&delete, &secrets).expect("valid host request");
+        assert_eq!(result.expect("secret delete"), json!({ "ok": true }));
+        let (_, result) = execute_host_request(&get, &secrets).expect("valid host request");
+        assert_eq!(result.expect("secret get"), json!({ "value": null }));
     }
 }

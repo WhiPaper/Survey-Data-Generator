@@ -1,6 +1,6 @@
 use std::{path::PathBuf, thread, time::Duration};
 
-use serde_json::json;
+use serde_json::{json, Value};
 use survey_synth_host::bridge::{BackendBridge, SidecarCommand};
 
 const EXPECTED_APP_VERSION: &str = env!("SURVEY_SYNTH_APPVERSION");
@@ -69,6 +69,20 @@ fn launches_actual_sidecar_and_round_trips_system_ping() {
 
     let result = bridge.send(&request.to_string()).expect("ping response");
     assert_eq!(result, json!({ "ok": true, "message": "pong" }));
+
+    let session_request = json!({
+        "v": expected_protocol_version(),
+        "type": "request",
+        "id": "rust_session",
+        "method": "session.get",
+        "params": {}
+    });
+    assert_eq!(
+        bridge
+            .send(&session_request.to_string())
+            .expect("session response"),
+        Value::Null
+    );
     bridge.shutdown();
 }
 

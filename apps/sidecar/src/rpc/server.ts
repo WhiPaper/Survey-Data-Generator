@@ -15,12 +15,18 @@ import {
 
 import { NdjsonDecoder, encodeNdjson } from "./ndjson.js";
 import type { SafeLogger } from "./logger.js";
+import { isSidecarError } from "../errors.js";
+import type { HostCapabilityClient } from "../host.js";
+
+export type RpcHandler = (params: unknown) => Promise<unknown> | unknown;
 
 export interface SidecarServerOptions {
   readonly input: Readable;
   readonly output: Writable;
   readonly logger: SafeLogger;
-  readonly onShutdown?: () => void;
+  readonly onShutdown?: () => void | Promise<void>;
+  readonly handlers?: Readonly<Record<string, RpcHandler>>;
+  readonly hostClient?: HostCapabilityClient;
 }
 
 export interface SidecarServer {
@@ -69,6 +75,7 @@ export const createSidecarServer = (options: SidecarServerOptions): SidecarServe
     closing = true;
     shutdownRequested = true;
     options.input.pause();
+    options.hostClient?.close();
     options.onShutdown?.();
   };
 
@@ -90,7 +97,7 @@ export const createSidecarServer = (options: SidecarServerOptions): SidecarServe
     return `invalid_${invalidMessageId}`;
   };
 
-  const handleLine = (line: string): void => {
+  const handleLine = async (line: string): Promise<void> => {
     const id = responseId(line);
     let raw: unknown;
     try {
@@ -124,9 +131,17 @@ export const createSidecarServer = (options: SidecarServerOptions): SidecarServe
         return;
       }
 
-      writeResponse(createErrorResponse(request.id, notFoundError(request.method)));
-    } catch {
-      writeResponse(createErrorResponse(request.id, internalError()));
+      const handler = options.handlers?.[request.method];
+      if (handler === undefined) {
+        writeResponse(createErrorResponse(request.id, notFoundError(request.method)));
+        return;
+      }
+      const result = await handler(request.params);
+      writeResponse(createSuccessResponse(request.id, result));
+    } catch (error: unknown) {
+      const backendError = isSidecarError(error) ? error.backendError : internalError();
+      options.logger.error("request_failed", { errorCode: backendError.code });
+      writeResponse(createErrorResponse(request.id, backendError));
     }
   };
 
@@ -136,14 +151,30 @@ export const createSidecarServer = (options: SidecarServerOptions): SidecarServe
   options.input.on("data", (chunk: string | Uint8Array) => {
     if (closing || shutdownRequested) return;
     for (const line of decoder.push(chunk)) {
-      handleLine(line);
+      let raw: unknown;
+      try {
+        raw = JSON.parse(line) as unknown;
+      } catch {
+        void handleLine(line);
+        continue;
+      }
+      if (options.hostClient?.handleMessage(raw)) continue;
+      void handleLine(line);
       if (closing || shutdownRequested) break;
     }
   });
   options.input.on("end", () => {
     if (closing) return;
     for (const line of decoder.finish()) {
-      handleLine(line);
+      let raw: unknown;
+      try {
+        raw = JSON.parse(line) as unknown;
+      } catch {
+        void handleLine(line);
+        continue;
+      }
+      if (options.hostClient?.handleMessage(raw)) continue;
+      void handleLine(line);
       if (closing || shutdownRequested) break;
     }
     if (!closing && !shutdownRequested) shutdown();

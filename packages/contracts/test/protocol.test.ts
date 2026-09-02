@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   BackendErrorSchema,
   VERSIONS,
+  parseRpcResult,
   assertCompatibleReady,
   createPingRequest,
-  parseRpcResult,
   parseRpcRequest,
   parseSidecarReady,
 } from "../src/index.js";
@@ -71,5 +71,36 @@ describe("shared RPC contracts", () => {
       message: "pong",
     });
     expect(() => parseRpcResult("system.ping", { ok: true, message: "not-pong" })).toThrow();
+    expect(
+      parseRpcResult("session.get", {
+        account: { id: "account-1", email: "user@example.com" },
+      }),
+    ).toEqual({ account: { id: "account-1", email: "user@example.com" } });
+    expect(() =>
+      parseRpcResult("session.get", {
+        account: { id: "account-1", email: "user@example.com", accessToken: "secret" },
+      }),
+    ).toThrow();
+  });
+
+  it("validates host capability messages separately from frontend RPC", () => {
+    expect(() =>
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "r_auth",
+        method: "auth.switchAccount",
+        params: { id: "account-1" },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "r_auth",
+        method: "auth.switchAccount",
+        params: {},
+      }),
+    ).toThrow();
   });
 });

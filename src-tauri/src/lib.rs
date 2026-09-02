@@ -26,8 +26,12 @@ async fn backend_call(
 pub fn run() {
     let app = match tauri::Builder::default()
         .setup(|app| {
-            let bridge = BackendBridge::spawn(bridge::SidecarCommand::from_environment())
-                .map_err(std::io::Error::other)?;
+            let app_data_dir = app.path().app_data_dir().map_err(std::io::Error::other)?;
+            let bridge = BackendBridge::spawn(bridge::SidecarCommand::from_environment().with_env(
+                "SURVEY_SYNTH_APP_DATA_DIR",
+                app_data_dir.to_string_lossy().into_owned(),
+            ))
+            .map_err(std::io::Error::other)?;
             app.manage(AppState {
                 bridge: Arc::new(bridge),
             });

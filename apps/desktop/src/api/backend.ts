@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   BackendErrorSchema,
+  type GoogleAccountId,
+  type GoogleAccountView,
+  type SessionView,
   type BackendError,
   type BackendRpc,
   createRequest,
@@ -81,3 +84,28 @@ export const callBackend = async <M extends RpcMethod>(
 };
 
 export const pingBackend = (backend?: BackendInvoker) => callBackend("system.ping", {}, backend);
+
+export const getSession = (backend?: BackendInvoker): Promise<SessionView | null> =>
+  callBackend("session.get", {}, backend);
+
+export const login = (backend?: BackendInvoker): Promise<SessionView> =>
+  callBackend("auth.login", {}, backend);
+
+export const getAccounts = (backend?: BackendInvoker): Promise<GoogleAccountView[]> =>
+  callBackend("auth.accounts", {}, backend);
+
+export const addAccount = (backend?: BackendInvoker): Promise<SessionView> =>
+  callBackend("auth.addAccount", {}, backend);
+
+export const switchAccount = (
+  id: GoogleAccountId,
+  backend?: BackendInvoker,
+): Promise<SessionView> => callBackend("auth.switchAccount", { id }, backend);
+
+export const logout = (backend?: BackendInvoker): Promise<{ ok: true }> =>
+  callBackend("auth.logout", {}, backend);
+
+export const revokeAccess = (
+  id: GoogleAccountId,
+  backend?: BackendInvoker,
+): Promise<{ ok: true }> => callBackend("auth.revokeAccess", { id }, backend);

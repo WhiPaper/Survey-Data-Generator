@@ -1,7 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { BackendClientError, callBackend, pingBackend } from "../src/api/backend";
-import { VERSIONS, parseRpcRequest } from "@survey-synth/contracts";
+import {
+  BackendClientError,
+  addAccount,
+  callBackend,
+  getAccounts,
+  getSession,
+  login,
+  logout,
+  pingBackend,
+  revokeAccess,
+  switchAccount,
+} from "../src/api/backend";
+import { VERSIONS, parseRpcRequest, type GoogleAccountId } from "@survey-synth/contracts";
 
 describe("typed desktop backend client", () => {
   it("sends system.ping through the generic backend command and parses its response", async () => {
@@ -48,5 +59,41 @@ describe("typed desktop backend client", () => {
       }),
     );
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("exposes frontend-safe session and account actions through typed RPC", async () => {
+    const invoke = vi.fn(async (_command: string, args?: Record<string, unknown>) => {
+      const request = parseRpcRequest(JSON.parse(String(args?.request)) as unknown);
+      switch (request.method) {
+        case "session.get":
+          return { account: { id: "account-1", email: "user@example.com" } };
+        case "auth.login":
+        case "auth.addAccount":
+        case "auth.switchAccount":
+          return { account: { id: "account-1", email: "user@example.com" } };
+        case "auth.accounts":
+          return [{ id: "account-1", email: "user@example.com" }];
+        case "auth.logout":
+        case "auth.revokeAccess":
+          return { ok: true };
+        default:
+          throw new Error(`Unexpected method ${request.method}`);
+      }
+    });
+
+    await expect(getSession({ invoke })).resolves.toEqual({
+      account: { id: "account-1", email: "user@example.com" },
+    });
+    await expect(login({ invoke })).resolves.toMatchObject({
+      account: { email: "user@example.com" },
+    });
+    await expect(getAccounts({ invoke })).resolves.toHaveLength(1);
+    await expect(addAccount({ invoke })).resolves.toBeTruthy();
+    await expect(switchAccount("account-1" as GoogleAccountId, { invoke })).resolves.toBeTruthy();
+    await expect(logout({ invoke })).resolves.toEqual({ ok: true });
+    await expect(revokeAccess("account-1" as GoogleAccountId, { invoke })).resolves.toEqual({
+      ok: true,
+    });
+    expect(invoke).toHaveBeenCalledTimes(7);
   });
 });

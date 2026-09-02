@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+import type { GoogleAccountId } from "@survey-synth/domain";
+
+export type { GoogleAccountId } from "@survey-synth/domain";
+
 import { VERSIONS } from "./version.js";
 
 export const BackendErrorCodeSchema = z.enum([
@@ -28,6 +32,29 @@ export const BackendErrorSchema = z
   .strict();
 
 export type BackendError = z.infer<typeof BackendErrorSchema>;
+
+export const GoogleAccountIdSchema = z
+  .string()
+  .min(1)
+  .transform((value) => value as GoogleAccountId);
+
+export const GoogleAccountViewSchema = z
+  .object({
+    id: GoogleAccountIdSchema,
+    email: z.string().email(),
+    displayName: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type GoogleAccountView = z.infer<typeof GoogleAccountViewSchema>;
+
+export const SessionViewSchema = z
+  .object({
+    account: GoogleAccountViewSchema,
+  })
+  .strict();
+
+export type SessionView = z.infer<typeof SessionViewSchema>;
 
 export const RequestEnvelopeSchema = z
   .object({
@@ -108,6 +135,82 @@ export const SystemShutdownResultSchema = z
 
 export type SystemShutdownResult = z.infer<typeof SystemShutdownResultSchema>;
 
+export const AuthActionResultSchema = z.object({ ok: z.literal(true) }).strict();
+export type AuthActionResult = z.infer<typeof AuthActionResultSchema>;
+
+export const SessionGetParamsSchema = z.object({}).strict();
+export type SessionGetParams = z.infer<typeof SessionGetParamsSchema>;
+
+export const AuthLoginParamsSchema = z.object({}).strict();
+export type AuthLoginParams = z.infer<typeof AuthLoginParamsSchema>;
+
+export const AuthAccountsParamsSchema = z.object({}).strict();
+export type AuthAccountsParams = z.infer<typeof AuthAccountsParamsSchema>;
+
+export const AuthAddAccountParamsSchema = z.object({}).strict();
+export type AuthAddAccountParams = z.infer<typeof AuthAddAccountParamsSchema>;
+
+export const AuthSwitchAccountParamsSchema = z.object({ id: GoogleAccountIdSchema }).strict();
+export type AuthSwitchAccountParams = z.infer<typeof AuthSwitchAccountParamsSchema>;
+
+export const AuthLogoutParamsSchema = z.object({}).strict();
+export type AuthLogoutParams = z.infer<typeof AuthLogoutParamsSchema>;
+
+export const AuthRevokeAccessParamsSchema = z.object({ id: GoogleAccountIdSchema }).strict();
+export type AuthRevokeAccessParams = z.infer<typeof AuthRevokeAccessParamsSchema>;
+
+export const HostCapabilityMethodSchema = z.enum([
+  "host.secret.get",
+  "host.secret.set",
+  "host.secret.delete",
+  "host.open_external",
+]);
+export type HostCapabilityMethod = z.infer<typeof HostCapabilityMethodSchema>;
+
+export const HostSecretGetResultSchema = z.object({ value: z.string().nullable() }).strict();
+export type HostSecretGetResult = z.infer<typeof HostSecretGetResultSchema>;
+
+export const HostMutationResultSchema = z.object({ ok: z.literal(true) }).strict();
+export type HostMutationResult = z.infer<typeof HostMutationResultSchema>;
+
+export const HostRequestSchema = z
+  .object({
+    v: z.literal(VERSIONS.protocolVersion),
+    type: z.literal("host_request"),
+    id: z.string().min(1),
+    method: HostCapabilityMethodSchema,
+    params: z.unknown(),
+  })
+  .strict();
+export type HostRequest = z.infer<typeof HostRequestSchema>;
+
+export const HostSuccessResponseSchema = z
+  .object({
+    v: z.literal(VERSIONS.protocolVersion),
+    type: z.literal("host_response"),
+    id: z.string().min(1),
+    ok: z.literal(true),
+    result: z.unknown(),
+  })
+  .strict();
+
+export const HostErrorResponseSchema = z
+  .object({
+    v: z.literal(VERSIONS.protocolVersion),
+    type: z.literal("host_response"),
+    id: z.string().min(1),
+    ok: z.literal(false),
+    error: BackendErrorSchema,
+  })
+  .strict();
+
+export const HostResponseSchema = z.discriminatedUnion("ok", [
+  HostSuccessResponseSchema,
+  HostErrorResponseSchema,
+]);
+
+export type HostResponse = z.infer<typeof HostResponseSchema>;
+
 export interface BackendRpc {
   "system.ping": {
     input: SystemPingParams;
@@ -117,15 +220,48 @@ export interface BackendRpc {
     input: SystemShutdownParams;
     output: SystemShutdownResult;
   };
+  "session.get": {
+    input: SessionGetParams;
+    output: SessionView | null;
+  };
+  "auth.login": {
+    input: AuthLoginParams;
+    output: SessionView;
+  };
+  "auth.accounts": {
+    input: AuthAccountsParams;
+    output: GoogleAccountView[];
+  };
+  "auth.addAccount": {
+    input: AuthAddAccountParams;
+    output: SessionView;
+  };
+  "auth.switchAccount": {
+    input: AuthSwitchAccountParams;
+    output: SessionView;
+  };
+  "auth.logout": {
+    input: AuthLogoutParams;
+    output: AuthActionResult;
+  };
+  "auth.revokeAccess": {
+    input: AuthRevokeAccessParams;
+    output: AuthActionResult;
+  };
 }
 
 export type RpcMethod = keyof BackendRpc;
 
-const rpcResultSchemas = {
+const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "system.ping": SystemPingResultSchema,
   "system.shutdown": SystemShutdownResultSchema,
-} satisfies {
-  [M in RpcMethod]: z.ZodType<BackendRpc[M]["output"]>;
+  "session.get": SessionViewSchema.nullable(),
+  "auth.login": SessionViewSchema,
+  "auth.accounts": z.array(GoogleAccountViewSchema),
+  "auth.addAccount": SessionViewSchema,
+  "auth.switchAccount": SessionViewSchema,
+  "auth.logout": AuthActionResultSchema,
+  "auth.revokeAccess": AuthActionResultSchema,
 };
 
 const parseKnownParams = (method: string, params: unknown): void => {
@@ -133,6 +269,20 @@ const parseKnownParams = (method: string, params: unknown): void => {
     SystemPingParamsSchema.parse(params);
   } else if (method === "system.shutdown") {
     SystemShutdownParamsSchema.parse(params);
+  } else if (method === "session.get") {
+    SessionGetParamsSchema.parse(params);
+  } else if (method === "auth.login") {
+    AuthLoginParamsSchema.parse(params);
+  } else if (method === "auth.accounts") {
+    AuthAccountsParamsSchema.parse(params);
+  } else if (method === "auth.addAccount") {
+    AuthAddAccountParamsSchema.parse(params);
+  } else if (method === "auth.switchAccount") {
+    AuthSwitchAccountParamsSchema.parse(params);
+  } else if (method === "auth.logout") {
+    AuthLogoutParamsSchema.parse(params);
+  } else if (method === "auth.revokeAccess") {
+    AuthRevokeAccessParamsSchema.parse(params);
   }
 };
 
