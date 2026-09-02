@@ -9,6 +9,8 @@ import {
   type GoogleAccountView,
   type SessionView,
   type BackendError,
+  type ProjectSummaryView,
+  type ProjectDetailView,
   type BackendRpc,
   createRequest,
   parseRpcResult,
@@ -137,3 +139,12 @@ export const cancelFormImport = (
   operationId: string,
   backend?: BackendInvoker,
 ): Promise<{ ok: true }> => callBackend("forms.import.cancel", { operationId }, backend);
+
+export const listProjects = (backend?: BackendInvoker): Promise<ProjectSummaryView[]> =>
+  callBackend("projects.list", {}, backend);
+export const getProject = (
+  projectId: string,
+  backend?: BackendInvoker,
+): Promise<ProjectDetailView | null> => callBackend("projects.get", { projectId }, backend);
+export const deleteProject = (projectId: string, backend?: BackendInvoker): Promise<{ ok: true }> =>
+  callBackend("projects.delete", { projectId }, backend);

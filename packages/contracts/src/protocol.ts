@@ -218,6 +218,31 @@ export const FormImportSummarySchema = z
 
 export type FormImportSummary = z.infer<typeof FormImportSummarySchema>;
 
+export const ProjectIdSchema = z.string().min(1);
+export const ProjectSummarySchema = z
+  .object({
+    id: ProjectIdSchema,
+    googleAccountId: GoogleAccountIdSchema,
+    googleFormId: FormIdSchema,
+    name: z.string().min(1),
+    currentSourceRevisionId: z.string().min(1),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+    responseCount: z.number().int().nonnegative(),
+    questionCount: z.number().int().nonnegative(),
+    profileCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ProjectSummaryView = z.infer<typeof ProjectSummarySchema>;
+export const ProjectDetailSchema = ProjectSummarySchema.extend({
+  profiles: z.array(z.record(z.string(), z.unknown())),
+  relationships: z.array(z.record(z.string(), z.unknown())),
+}).strict();
+export type ProjectDetailView = z.infer<typeof ProjectDetailSchema>;
+export const ProjectsListParamsSchema = z.object({}).strict();
+export const ProjectsGetParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
+export const ProjectsDeleteParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
+
 export const HostCapabilityMethodSchema = z.enum([
   "host.secret.get",
   "host.secret.set",
@@ -319,6 +344,18 @@ export interface BackendRpc {
     input: FormsImportCancelParams;
     output: AuthActionResult;
   };
+  "projects.list": {
+    input: z.infer<typeof ProjectsListParamsSchema>;
+    output: ProjectSummaryView[];
+  };
+  "projects.get": {
+    input: z.infer<typeof ProjectsGetParamsSchema>;
+    output: ProjectDetailView | null;
+  };
+  "projects.delete": {
+    input: z.infer<typeof ProjectsDeleteParamsSchema>;
+    output: AuthActionResult;
+  };
 }
 
 export type RpcMethod = keyof BackendRpc;
@@ -336,6 +373,9 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "forms.list": FormsListResultSchema,
   "forms.import": FormImportSummarySchema,
   "forms.import.cancel": AuthActionResultSchema,
+  "projects.list": z.array(ProjectSummarySchema),
+  "projects.get": ProjectDetailSchema.nullable(),
+  "projects.delete": AuthActionResultSchema,
 };
 
 const parseKnownParams = (method: string, params: unknown): void => {
@@ -363,6 +403,12 @@ const parseKnownParams = (method: string, params: unknown): void => {
     FormsImportParamsSchema.parse(params);
   } else if (method === "forms.import.cancel") {
     FormsImportCancelParamsSchema.parse(params);
+  } else if (method === "projects.list") {
+    ProjectsListParamsSchema.parse(params);
+  } else if (method === "projects.get") {
+    ProjectsGetParamsSchema.parse(params);
+  } else if (method === "projects.delete") {
+    ProjectsDeleteParamsSchema.parse(params);
   }
 };
 

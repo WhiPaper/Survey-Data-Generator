@@ -73,6 +73,22 @@ describe("sidecar NDJSON boundary", () => {
     });
   });
 
+  it("waits for startup readiness before emitting the handshake", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    createSidecarServer({ input, output, logger: silentLogger, ready });
+    expect(output.read()).toBeNull();
+    release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(parseSidecarReady(JSON.parse(output.read()?.toString() ?? "{}"))).toMatchObject({
+      type: "ready",
+    });
+  });
+
   it("returns structured errors for malformed JSON and unknown methods", async () => {
     const input = new PassThrough();
     const output = new PassThrough();

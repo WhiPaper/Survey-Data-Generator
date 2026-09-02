@@ -89,6 +89,9 @@ importers:
       "@survey-synth/synthesis-core":
         specifier: workspace:*
         version: link:../../packages/synthesis-core
+      better-sqlite3-multiple-ciphers:
+        specifier: 13.0.3
+        version: 13.0.3
     devDependencies:
       vitest:
         specifier: ^3.2.4
@@ -1164,6 +1167,13 @@ packages:
     engines: { node: ">=6.0.0" }
     hasBin: true
 
+  better-sqlite3-multiple-ciphers@13.0.3:
+    resolution:
+      {
+        integrity: sha512-UYabM82r1J84TLWc/SszoHs6XopWpl/2HCg3Nui1JUaFXg/VLswzkPowYiRhK/4CftI8dgtikwyZQecMldrGxQ==,
+      }
+    engines: { node: ">=22" }
+
   brace-expansion@1.1.18:
     resolution:
       {
@@ -1690,6 +1700,13 @@ packages:
       {
         integrity: sha512-OWND8ei3VtNC9h7V60qff3SVobHr996CTwgxubgyQYEpg290h9J0buyECNNJexkFm5sOajh5G116RYA1c8ZMSw==,
       }
+
+  node-addon-api@8.9.2:
+    resolution:
+      {
+        integrity: sha512-VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg==,
+      }
+    engines: { node: ^18 || ^20 || >= 21 }
 
   node-releases@2.0.54:
     resolution:
@@ -2698,6 +2715,10 @@ snapshots:
 
   baseline-browser-mapping@2.11.20: {}
 
+  better-sqlite3-multiple-ciphers@13.0.3:
+    dependencies:
+      node-addon-api: 8.9.2
+
   brace-expansion@1.1.18:
     dependencies:
       balanced-match: 1.0.2
@@ -2991,6 +3012,8 @@ snapshots:
   nanoid@3.3.18: {}
 
   natural-compare@1.4.0: {}
+
+  node-addon-api@8.9.2: {}
 
   node-releases@2.0.54: {}
 

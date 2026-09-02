@@ -8,10 +8,12 @@ import {
   addAccount,
   cancelFormImport,
   getAccounts,
+  getProject,
   getSession,
   importForm,
   listForms,
   login,
+  listProjects,
   logout,
   revokeAccess,
   switchAccount,
@@ -24,6 +26,7 @@ export const accountsQueryKey = (accountId: GoogleAccountId | null) =>
 
 export const formsQueryKey = (accountId: GoogleAccountId | null, query: string) =>
   ["forms.list", accountId, query] as const;
+export const projectsQueryKey = ["projects.list"] as const;
 
 const errorMessage = (error: unknown): string => {
   if (error instanceof BackendClientError) return error.backendError.message;
@@ -58,6 +61,7 @@ const useDebouncedValue = (value: string, delayMs: number): string => {
 export function App() {
   const queryClient = useQueryClient();
   const [formQuery, setFormQuery] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const debouncedFormQuery = useDebouncedValue(formQuery, 250);
 
   const sessionQuery = useQuery({
@@ -67,6 +71,17 @@ export function App() {
   });
   const session = sessionQuery.data;
   const activeAccountId = session?.account.id ?? null;
+  const projectsQuery = useQuery({
+    queryKey: projectsQueryKey,
+    queryFn: () => listProjects(),
+    retry: false,
+  });
+  const projectQuery = useQuery({
+    queryKey: ["projects.get", selectedProjectId],
+    queryFn: () => getProject(selectedProjectId ?? ""),
+    enabled: selectedProjectId !== null,
+    retry: false,
+  });
   const accountsQuery = useQuery({
     queryKey: accountsQueryKey(activeAccountId),
     queryFn: () => getAccounts(),
@@ -126,6 +141,7 @@ export function App() {
   const importMutation = useMutation({
     mutationFn: ({ formId, operationId }: { formId: FormId; operationId: string }) =>
       importForm(formId, operationId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
   });
   const cancelMutation = useMutation({
     mutationFn: (operationId: string) => cancelFormImport(operationId),
@@ -322,6 +338,38 @@ export function App() {
           </button>
         )}
         {importStatus !== undefined && <p role="status">{importStatus}</p>}
+      </section>
+      <section aria-labelledby="projects-title">
+        <h2 id="projects-title">프로젝트</h2>
+        {projectsQuery.error !== null && projectsQuery.error !== undefined && (
+          <p role="alert">{errorMessage(projectsQuery.error)}</p>
+        )}
+        {!projectsQuery.isPending && projectsQuery.data?.length === 0 && (
+          <p>저장된 프로젝트가 없습니다.</p>
+        )}
+        <ul className="form-list">
+          {projectsQuery.data?.map((project) => (
+            <li key={project.id} className="form-item">
+              <button
+                type="button"
+                className="project-item"
+                onClick={() => setSelectedProjectId(project.id)}
+              >
+                <span>{project.name}</span>
+                <span>{project.responseCount}개 응답</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        {projectQuery.data !== undefined && projectQuery.data !== null && (
+          <div aria-live="polite">
+            <p>{projectQuery.data.name}</p>
+            <p>
+              질문 {projectQuery.data.questionCount}개 · 프로필 {projectQuery.data.profileCount}개 ·
+              로컬 저장됨
+            </p>
+          </div>
+        )}
       </section>
     </main>
   );

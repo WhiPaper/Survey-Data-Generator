@@ -12,6 +12,45 @@ export type ProjectId = Brand<string, "ProjectId">;
 export type RunId = Brand<string, "RunId">;
 export type GoogleAccountId = Brand<string, "GoogleAccountId">;
 export type SourceRevisionId = Brand<string, "SourceRevisionId">;
+export type FormSnapshotId = Brand<string, "FormSnapshotId">;
+
+export interface SynthesisProject {
+  id: ProjectId;
+  googleAccountId: GoogleAccountId;
+  googleFormId: FormId;
+  name: string;
+  currentSourceRevisionId: SourceRevisionId;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ProjectSummary = SynthesisProject & {
+  responseCount: number;
+  questionCount: number;
+  profileCount: number;
+};
+
+export interface SourceRevision {
+  id: SourceRevisionId;
+  projectId: ProjectId;
+  formSnapshotId: FormSnapshotId;
+  sourceResponseCount: number;
+  responseSetHash: string;
+  schemaHash: string;
+  capturedAt: string;
+  importedAt: string;
+  previousRevisionId?: SourceRevisionId;
+}
+
+export interface ProfileBase {
+  questionId: QuestionId;
+  answeredCount: number;
+  skippedCount: number;
+  notReachedCount: number;
+  indeterminateCount: number;
+  confirmedEligibleCount: number;
+  responseRate: number;
+}
 
 export interface GoogleAccount {
   id: GoogleAccountId;

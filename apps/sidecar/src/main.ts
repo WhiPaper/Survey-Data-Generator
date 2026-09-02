@@ -7,6 +7,8 @@ import {
   FormsImportCancelParamsSchema,
   FormsImportParamsSchema,
   FormsListParamsSchema,
+  ProjectsDeleteParamsSchema,
+  ProjectsGetParamsSchema,
 } from "@survey-synth/contracts";
 
 import {
@@ -27,6 +29,7 @@ import {
 } from "./host.js";
 import { stderrLogger } from "./rpc/logger.js";
 import { createSidecarServer } from "./rpc/server.js";
+import { ProjectDatabase, ProjectRepository, defaultDatabasePath } from "./persistence/index.js";
 
 const hostClient = createHostCapabilityClient(process.stdout);
 const accountStatePath = process.env.SURVEY_SYNTH_ACCOUNT_STORE_PATH;
@@ -53,6 +56,11 @@ const auth = new GoogleAuthServiceImpl({
   oauth,
   tokenStore,
 });
+const database =
+  defaultDatabasePath() === null
+    ? Promise.resolve(null)
+    : ProjectDatabase.open(defaultDatabasePath()!, new RemoteSecureSecretStore(hostClient));
+const projects = database.then((db) => (db === null ? null : new ProjectRepository(db)));
 
 const server = createSidecarServer({
   input: process.stdin,
@@ -62,11 +70,23 @@ const server = createSidecarServer({
     for (const controller of activeImportControllers.values()) controller.abort();
     forms.cancelImports();
     await oauth.close();
+    try {
+      (await database)?.close();
+    } catch {
+      // Startup failure is already reported through the controlled shutdown path.
+    }
     process.stdin.pause();
     await new Promise<void>((resolve) => process.stdout.end(resolve));
     process.exit(0);
   },
   handlers: {
+    "projects.list": async () => (await projects)?.list() ?? [],
+    "projects.get": async (params) =>
+      (await projects)?.get(ProjectsGetParamsSchema.parse(params).projectId as never) ?? null,
+    "projects.delete": async (params) => {
+      (await projects)?.delete(ProjectsDeleteParamsSchema.parse(params).projectId as never);
+      return authActionResult();
+    },
     "session.get": () => auth.getSession(),
     "auth.login": async () => {
       forms.cancelImports();
@@ -104,7 +124,16 @@ const server = createSidecarServer({
       const controller = new AbortController();
       activeImportControllers.set(operationId, controller);
       try {
-        return await forms.importForm(parsed.formId, controller.signal);
+        const summary = await forms.importForm(parsed.formId, controller.signal);
+        const session = forms.getImport(summary.importId);
+        try {
+          const repository = await projects;
+          if (session !== null && repository !== null)
+            repository.createFromImport(session.accountId, session.form, session.responses);
+        } finally {
+          forms.clearStoredImport();
+        }
+        return summary;
       } finally {
         if (activeImportControllers.get(operationId) === controller) {
           activeImportControllers.delete(operationId);
@@ -118,6 +147,7 @@ const server = createSidecarServer({
     },
   },
   hostClient,
+  ready: database.then(() => undefined),
 });
 
 const signalShutdown = (): void => {

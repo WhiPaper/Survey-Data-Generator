@@ -27,6 +27,7 @@ export interface SidecarServerOptions {
   readonly onShutdown?: () => void | Promise<void>;
   readonly handlers?: Readonly<Record<string, RpcHandler>>;
   readonly hostClient?: HostCapabilityClient;
+  readonly ready?: Promise<void>;
 }
 
 export interface SidecarServer {
@@ -145,8 +146,21 @@ export const createSidecarServer = (options: SidecarServerOptions): SidecarServe
     }
   };
 
-  options.output.write(encodeNdjson(readyMessage));
-  options.logger.info("sidecar_ready", { protocolVersion: VERSIONS.protocolVersion });
+  const emitReady = (): void => {
+    if (closing) return;
+    options.output.write(encodeNdjson(readyMessage));
+    options.logger.info("sidecar_ready", { protocolVersion: VERSIONS.protocolVersion });
+  };
+  if (options.ready === undefined) emitReady();
+  else
+    void options.ready
+      .catch(() => {
+        options.logger.error("sidecar_startup_failed", { errorCode: "BACKEND_UNAVAILABLE" });
+        shutdown();
+      })
+      .then(() => {
+        if (!closing) emitReady();
+      });
 
   options.input.on("data", (chunk: string | Uint8Array) => {
     if (closing || shutdownRequested) return;

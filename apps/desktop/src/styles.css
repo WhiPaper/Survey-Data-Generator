@@ -97,6 +97,19 @@ summary {
   color: #6b7280;
 }
 
+.project-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
