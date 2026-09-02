@@ -16,6 +16,7 @@ export type SynthesisWorkerFactory = () => SynthesisWorker;
 
 export class SynthesisJobs {
   private readonly active = new Map<string, SynthesisWorker>();
+  private readonly cancelled = new Set<string>();
 
   public constructor(
     private readonly projects: ProjectRepository,
@@ -29,6 +30,7 @@ export class SynthesisJobs {
     source: SynthesisSource,
     targets: ProjectTargets,
     seed: number,
+    targetRevision: number,
   ): Promise<
     | {
         readonly runId: string;
@@ -42,54 +44,76 @@ export class SynthesisJobs {
   > {
     if (this.active.has(operationId))
       throw sidecarError("VALIDATION_FAILED", "Synthesis operation id is already active", true);
-    const result = await new Promise<SynthesisResult>((resolve, reject) => {
-      const worker = this.createWorker();
-      this.active.set(operationId, worker);
-      worker.once("message", (message) => {
-        const result = message as SynthesisResult | { kind: "worker_error"; code?: string };
-        if ("kind" in result && result.kind === "worker_error")
-          reject(
-            sidecarError("INTERNAL", `Synthesis worker failed (${result.code ?? "unknown"})`, true),
-          );
-        else resolve(result);
+    try {
+      const result = await new Promise<SynthesisResult>((resolve, reject) => {
+        const worker = this.createWorker();
+        this.active.set(operationId, worker);
+        worker.once("message", (message) => {
+          const result = message as SynthesisResult | { kind: "worker_error"; code?: string };
+          if ("kind" in result && result.kind === "worker_error")
+            reject(
+              sidecarError(
+                "INTERNAL",
+                `Synthesis worker failed (${result.code ?? "unknown"})`,
+                true,
+              ),
+            );
+          else resolve(result);
+        });
+        worker.once("error", () =>
+          reject(sidecarError("INTERNAL", "Synthesis worker failed", true)),
+        );
+        worker.once("exit", (code) => {
+          if (this.cancelled.has(operationId) && this.active.has(operationId))
+            reject(sidecarError("JOB_CANCELLED", "Synthesis cancelled", true));
+          else if (code !== 0 && this.active.has(operationId))
+            reject(sidecarError("INTERNAL", "Synthesis worker exited unexpectedly", true));
+        });
+        worker.postMessage({
+          form: source.form,
+          source: source.responses,
+          targets,
+          seed,
+          relationships: source.relationships,
+        });
+      }).finally(() => {
+        const worker = this.active.get(operationId);
+        this.active.delete(operationId);
+        void worker?.terminate();
       });
-      worker.once("error", () => reject(sidecarError("INTERNAL", "Synthesis worker failed", true)));
-      worker.once("exit", (code) => {
-        if (code !== 0 && this.active.has(operationId))
-          reject(sidecarError("JOB_CANCELLED", "Synthesis cancelled", true));
+      if (this.cancelled.has(operationId))
+        throw sidecarError("JOB_CANCELLED", "Synthesis cancelled", true);
+      if (result.kind === "infeasible")
+        return {
+          status: result.feasibility.status === "unknown" ? "unsupported" : "infeasible",
+          issues: result.feasibility.issues.map((issue) => ({
+            code: issue.code,
+            message: issue.message,
+          })),
+        };
+      const run = this.projects.saveRun({
+        projectId: projectId as never,
+        sourceRevisionId: source.sourceRevisionId,
+        targets,
+        seed,
+        synthetic: result.synthetic,
+        validation: result.validation!,
+        targetRevision,
       });
-      worker.postMessage({ form: source.form, source: source.responses, targets, seed });
-    }).finally(() => {
-      const worker = this.active.get(operationId);
-      this.active.delete(operationId);
-      void worker?.terminate();
-    });
-    if (result.kind === "infeasible")
       return {
-        status: result.feasibility.status === "unknown" ? "unsupported" : "infeasible",
-        issues: result.feasibility.issues.map((issue) => ({
-          code: issue.code,
-          message: issue.message,
-        })),
+        runId: run.id,
+        syntheticResponseCount: result.synthetic.length,
+        finalResponseCount: result.validation!.finalResponseCount,
       };
-    const run = this.projects.saveRun({
-      projectId: projectId as never,
-      sourceRevisionId: source.sourceRevisionId,
-      targets,
-      seed,
-      synthetic: result.synthetic,
-      validation: result.validation!,
-    });
-    return {
-      runId: run.id,
-      syntheticResponseCount: result.synthetic.length,
-      finalResponseCount: result.validation!.finalResponseCount,
-    };
+    } finally {
+      this.cancelled.delete(operationId);
+    }
   }
 
   public cancel(operationId: string): boolean {
     const worker = this.active.get(operationId);
     if (worker === undefined) return false;
+    this.cancelled.add(operationId);
     void worker.terminate();
     return true;
   }

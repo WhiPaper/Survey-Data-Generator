@@ -1,5 +1,6 @@
 import type {
   AnswerSlot,
+  ConditionPredicate,
   FormSnapshot,
   NormalizedResponse,
   ProjectTargets,
@@ -7,6 +8,16 @@ import type {
   QuestionTarget,
   TargetValue,
 } from "@survey-synth/domain";
+import { resolveResponsePath } from "@survey-synth/domain";
+import {
+  evaluateAdvancedFeature,
+  mutateBranchAnswer,
+  preservationDiagnostics,
+  type AdvancedFeature,
+  type PreservationDiagnostics,
+} from "./advanced.js";
+
+export * from "./advanced.js";
 
 export type ConstraintPriority =
   | "form_hard"
@@ -19,9 +30,10 @@ export type ConstraintPriority =
   | "diversity";
 
 export interface CanonicalMetric {
-  readonly kind: "option_count" | "option_ratio" | "mean";
+  readonly kind: "option_count" | "option_ratio" | "mean" | "selection_count_mean";
   readonly questionId: QuestionId;
   readonly optionKey?: string;
+  readonly condition?: ConditionPredicate;
 }
 
 export interface CompiledConstraint {
@@ -43,7 +55,8 @@ export interface CompiledTargetSet {
 export type TargetLocation =
   | { type: "target-size" }
   | { type: "question-option"; questionId: QuestionId; optionKey: string }
-  | { type: "question-mean"; questionId: QuestionId };
+  | { type: "question-mean"; questionId: QuestionId }
+  | { type: "detailed-goal"; goalId: string };
 
 export interface FeasibilityIssue {
   readonly location: TargetLocation;
@@ -53,7 +66,8 @@ export interface FeasibilityIssue {
     | "INVALID_TARGET"
     | "UNSUPPORTED_TARGET"
     | "MIP_INFEASIBLE"
-    | "PROTECTED_NAVIGATION";
+    | "PROTECTED_NAVIGATION"
+    | "STRUCTURAL_INFEASIBLE";
   readonly message: string;
   readonly suggestion?: "set_exact" | "set_range" | "remove";
 }
@@ -112,7 +126,7 @@ export interface OptimizationBackend {
 const slotFor = (response: NormalizedResponse, questionId: QuestionId): AnswerSlot =>
   response.answers[questionId] ?? { state: "indeterminate" };
 
-const answerNumber = (slot: AnswerSlot): number | undefined => {
+export const answerNumber = (slot: AnswerSlot): number | undefined => {
   if (slot.state !== "answered") return undefined;
   if (slot.value.kind === "ordinal") return slot.value.value;
   if (slot.value.kind === "text") {
@@ -127,20 +141,49 @@ export const nearestRepresentable = (value: number, denominator: number): number
   return Math.min(denominator, Math.max(0, Math.round(value * denominator)));
 };
 
+export const conditionMatches = (
+  response: NormalizedResponse,
+  condition: ConditionPredicate,
+): boolean => {
+  switch (condition.kind) {
+    case "answered":
+      return slotFor(response, condition.questionId).state === "answered";
+    case "option_selected": {
+      const answer = slotFor(response, condition.questionId);
+      return (
+        answer.state === "answered" &&
+        ((answer.value.kind === "single_choice" &&
+          answer.value.optionKey === condition.optionKey) ||
+          (answer.value.kind === "multi_choice" &&
+            answer.value.optionKeys.includes(condition.optionKey)))
+      );
+    }
+    case "and":
+      return condition.conditions.every((item) => conditionMatches(response, item));
+    case "or":
+      return condition.conditions.some((item) => conditionMatches(response, item));
+  }
+};
+
 export const metricValue = (
   responses: readonly NormalizedResponse[],
   metric: CanonicalMetric,
 ): number | null => {
+  const scoped =
+    metric.condition === undefined
+      ? responses
+      : responses.filter((response) => conditionMatches(response, metric.condition!));
   if (metric.kind === "option_count" || metric.kind === "option_ratio") {
-    const answered = responses.filter(
+    const answered = scoped.filter(
       (response) => slotFor(response, metric.questionId).state === "answered",
     );
     const count = answered.filter((response) => {
       const slot = slotFor(response, metric.questionId);
       return (
         slot.state === "answered" &&
-        slot.value.kind === "single_choice" &&
-        slot.value.optionKey === metric.optionKey
+        ((slot.value.kind === "single_choice" && slot.value.optionKey === metric.optionKey) ||
+          (slot.value.kind === "multi_choice" &&
+            slot.value.optionKeys.includes(metric.optionKey as never)))
       );
     }).length;
     return metric.kind === "option_count"
@@ -149,13 +192,23 @@ export const metricValue = (
         ? 0
         : count / answered.length;
   }
-  const values = responses
-    .map((response) => answerNumber(slotFor(response, metric.questionId)))
+  const values = scoped
+    .map((response) => slotFor(response, metric.questionId))
+    .map((answer) =>
+      metric.kind === "selection_count_mean" &&
+      answer.state === "answered" &&
+      answer.value.kind === "multi_choice"
+        ? answer.value.optionKeys.length
+        : answerNumber(answer),
+    )
     .filter((value): value is number => value !== undefined);
   return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0) / values.length;
 };
 
-const metricFor = (target: QuestionTarget): CanonicalMetric =>
+export const metricFor = (
+  target: QuestionTarget,
+  condition?: ConditionPredicate,
+): CanonicalMetric =>
   target.kind === "option"
     ? {
         kind:
@@ -164,8 +217,64 @@ const metricFor = (target: QuestionTarget): CanonicalMetric =>
             : "option_count",
         questionId: target.questionId,
         optionKey: target.optionKey,
+        ...(condition === undefined ? {} : { condition }),
       }
-    : { kind: "mean", questionId: target.questionId };
+    : {
+        kind: target.kind === "selection_count_mean" ? "selection_count_mean" : "mean",
+        questionId: target.questionId,
+        ...(condition === undefined ? {} : { condition }),
+      };
+
+export interface CanonicalMetricAggregate {
+  readonly numerator: number;
+  readonly denominator: number;
+}
+
+/** Canonical linear contribution used by compiler, repair, and validator. */
+export const canonicalMetricContribution = (
+  response: NormalizedResponse,
+  metric: CanonicalMetric,
+): CanonicalMetricAggregate => {
+  if (metric.condition !== undefined && !conditionMatches(response, metric.condition))
+    return { numerator: 0, denominator: 0 };
+  const answer = slotFor(response, metric.questionId);
+  if (metric.kind === "option_count" || metric.kind === "option_ratio") {
+    const answered = answer.state === "answered";
+    const selected =
+      answered &&
+      ((answer.value.kind === "single_choice" && answer.value.optionKey === metric.optionKey) ||
+        (answer.value.kind === "multi_choice" &&
+          answer.value.optionKeys.includes(metric.optionKey as never)));
+    return {
+      numerator: Number(selected),
+      denominator: metric.kind === "option_ratio" ? Number(answered) : 1,
+    };
+  }
+  const value =
+    metric.kind === "selection_count_mean" &&
+    answer.state === "answered" &&
+    answer.value.kind === "multi_choice"
+      ? answer.value.optionKeys.length
+      : answerNumber(answer);
+  return value === undefined
+    ? { numerator: 0, denominator: 0 }
+    : { numerator: value, denominator: 1 };
+};
+
+export const canonicalMetricAggregate = (
+  responses: readonly NormalizedResponse[],
+  metric: CanonicalMetric,
+): CanonicalMetricAggregate =>
+  responses.reduce<CanonicalMetricAggregate>(
+    (total, response) => {
+      const contribution = canonicalMetricContribution(response, metric);
+      return {
+        numerator: total.numerator + contribution.numerator,
+        denominator: total.denominator + contribution.denominator,
+      };
+    },
+    { numerator: 0, denominator: 0 },
+  );
 
 const priorityFor = (target: TargetValue): ConstraintPriority =>
   target.kind === "ratio" || target.kind === "mean"
@@ -225,6 +334,11 @@ export const compileTargets = (
       representableValue,
     };
   });
+  const conditionalConstraints = (targets.detailedGoals ?? []).map((goal) => ({
+    metric: metricFor(goal.outcome, goal.condition),
+    target: goal.outcome.target,
+    priority: priorityFor(goal.outcome.target),
+  }));
   const preservationRequests: CanonicalMetric[] = form.questions
     .filter((question) => !targetQuestionIds.has(question.id))
     .flatMap<CanonicalMetric>((question) =>
@@ -241,7 +355,7 @@ export const compileTargets = (
   return {
     targetResponseCount: targets.targetResponseCount,
     syntheticResponseCount: targets.targetResponseCount - source.length,
-    aggregateConstraints,
+    aggregateConstraints: [...aggregateConstraints, ...conditionalConstraints],
     rowConstraints: [],
     preservationRequests,
   };
@@ -278,7 +392,11 @@ export const checkFeasibility = (
       });
       continue;
     }
-    if (target.kind === "option" && question.kind !== "single_choice") {
+    if (
+      target.kind === "option" &&
+      question.kind !== "single_choice" &&
+      question.kind !== "multi_choice"
+    ) {
       issues.push({
         location: {
           type: "question-option",
@@ -286,14 +404,14 @@ export const checkFeasibility = (
           optionKey: target.optionKey,
         },
         code: "UNSUPPORTED_TARGET",
-        message: "Option target requires a single-choice question",
+        message: "Option target requires a single-choice or checkbox question",
         suggestion: "remove",
       });
       continue;
     }
     if (
       target.kind === "option" &&
-      question.kind === "single_choice" &&
+      (question.kind === "single_choice" || question.kind === "multi_choice") &&
       !question.options.some((option) => option.key === target.optionKey)
     ) {
       issues.push({
@@ -321,6 +439,28 @@ export const checkFeasibility = (
             : { type: "question-mean", questionId: target.questionId },
         code: "INVALID_TARGET",
         message: invalid,
+        suggestion: "remove",
+      });
+      continue;
+    }
+    if (target.kind === "selection_count_mean" && question.kind !== "multi_choice") {
+      issues.push({
+        location: { type: "question-mean", questionId: target.questionId },
+        code: "UNSUPPORTED_TARGET",
+        message: "Selection-count mean requires a checkbox question",
+        suggestion: "remove",
+      });
+      continue;
+    }
+    if (
+      target.kind === "selection_count_mean" &&
+      question.kind === "multi_choice" &&
+      (target.target.value < 0 || target.target.value > question.options.length)
+    ) {
+      issues.push({
+        location: { type: "question-mean", questionId: target.questionId },
+        code: "INVALID_TARGET",
+        message: "Selection-count mean is outside checkbox bounds",
         suggestion: "remove",
       });
       continue;
@@ -396,6 +536,66 @@ export const checkFeasibility = (
         message: "Immutable original contribution already exceeds final exact target",
         suggestion: "set_exact",
       });
+    if (
+      target.kind === "option" &&
+      question.kind === "single_choice" &&
+      question.affectsNavigation &&
+      requested !== undefined &&
+      original !== null &&
+      requested > original &&
+      !source.some((row, index) => {
+        if (optionSelectedForMetric(row, target.questionId, target.optionKey)) return true;
+        return mutateBranchAnswer(
+          form,
+          source,
+          { ...row, origin: "synthetic" },
+          target.questionId,
+          target.optionKey,
+          index + 1,
+        ).allowed;
+      })
+    )
+      issues.push({
+        location: {
+          type: "question-option",
+          questionId: target.questionId,
+          optionKey: target.optionKey,
+        },
+        code: "STRUCTURAL_INFEASIBLE",
+        message: "No safe donor supports the required branch structure",
+        suggestion: "remove",
+      });
+  }
+  for (const goal of targets.detailedGoals ?? []) {
+    const referenced = conditionQuestionIds(goal.condition);
+    const nested = checkFeasibility(form, source, {
+      targetResponseCount: targets.targetResponseCount,
+      questionTargets: [goal.outcome],
+    });
+    if (
+      referenced.some(
+        (questionId) => !form.questions.some((question) => question.id === questionId),
+      )
+    )
+      issues.push({
+        location: { type: "detailed-goal", goalId: goal.id },
+        code: "UNSUPPORTED_TARGET",
+        message: "Detailed goal condition references a missing question",
+        suggestion: "remove",
+      });
+    if (referenced.includes(goal.outcome.questionId))
+      issues.push({
+        location: { type: "detailed-goal", goalId: goal.id },
+        code: "UNSUPPORTED_TARGET",
+        message: "Detailed goal outcome cannot redefine its own population",
+        suggestion: "remove",
+      });
+    issues.push(
+      ...nested.issues.map((issue) => ({
+        ...issue,
+        location: { type: "detailed-goal" as const, goalId: goal.id },
+      })),
+    );
   }
   return {
     status: issues.length
@@ -407,6 +607,20 @@ export const checkFeasibility = (
     issues,
     bounds: [],
   };
+};
+
+const optionSelectedForMetric = (
+  row: NormalizedResponse,
+  questionId: QuestionId,
+  optionKey: string,
+): boolean => {
+  const answer = slotFor(row, questionId);
+  return (
+    answer.state === "answered" &&
+    ((answer.value.kind === "single_choice" && answer.value.optionKey === optionKey) ||
+      (answer.value.kind === "multi_choice" &&
+        answer.value.optionKeys.includes(optionKey as never)))
+  );
 };
 
 export interface ValidationMetric {
@@ -422,6 +636,7 @@ export interface ValidationResult {
   readonly finalResponseCount: number;
   readonly metrics: readonly ValidationMetric[];
   readonly errors: readonly string[];
+  readonly preservation?: PreservationDiagnostics;
 }
 
 const targetSatisfied = (
@@ -449,26 +664,42 @@ export const validateSynthesis = (
   original: readonly NormalizedResponse[],
   synthetic: readonly NormalizedResponse[],
   targets: ProjectTargets,
+  advancedFeatures: readonly AdvancedFeature[] = [],
 ): ValidationResult => {
   const finalRows = [...original, ...synthetic];
   const originalMutationCount = original.filter((row) => row.origin !== "original").length;
-  const metrics = targets.questionTargets.map((target): ValidationMetric => {
-    const metric = metricFor(target);
+  const validationTargets = [
+    ...targets.questionTargets.map((target) => ({ target, condition: undefined })),
+    ...(targets.detailedGoals ?? []).map((goal) => ({
+      target: goal.outcome,
+      condition: goal.condition,
+    })),
+  ];
+  const metrics = validationTargets.map(({ target, condition }): ValidationMetric => {
+    const metric = metricFor(target, condition);
     const actual = metricValue(finalRows, metric);
+    const scopedRows =
+      condition === undefined
+        ? finalRows
+        : finalRows.filter((row) => conditionMatches(row, condition));
     const denominator =
       metric.kind === "option_ratio"
-        ? finalRows.filter((row) => slotFor(row, metric.questionId).state === "answered").length
+        ? scopedRows.filter((row) => slotFor(row, metric.questionId).state === "answered").length
         : 1;
     const question = form.questions.find((entry) => entry.id === target.questionId);
-    const answeredCount = finalRows.filter(
-      (row) => answerNumber(slotFor(row, target.questionId)) !== undefined,
-    ).length;
+    const answeredCount = scopedRows.filter((row) => {
+      const answer = slotFor(row, target.questionId);
+      return target.kind === "selection_count_mean"
+        ? answer.state === "answered" && answer.value.kind === "multi_choice"
+        : answerNumber(answer) !== undefined;
+    }).length;
     const satisfied =
       target.target.kind === "mean"
         ? actual !== null &&
+          answeredCount > 0 &&
           Math.abs(
             actual -
-              (question?.kind === "ordinal"
+              (question?.kind === "ordinal" || target.kind === "selection_count_mean"
                 ? Math.round(target.target.value * answeredCount) / answeredCount
                 : target.target.value),
           ) <= 1e-9
@@ -501,9 +732,31 @@ export const validateSynthesis = (
           !Number.isInteger(slot.value.value))
       )
         errors.push("INVALID_ORDINAL_VALUE");
+      if (slot.state === "answered" && question.kind === "multi_choice") {
+        if (
+          slot.value.kind !== "multi_choice" ||
+          new Set(slot.value.optionKeys).size !== slot.value.optionKeys.length ||
+          slot.value.optionKeys.some(
+            (key) => !question.options.some((option) => option.key === key),
+          )
+        )
+          errors.push("INVALID_CHECKBOX_VALUE");
+      }
+    }
+    const resolved = resolveResponsePath(form, row.answers);
+    for (const question of form.questions) {
+      const answer = slotFor(row, question.id);
+      if (answer.state === "answered" && resolved.questions[question.id] === "not_reached")
+        errors.push("BRANCH_CONTRADICTION");
+      if (
+        question.required &&
+        resolved.questions[question.id] === "reached" &&
+        answer.state !== "answered"
+      )
+        errors.push("REQUIRED_QUESTION_VIOLATION");
     }
   }
-  for (const row of finalRows) {
+  for (const row of original) {
     for (const question of form.questions) {
       if (!question.required || row.path.questions[question.id] !== "reached") continue;
       if (slotFor(row, question.id).state !== "answered")
@@ -517,6 +770,9 @@ export const validateSynthesis = (
     finalResponseCount: finalRows.length,
     metrics,
     errors,
+    ...(advancedFeatures.length === 0
+      ? {}
+      : { preservation: preservationDiagnostics(original, finalRows, advancedFeatures) }),
   };
 };
 
@@ -559,9 +815,14 @@ const repairOptionTarget = (
   original: readonly NormalizedResponse[],
   synthetic: NormalizedResponse[],
   target: Extract<QuestionTarget, { kind: "option" }>,
+  seed = 1,
 ): string | null => {
   const question = form.questions.find((entry) => entry.id === target.questionId);
-  if (question?.kind !== "single_choice" || question.affectsNavigation)
+  if (
+    question === undefined ||
+    (question.kind !== "single_choice" && question.kind !== "multi_choice") ||
+    (question.kind === "multi_choice" && question.affectsNavigation)
+  )
     return "UNSUPPORTED_OPTION_REPAIR";
   const answered = [...original, ...synthetic].filter(
     (row) => slotFor(row, target.questionId).state === "answered",
@@ -590,38 +851,173 @@ const repairOptionTarget = (
   const alternatives = question.options.filter((option) => option.key !== target.optionKey);
   if (actual < desired) {
     for (let index = 0; index < synthetic.length && actual < desired; index += 1) {
-      const slot = slotFor(synthetic[index]!, target.questionId);
-      if (slot.state !== "answered" || slot.value.kind !== "single_choice") continue;
-      if (slot.value.optionKey === target.optionKey) continue;
-      synthetic[index] = replaceSlot(synthetic[index]!, target.questionId, {
-        state: "answered",
-        value: {
-          kind: "single_choice",
-          optionKey: target.optionKey as never,
-          label: question.options.find((option) => option.key === target.optionKey)?.label ?? "",
-        },
-      });
+      const answer = slotFor(synthetic[index]!, target.questionId);
+      if (answer.state !== "answered") continue;
+      const label = question.options.find((option) => option.key === target.optionKey)?.label ?? "";
+      if (question.kind === "single_choice" && answer.value.kind === "single_choice") {
+        if (answer.value.optionKey === target.optionKey) continue;
+        if (question.affectsNavigation) {
+          const mutation = mutateBranchAnswer(
+            form,
+            original,
+            synthetic[index]!,
+            target.questionId,
+            target.optionKey,
+            seed + index,
+          );
+          if (!mutation.allowed) continue;
+          synthetic[index] = mutation.row;
+        } else
+          synthetic[index] = replaceSlot(synthetic[index]!, target.questionId, {
+            state: "answered",
+            value: { kind: "single_choice", optionKey: target.optionKey as never, label },
+          });
+      } else if (question.kind === "multi_choice" && answer.value.kind === "multi_choice") {
+        if (answer.value.optionKeys.includes(target.optionKey)) continue;
+        synthetic[index] = replaceSlot(synthetic[index]!, target.questionId, {
+          state: "answered",
+          value: {
+            kind: "multi_choice",
+            optionKeys: [...answer.value.optionKeys, target.optionKey as never],
+            labels: [...answer.value.labels, label],
+          },
+        });
+      } else continue;
       actual += 1;
     }
   } else if (actual > desired) {
     for (let index = 0; index < synthetic.length && actual > desired; index += 1) {
-      const slot = slotFor(synthetic[index]!, target.questionId);
-      if (
-        slot.state !== "answered" ||
-        slot.value.kind !== "single_choice" ||
-        slot.value.optionKey !== target.optionKey ||
-        alternatives.length === 0
-      )
-        continue;
-      const replacement = alternatives[index % alternatives.length]!;
-      synthetic[index] = replaceSlot(synthetic[index]!, target.questionId, {
-        state: "answered",
-        value: { kind: "single_choice", optionKey: replacement.key, label: replacement.label },
-      });
+      const answer = slotFor(synthetic[index]!, target.questionId);
+      if (answer.state !== "answered") continue;
+      if (question.kind === "single_choice" && answer.value.kind === "single_choice") {
+        if (answer.value.optionKey !== target.optionKey || alternatives.length === 0) continue;
+        const replacement = alternatives[index % alternatives.length]!;
+        if (question.affectsNavigation) {
+          const mutation = mutateBranchAnswer(
+            form,
+            original,
+            synthetic[index]!,
+            target.questionId,
+            replacement.key,
+            seed + index,
+          );
+          if (!mutation.allowed) continue;
+          synthetic[index] = mutation.row;
+        } else
+          synthetic[index] = replaceSlot(synthetic[index]!, target.questionId, {
+            state: "answered",
+            value: { kind: "single_choice", optionKey: replacement.key, label: replacement.label },
+          });
+      } else if (question.kind === "multi_choice" && answer.value.kind === "multi_choice") {
+        if (!answer.value.optionKeys.includes(target.optionKey)) continue;
+        const optionKeys = answer.value.optionKeys.filter((key) => key !== target.optionKey);
+        synthetic[index] = replaceSlot(synthetic[index]!, target.questionId, {
+          state: "answered",
+          value: {
+            kind: "multi_choice",
+            optionKeys,
+            labels: optionKeys.map(
+              (key) => question.options.find((option) => option.key === key)?.label ?? "",
+            ),
+          },
+        });
+      } else continue;
       actual -= 1;
     }
   }
   return actual === desired ? null : "OPTION_TARGET_UNREACHABLE";
+};
+
+const repairSelectionCountMean = (
+  form: FormSnapshot,
+  original: readonly NormalizedResponse[],
+  synthetic: NormalizedResponse[],
+  target: Extract<QuestionTarget, { kind: "selection_count_mean" }>,
+): string | null => {
+  const question = form.questions.find((entry) => entry.id === target.questionId);
+  if (question?.kind !== "multi_choice") return "UNSUPPORTED_SELECTION_COUNT_REPAIR";
+  const answered = [...original, ...synthetic].filter((row) => {
+    const answer = slotFor(row, target.questionId);
+    return answer.state === "answered" && answer.value.kind === "multi_choice";
+  });
+  if (answered.length === 0) return "SELECTION_COUNT_WITHOUT_ANSWERS";
+  const desiredTotal = Math.round(target.target.value * answered.length);
+  const originalTotal = original.reduce((sum, row) => {
+    const answer = slotFor(row, target.questionId);
+    return (
+      sum +
+      (answer.state === "answered" && answer.value.kind === "multi_choice"
+        ? answer.value.optionKeys.length
+        : 0)
+    );
+  }, 0);
+  const candidates = synthetic
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => {
+      const answer = slotFor(row, target.questionId);
+      return answer.state === "answered" && answer.value.kind === "multi_choice";
+    });
+  let remaining = desiredTotal - originalTotal;
+  for (let position = 0; position < candidates.length; position++) {
+    const candidate = candidates[position]!;
+    const later = candidates.length - position - 1;
+    const count = Math.max(
+      0,
+      Math.min(question.options.length, Math.round(remaining / (later + 1))),
+    );
+    const answer = slotFor(candidate.row, target.questionId);
+    if (answer.state !== "answered" || answer.value.kind !== "multi_choice") continue;
+    const existing = answer.value.optionKeys.filter((key) =>
+      question.options.some((option) => option.key === key),
+    );
+    const optionKeys = [
+      ...existing,
+      ...question.options.map((option) => option.key).filter((key) => !existing.includes(key)),
+    ].slice(0, count);
+    synthetic[candidate.index] = replaceSlot(candidate.row, target.questionId, {
+      state: "answered",
+      value: {
+        kind: "multi_choice",
+        optionKeys,
+        labels: optionKeys.map(
+          (key) => question.options.find((option) => option.key === key)?.label ?? "",
+        ),
+      },
+    });
+    remaining -= count;
+  }
+  return remaining === 0 ? null : "SELECTION_COUNT_TARGET_UNREACHABLE";
+};
+
+const conditionQuestionIds = (condition: ConditionPredicate): readonly QuestionId[] =>
+  condition.kind === "answered" || condition.kind === "option_selected"
+    ? [condition.questionId]
+    : condition.conditions.flatMap(conditionQuestionIds);
+
+const repairConditionalGoal = (
+  form: FormSnapshot,
+  original: readonly NormalizedResponse[],
+  synthetic: NormalizedResponse[],
+  goal: NonNullable<ProjectTargets["detailedGoals"]>[number],
+  seed: number,
+): string | null => {
+  if (conditionQuestionIds(goal.condition).includes(goal.outcome.questionId))
+    return "CONDITIONAL_SCOPE_MUTATION_UNSUPPORTED";
+  const originalPopulation = original.filter((row) => conditionMatches(row, goal.condition));
+  const indexes = synthetic
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => conditionMatches(row, goal.condition))
+    .map(({ index }) => index);
+  const population = indexes.map((index) => synthetic[index]!);
+  const error =
+    goal.outcome.kind === "option"
+      ? repairOptionTarget(form, originalPopulation, population, goal.outcome, seed)
+      : repairMeanTarget(form, originalPopulation, population, goal.outcome);
+  if (error !== null) return error;
+  indexes.forEach((index, populationIndex) => {
+    synthetic[index] = population[populationIndex]!;
+  });
+  return null;
 };
 
 const repairMeanTarget = (
@@ -691,6 +1087,7 @@ export interface TemplateWeightPlan {
 export const compileTemplateWeights = (
   source: readonly NormalizedResponse[],
   compiledTargets: CompiledTargetSet,
+  advancedFeatures: readonly AdvancedFeature[] = [],
 ): TemplateWeightPlan => {
   const syntheticCount = compiledTargets.syntheticResponseCount;
   const templateVariables = source.map((_, index) => ({
@@ -698,11 +1095,19 @@ export const compileTemplateWeights = (
     lowerBound: 0,
     integer: true,
   }));
-  const deviationVariables = source.flatMap((_, index) => [
+  const templateDeviationVariables = source.flatMap((_, index) => [
     { id: `deviation_up_${index}`, lowerBound: 0, integer: false },
     { id: `deviation_down_${index}`, lowerBound: 0, integer: false },
   ]);
-  const variables = [...templateVariables, ...deviationVariables];
+  const featureDeviationVariables = advancedFeatures.flatMap((_, index) => [
+    { id: `feature_up_${index}`, lowerBound: 0, integer: false },
+    { id: `feature_down_${index}`, lowerBound: 0, integer: false },
+  ]);
+  const variables = [
+    ...templateVariables,
+    ...templateDeviationVariables,
+    ...featureDeviationVariables,
+  ];
   const constraints: LinearConstraint[] = [
     {
       id: "synthetic_count",
@@ -724,7 +1129,24 @@ export const compileTemplateWeights = (
       rightHandSide: expectedPerTemplate,
     });
   }
-  for (const constraint of compiledTargets.aggregateConstraints) {
+  advancedFeatures.forEach((feature, featureIndex) => {
+    constraints.push({
+      id: `feature_${featureIndex}`,
+      coefficients: {
+        ...Object.fromEntries(
+          templateVariables.map((variable, rowIndex) => {
+            const value = evaluateAdvancedFeature(source[rowIndex]!, feature);
+            return [variable.id, value === null ? 0 : value - feature.sourceValue];
+          }),
+        ),
+        [`feature_up_${featureIndex}`]: -1,
+        [`feature_down_${featureIndex}`]: 1,
+      },
+      relation: "=",
+      rightHandSide: 0,
+    });
+  });
+  for (const [constraintIndex, constraint] of compiledTargets.aggregateConstraints.entries()) {
     const { metric, target } = constraint;
     if (metric.kind !== "option_count" && metric.kind !== "option_ratio") continue;
     const original =
@@ -734,19 +1156,23 @@ export const compileTemplateWeights = (
         optionKey: metric.optionKey,
       }) ?? 0;
     const originalAnswered = source.filter(
-      (row) => slotFor(row, metric.questionId).state === "answered",
+      (row) =>
+        (metric.condition === undefined || conditionMatches(row, metric.condition)) &&
+        slotFor(row, metric.questionId).state === "answered",
     ).length;
     const coefficients = Object.fromEntries(
       templateVariables.map((variable, index) => {
         const slot = slotFor(source[index]!, metric.questionId);
         const contributes =
+          (metric.condition === undefined || conditionMatches(source[index]!, metric.condition)) &&
           slot.state === "answered" &&
-          slot.value.kind === "single_choice" &&
-          slot.value.optionKey === metric.optionKey;
+          ((slot.value.kind === "single_choice" && slot.value.optionKey === metric.optionKey) ||
+            (slot.value.kind === "multi_choice" &&
+              slot.value.optionKeys.includes(metric.optionKey as never)));
         return [variable.id, contributes ? 1 : 0];
       }),
     );
-    const id = `option_${metric.questionId}_${metric.optionKey}`;
+    const id = `target_${constraintIndex}`;
     if (target.kind === "count") {
       constraints.push({
         id,
@@ -759,7 +1185,12 @@ export const compileTemplateWeights = (
         templateVariables.map((variable, index) => {
           const slot = slotFor(source[index]!, metric.questionId);
           const numerator = coefficients[variable.id] ?? 0;
-          const denominator = slot.state === "answered" ? 1 : 0;
+          const denominator =
+            (metric.condition === undefined ||
+              conditionMatches(source[index]!, metric.condition)) &&
+            slot.state === "answered"
+              ? 1
+              : 0;
           return [variable.id, numerator - target.value * denominator];
         }),
       );
@@ -791,7 +1222,12 @@ export const compileTemplateWeights = (
           templateVariables.map((variable, index) => {
             const slot = slotFor(source[index]!, metric.questionId);
             const numerator = coefficients[variable.id] ?? 0;
-            const denominator = slot.state === "answered" ? 1 : 0;
+            const denominator =
+              (metric.condition === undefined ||
+                conditionMatches(source[index]!, metric.condition)) &&
+              slot.state === "answered"
+                ? 1
+                : 0;
             return [variable.id, numerator - ratio * denominator];
           }),
         );
@@ -810,7 +1246,15 @@ export const compileTemplateWeights = (
       constraints,
       objective: {
         sense: "minimize",
-        coefficients: Object.fromEntries(deviationVariables.map((variable) => [variable.id, 1])),
+        coefficients: {
+          ...Object.fromEntries(templateDeviationVariables.map((variable) => [variable.id, 0.01])),
+          ...Object.fromEntries(
+            featureDeviationVariables.map((variable, index) => {
+              const feature = advancedFeatures[Math.floor(index / 2)];
+              return [variable.id, feature?.reliability ?? 0];
+            }),
+          ),
+        },
       },
     },
     templateResponseIds: source.map((response) => String(response.responseId)),
@@ -838,6 +1282,7 @@ export const synthesize = (
   targets: ProjectTargets,
   seed: number,
   allocatedTemplateIndexes?: readonly number[],
+  advancedFeatures: readonly AdvancedFeature[] = [],
 ): SynthesisResult => {
   const feasibility = checkFeasibility(form, original, targets);
   if (feasibility.status !== "feasible" || original.length === 0)
@@ -875,10 +1320,17 @@ export const synthesize = (
   const errors = targets.questionTargets
     .map((target) =>
       target.kind === "option"
-        ? repairOptionTarget(form, original, synthetic, target)
-        : repairMeanTarget(form, original, synthetic, target),
+        ? repairOptionTarget(form, original, synthetic, target, seed)
+        : target.kind === "selection_count_mean"
+          ? repairSelectionCountMean(form, original, synthetic, target)
+          : repairMeanTarget(form, original, synthetic, target),
     )
     .filter((error): error is string => error !== null);
+  errors.push(
+    ...(targets.detailedGoals ?? [])
+      .map((goal, index) => repairConditionalGoal(form, original, synthetic, goal, seed + index))
+      .filter((error): error is string => error !== null),
+  );
   if (errors.length)
     return {
       kind: "infeasible",
@@ -897,7 +1349,7 @@ export const synthesize = (
         ],
       },
     };
-  const validation = validateSynthesis(form, original, synthetic, targets);
+  const validation = validateSynthesis(form, original, synthetic, targets, advancedFeatures);
   return validation.valid
     ? { kind: "success", synthetic, feasibility, validation }
     : {

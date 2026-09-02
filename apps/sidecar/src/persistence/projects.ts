@@ -40,6 +40,7 @@ export interface SynthesisSource {
   readonly form: FormSnapshot;
   readonly responses: readonly NormalizedResponse[];
   readonly sourceRevisionId: SourceRevisionId;
+  readonly relationships: readonly RelationshipProfile[];
 }
 
 const hash = (value: unknown): string =>
@@ -122,7 +123,7 @@ export class ProjectRepository {
           importedAt,
         });
       const responseInsert = this.database.prepare(
-        `INSERT INTO responses VALUES (@id,@createdAt,@lastSubmittedAt,@contentHash,'original')`,
+        `INSERT INTO responses (id,created_at,last_submitted_at,content_hash,origin,path_json) VALUES (@id,@createdAt,@lastSubmittedAt,@contentHash,'original',@path)`,
       );
       const membershipInsert = this.database.prepare(`INSERT INTO revision_responses VALUES (?,?)`);
       const answerInsert = this.database.prepare(`INSERT INTO answers VALUES (?,?,?)`);
@@ -132,6 +133,7 @@ export class ProjectRepository {
           createdAt: response.createdAt ?? null,
           lastSubmittedAt: response.lastSubmittedAt ?? null,
           contentHash: responseContentHash(response),
+          path: JSON.stringify(response.path),
         });
         membershipInsert.run(revisionId, response.responseId);
         for (const [questionId, slot] of Object.entries(response.answers))
@@ -240,8 +242,13 @@ export class ProjectRepository {
     if (snapshot === undefined) return null;
     const form = JSON.parse(snapshot.payload_json) as FormSnapshot;
     const rows = this.database
-      .prepare<{ id: string; created_at: string | null; last_submitted_at: string | null }>(
-        "SELECT r.id, r.created_at, r.last_submitted_at FROM responses r JOIN revision_responses rr ON rr.response_id=r.id WHERE rr.revision_id=? ORDER BY r.id",
+      .prepare<{
+        id: string;
+        created_at: string | null;
+        last_submitted_at: string | null;
+        path_json: string;
+      }>(
+        "SELECT r.id, r.created_at, r.last_submitted_at, r.path_json FROM responses r JOIN revision_responses rr ON rr.response_id=r.id WHERE rr.revision_id=? ORDER BY r.id",
       )
       .all(summary.currentSourceRevisionId);
     const answers = this.database.prepare<{ question_id: string; slot_json: string }>(
@@ -257,10 +264,24 @@ export class ProjectRepository {
         lastSubmittedAt: row.last_submitted_at ?? undefined,
         answers: responseAnswers,
         origin: "original" as const,
-        path: resolveResponsePath(form, responseAnswers),
+        path:
+          row.path_json === "{}"
+            ? resolveResponsePath(form, responseAnswers)
+            : JSON.parse(row.path_json),
       };
     });
-    return { form, responses, sourceRevisionId: summary.currentSourceRevisionId };
+    const relationships = this.database
+      .prepare<{ payload_json: string }>(
+        "SELECT payload_json FROM relationship_profiles WHERE revision_id=? ORDER BY question_a, question_b",
+      )
+      .all(summary.currentSourceRevisionId)
+      .map((row) => JSON.parse(row.payload_json) as RelationshipProfile);
+    return {
+      form,
+      responses,
+      sourceRevisionId: summary.currentSourceRevisionId,
+      relationships,
+    };
   }
 
   public saveRun(input: {
@@ -270,6 +291,7 @@ export class ProjectRepository {
     readonly seed: number;
     readonly synthetic: readonly NormalizedResponse[];
     readonly validation: ValidationResult;
+    readonly targetRevision: number;
     readonly createdAt?: string;
   }): SynthesisRun {
     if (!input.validation.valid) throw new Error("Invalid synthesis Run cannot be persisted");
@@ -281,9 +303,11 @@ export class ProjectRepository {
       projectId: input.projectId,
       sourceRevisionId: input.sourceRevisionId,
       targetSnapshot: input.targets,
+      targetRevision: input.targetRevision,
       seed: input.seed,
       engineVersion: VERSIONS.engineVersion,
       profilerVersion: VERSIONS.profilerVersion,
+      appVersion: VERSIONS.appVersion,
       createdAt,
     };
     this.database.transaction(() => {
@@ -291,7 +315,9 @@ export class ProjectRepository {
         .prepare("INSERT INTO target_snapshots VALUES (?,?,?,?)")
         .run(targetSnapshotId, input.projectId, JSON.stringify(input.targets), createdAt);
       this.database
-        .prepare("INSERT INTO synthesis_runs VALUES (?,?,?,?,?,?,?,?,?)")
+        .prepare(
+          "INSERT INTO synthesis_runs (id,project_id,source_revision_id,target_snapshot_id,seed,engine_version,profiler_version,app_version,created_at,validation_json,target_revision) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        )
         .run(
           id,
           input.projectId,
@@ -300,8 +326,10 @@ export class ProjectRepository {
           input.seed,
           run.engineVersion,
           run.profilerVersion,
+          run.appVersion,
           createdAt,
           JSON.stringify(input.validation),
+          input.targetRevision,
         );
       const insert = this.database.prepare("INSERT INTO synthetic_responses VALUES (?,?,?)");
       for (const response of input.synthetic)
@@ -315,6 +343,8 @@ export class ProjectRepository {
     projectId: string;
     sourceRevisionId: string;
     targetSnapshot: ProjectTargets;
+    targetRevision: number;
+    appVersion: string;
     validation: ValidationResult;
     finalResponseCount: number;
   } | null {
@@ -325,8 +355,10 @@ export class ProjectRepository {
         source_revision_id: string;
         payload_json: string;
         validation_json: string;
+        target_revision: number;
+        app_version: string;
       }>(
-        "SELECT sr.id, sr.project_id, sr.source_revision_id, ts.payload_json, sr.validation_json FROM synthesis_runs sr JOIN target_snapshots ts ON ts.id=sr.target_snapshot_id WHERE sr.id=?",
+        "SELECT sr.id, sr.project_id, sr.source_revision_id, ts.payload_json, sr.validation_json, sr.target_revision FROM synthesis_runs sr JOIN target_snapshots ts ON ts.id=sr.target_snapshot_id WHERE sr.id=?",
       )
       .get(id);
     if (row === undefined) return null;
@@ -336,6 +368,8 @@ export class ProjectRepository {
       projectId: row.project_id,
       sourceRevisionId: row.source_revision_id,
       targetSnapshot: JSON.parse(row.payload_json) as ProjectTargets,
+      targetRevision: row.target_revision,
+      appVersion: row.app_version,
       validation,
       finalResponseCount: validation.finalResponseCount,
     };
@@ -344,6 +378,11 @@ export class ProjectRepository {
   public delete(id: ProjectId): void {
     this.database.transaction(() => {
       this.database.prepare(`DELETE FROM projects WHERE id=?`).run(id);
+      this.database
+        .prepare(
+          `DELETE FROM responses WHERE origin='original' AND NOT EXISTS (SELECT 1 FROM revision_responses rr WHERE rr.response_id=responses.id)`,
+        )
+        .run();
     });
   }
 }

@@ -164,7 +164,13 @@ export const updateTargets = (
     {
       projectId,
       expectedRevision,
-      targets: { ...targets, questionTargets: [...targets.questionTargets] },
+      targets: {
+        ...targets,
+        questionTargets: [...targets.questionTargets],
+        ...(targets.detailedGoals === undefined
+          ? {}
+          : { detailedGoals: [...targets.detailedGoals] }),
+      },
     },
     backend,
   );
@@ -178,7 +184,13 @@ export const checkTargetFeasibility = (
     "targets.checkFeasibility",
     {
       projectId,
-      targets: { ...targets, questionTargets: [...targets.questionTargets] },
+      targets: {
+        ...targets,
+        questionTargets: [...targets.questionTargets],
+        ...(targets.detailedGoals === undefined
+          ? {}
+          : { detailedGoals: [...targets.detailedGoals] }),
+      },
     },
     backend,
   );
@@ -198,7 +210,13 @@ export const startSynthesis = (
     "synthesis.start",
     {
       projectId,
-      targets: { ...targets, questionTargets: [...targets.questionTargets] },
+      targets: {
+        ...targets,
+        questionTargets: [...targets.questionTargets],
+        ...(targets.detailedGoals === undefined
+          ? {}
+          : { detailedGoals: [...targets.detailedGoals] }),
+      },
       ...(targetRevision === undefined ? {} : { targetRevision }),
       seed,
       operationId,

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -38,7 +38,7 @@ describe("encrypted project database", () => {
       reopened.prepare<{ name: string }>("SELECT name FROM projects WHERE id='p'").get(),
     ).toEqual({ name: "marker" });
     expect(reopened.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 4,
+      user_version: 6,
     });
     reopened.close();
     const wrong = new TestSecrets();
@@ -46,6 +46,28 @@ describe("encrypted project database", () => {
     await expect(ProjectDatabase.open(path, wrong)).rejects.toMatchObject({
       backendError: { code: "BACKEND_UNAVAILABLE" },
     });
+  });
+
+  it("migrates schema 4 Runs to frozen target revisions", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "survey-synth-migration-"));
+    const path = join(directory, "projects.db");
+    const secrets = new TestSecrets();
+    const previous = await ProjectDatabase.open(path, secrets);
+    previous.prepare("ALTER TABLE synthesis_runs DROP COLUMN target_revision").run();
+    previous.prepare("PRAGMA user_version = 4").run();
+    previous.close();
+
+    const migrated = await ProjectDatabase.open(path, secrets);
+    const columns = migrated
+      .prepare<{ name: string }>("PRAGMA table_info(synthesis_runs)")
+      .all()
+      .map((column) => column.name);
+    expect(columns).toContain("target_revision");
+    expect(migrated.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
+      user_version: 6,
+    });
+    migrated.close();
+    await rm(directory, { recursive: true, force: true });
   });
 
   it("does not create a replacement database when the key is missing", async () => {
@@ -61,7 +83,9 @@ describe("encrypted project database", () => {
 
   it("creates a coherent local project with normalized answers and derived data", async () => {
     const directory = await mkdtemp(join(tmpdir(), "survey-synth-db-"));
-    const db = await ProjectDatabase.open(join(directory, "projects.db"), new TestSecrets());
+    const databasePath = join(directory, "projects.db");
+    const secrets = new TestSecrets();
+    let db = await ProjectDatabase.open(databasePath, secrets);
     const form: FormSnapshot = {
       formId: "form" as never,
       title: "Local form",
@@ -109,7 +133,10 @@ describe("encrypted project database", () => {
             value: { kind: "single_choice", optionKey: "yes" as never, label: "Yes" },
           },
         },
-        path: { questions: {}, confidence: "certain" },
+        path: {
+          questions: { question: "reached", "second-question": "not_reached" } as never,
+          confidence: "certain",
+        },
       },
     ];
     const repository = new ProjectRepository(db);
@@ -125,8 +152,25 @@ describe("encrypted project database", () => {
       profiles: [{ questionKind: "single_choice" }, { questionKind: "text" }],
       relationships: [],
     });
-    repository.delete(created.project.id);
-    expect(repository.list()).toHaveLength(0);
+    const expectedPath = responses[0]!.path;
+    db.close();
+    db = await ProjectDatabase.open(databasePath, secrets);
+    const reopenedRepository = new ProjectRepository(db);
+    expect(reopenedRepository.loadSynthesisSource(created.project.id)?.responses[0]?.path).toEqual(
+      expectedPath,
+    );
+    reopenedRepository.delete(created.project.id);
+    expect(reopenedRepository.list()).toHaveLength(0);
+    for (const table of [
+      "source_revisions",
+      "revision_responses",
+      "responses",
+      "synthesis_runs",
+      "synthetic_responses",
+    ])
+      expect(db.prepare<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual(
+        { count: 0 },
+      );
     db.close();
   });
 
@@ -210,18 +254,22 @@ describe("encrypted project database", () => {
         sourceRevisionId: sourceSnapshot.sourceRevisionId,
         targets: { targetResponseCount: 2, questionTargets: [] },
         seed: 42,
+        targetRevision: 3,
         synthetic: result.synthetic,
         validation: result.validation!,
       });
       expect(run).toMatchObject({
         sourceRevisionId: sourceSnapshot.sourceRevisionId,
         seed: 42,
-        engineVersion: 1,
+        engineVersion: 2,
+        appVersion: "0.1.0",
+        targetRevision: 3,
       });
       expect(repository.getRun(run.id)).toMatchObject({
         runId: run.id,
         targetSnapshot: { targetResponseCount: 2, questionTargets: [] },
         finalResponseCount: 2,
+        targetRevision: 3,
       });
       expect(
         db.prepare<{ count: number }>("SELECT COUNT(*) AS count FROM synthesis_runs").get(),

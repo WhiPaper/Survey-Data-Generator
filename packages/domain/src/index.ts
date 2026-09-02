@@ -18,6 +18,8 @@ export type FormSnapshotId = Brand<string, "FormSnapshotId">;
 export interface ProjectTargets {
   targetResponseCount: number;
   questionTargets: readonly QuestionTarget[];
+  /** M6 conditional goals. Omitted by older target snapshots. */
+  detailedGoals?: ConditionalGoal[];
 }
 
 export type TargetValue =
@@ -29,16 +31,35 @@ export type TargetValue =
 
 export type QuestionTarget =
   | { kind: "option"; questionId: QuestionId; optionKey: OptionKey; target: TargetValue }
-  | { kind: "mean"; questionId: QuestionId; target: Extract<TargetValue, { kind: "mean" }> };
+  | { kind: "mean"; questionId: QuestionId; target: Extract<TargetValue, { kind: "mean" }> }
+  | {
+      kind: "selection_count_mean";
+      questionId: QuestionId;
+      target: Extract<TargetValue, { kind: "mean" }>;
+    };
+
+export type ConditionPredicate =
+  | { kind: "option_selected"; questionId: QuestionId; optionKey: OptionKey }
+  | { kind: "answered"; questionId: QuestionId }
+  | { kind: "and"; conditions: ConditionPredicate[] }
+  | { kind: "or"; conditions: ConditionPredicate[] };
+
+export interface ConditionalGoal {
+  readonly id: string;
+  readonly condition: ConditionPredicate;
+  readonly outcome: Exclude<QuestionTarget, { kind: "selection_count_mean" }>;
+}
 
 export interface SynthesisRun {
   id: RunId;
   projectId: ProjectId;
   sourceRevisionId: SourceRevisionId;
   targetSnapshot: ProjectTargets;
+  targetRevision: number;
   seed: number;
   engineVersion: number;
   profilerVersion: number;
+  appVersion: string;
   createdAt: string;
 }
 

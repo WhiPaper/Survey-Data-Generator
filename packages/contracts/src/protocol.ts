@@ -254,6 +254,37 @@ const TargetValueSchema = z.discriminatedUnion("kind", [
     .strict(),
   z.object({ kind: z.literal("mean"), value: z.number().finite() }).strict(),
 ]);
+const ConditionPredicateSchema: z.ZodType = z.lazy(() =>
+  z.discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("option_selected"),
+        questionId: z.string().min(1),
+        optionKey: z.string().min(1),
+      })
+      .strict(),
+    z.object({ kind: z.literal("answered"), questionId: z.string().min(1) }).strict(),
+    z.object({ kind: z.literal("and"), conditions: z.array(ConditionPredicateSchema) }).strict(),
+    z.object({ kind: z.literal("or"), conditions: z.array(ConditionPredicateSchema) }).strict(),
+  ]),
+);
+const ConditionalOutcomeSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("option"),
+      questionId: z.string().min(1),
+      optionKey: z.string().min(1),
+      target: TargetValueSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("mean"),
+      questionId: z.string().min(1),
+      target: z.object({ kind: z.literal("mean"), value: z.number().finite() }).strict(),
+    })
+    .strict(),
+]);
 export const ProjectTargetsSchema = z
   .object({
     targetResponseCount: z.number().int().nonnegative(),
@@ -274,8 +305,26 @@ export const ProjectTargetsSchema = z
             target: z.object({ kind: z.literal("mean"), value: z.number().finite() }).strict(),
           })
           .strict(),
+        z
+          .object({
+            kind: z.literal("selection_count_mean"),
+            questionId: z.string().min(1),
+            target: z.object({ kind: z.literal("mean"), value: z.number().finite() }).strict(),
+          })
+          .strict(),
       ]),
     ),
+    detailedGoals: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1),
+            condition: ConditionPredicateSchema,
+            outcome: ConditionalOutcomeSchema,
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict();
 export const TargetsGetParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
@@ -311,6 +360,7 @@ export const RunsGetResultSchema = z
     projectId: ProjectIdSchema,
     sourceRevisionId: z.string().min(1),
     targetSnapshot: ProjectTargetsSchema,
+    targetRevision: z.number().int().nonnegative(),
     validation: z.record(z.string(), z.unknown()),
     finalResponseCount: z.number().int().nonnegative(),
   })

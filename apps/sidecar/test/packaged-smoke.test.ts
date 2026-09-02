@@ -16,6 +16,10 @@ describe("compiled sidecar native dependency smoke", () => {
     const secret = Buffer.from("packaged-test-key").toString("base64");
     const lines: unknown[] = [];
     let buffered = "";
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
     let resolveHostRequest!: () => void;
     const hostRequestSeen = new Promise<void>((resolve) => {
       resolveHostRequest = resolve;
@@ -58,7 +62,8 @@ describe("compiled sidecar native dependency smoke", () => {
         reject(error);
       });
       child.on("exit", (code) => {
-        if (code !== 0) reject(new Error(`compiled sidecar exited with ${code}`));
+        if (code !== 0)
+          reject(new Error(`compiled sidecar exited with ${code}: ${stderr.slice(-500)}`));
       });
     });
     expect(result).toMatchObject({ type: "response", id: "ping", ok: true });

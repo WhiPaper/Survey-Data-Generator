@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const pnpm = "pnpm";
 const commands = [
   ["run", "format:check"],
   ["run", "rust:format:check"],

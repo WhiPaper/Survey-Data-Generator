@@ -98,6 +98,7 @@ const TargetEditor = ({
   const adjustableQuestions = form.questions.filter(
     (question) =>
       question.kind === "single_choice" ||
+      question.kind === "multi_choice" ||
       question.kind === "ordinal" ||
       (question.kind === "text" && isNumericText(profiles, question.id)),
   );
@@ -106,7 +107,10 @@ const TargetEditor = ({
   const addQuestion = (questionId: string) => {
     if (questionId === "") return;
     const question = form.questions.find((item) => item.id === questionId);
-    if (question?.kind === "single_choice" && question.options[0] !== undefined) {
+    if (
+      (question?.kind === "single_choice" || question?.kind === "multi_choice") &&
+      question.options[0] !== undefined
+    ) {
       onChange({
         ...targets,
         questionTargets: [
@@ -229,7 +233,10 @@ const TargetEditor = ({
           .map((question) => {
             const target = targetFor(question.id)[0];
             if (target === undefined) return null;
-            if (question.kind === "single_choice" && target.kind === "option") {
+            if (
+              (question.kind === "single_choice" || question.kind === "multi_choice") &&
+              target.kind === "option"
+            ) {
               const option = question.options.find((item) => item.key === target.optionKey);
               if (option === undefined) return null;
               const current = (

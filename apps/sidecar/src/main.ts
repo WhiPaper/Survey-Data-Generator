@@ -157,6 +157,7 @@ const server = createSidecarServer({
         source,
         targetState.targets,
         input.seed,
+        targetState.revision,
       );
       return "issues" in outcome
         ? { status: outcome.status, issues: outcome.issues }

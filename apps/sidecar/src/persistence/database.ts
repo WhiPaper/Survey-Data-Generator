@@ -57,6 +57,13 @@ export class ProjectDatabase {
     if (this.db.open) this.db.close();
   }
 
+  private hasColumn(table: string, column: string): boolean {
+    return this.db
+      .prepare<{ name: string }>(`PRAGMA table_info(${table})`)
+      .all()
+      .some((entry) => entry.name === column);
+  }
+
   private migrate(): void {
     let current = Number(this.db.pragma("user_version", { simple: true }));
     if (current > VERSIONS.databaseSchemaVersion)
@@ -107,6 +114,28 @@ export class ProjectDatabase {
           CREATE TABLE IF NOT EXISTS target_revisions (project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, revision INTEGER NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(project_id, revision));
           PRAGMA user_version = 4;
         `);
+      });
+      current = 4;
+    }
+    if (current < 5) {
+      this.transaction(() => {
+        if (!this.hasColumn("synthesis_runs", "target_revision"))
+          this.db.exec(
+            "ALTER TABLE synthesis_runs ADD COLUMN target_revision INTEGER NOT NULL DEFAULT 0",
+          );
+        this.db.pragma("user_version = 5");
+      });
+      current = 5;
+    }
+    if (current < 6) {
+      this.transaction(() => {
+        if (!this.hasColumn("synthesis_runs", "app_version"))
+          this.db.exec(
+            "ALTER TABLE synthesis_runs ADD COLUMN app_version TEXT NOT NULL DEFAULT ''",
+          );
+        if (!this.hasColumn("responses", "path_json"))
+          this.db.exec("ALTER TABLE responses ADD COLUMN path_json TEXT NOT NULL DEFAULT '{}'");
+        this.db.pragma("user_version = 6");
       });
     }
   }
