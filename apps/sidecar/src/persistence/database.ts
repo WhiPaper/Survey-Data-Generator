@@ -234,6 +234,39 @@ export class ProjectDatabase {
       });
       current = 9;
     }
+    if (current < 10) {
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS run_ai_texts (
+            run_id TEXT NOT NULL REFERENCES synthesis_runs(id) ON DELETE CASCADE,
+            response_id TEXT NOT NULL,
+            question_id TEXT NOT NULL,
+            text TEXT NOT NULL,
+            PRIMARY KEY(run_id, response_id, question_id)
+          );
+          CREATE TABLE IF NOT EXISTS run_ai_metadata (
+            run_id TEXT PRIMARY KEY REFERENCES synthesis_runs(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_version INTEGER NOT NULL,
+            settings_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            item_count INTEGER NOT NULL,
+            generated_count INTEGER NOT NULL,
+            failed_count INTEGER NOT NULL,
+            generated_at TEXT NOT NULL,
+            warnings_json TEXT NOT NULL DEFAULT '[]'
+          );
+          CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+          PRAGMA user_version = 10;
+        `);
+      });
+      current = 10;
+    }
   }
 }
 

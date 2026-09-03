@@ -19,6 +19,7 @@ import type { ValidationResult } from "@survey-synth/synthesis-core";
 import {
   LegacyCompatibilityOutcomeSchema,
   VERSIONS,
+  type AiMetadata,
   type LegacyCompatibilityOutcome,
   type LegacyCompatibilityReason,
 } from "@survey-synth/contracts";
@@ -27,6 +28,7 @@ import {
   profileForm,
   type QuestionProfile,
   type RelationshipProfile,
+  type SemanticInference,
 } from "@survey-synth/statistics";
 import { ProjectDatabase } from "./database.js";
 import { sidecarError } from "../errors.js";
@@ -1051,6 +1053,7 @@ export class ProjectRepository {
     appVersion: string;
     validation: ValidationResult;
     finalResponseCount: number;
+    aiMetadata?: AiMetadata;
   } | null {
     const row = this.database
       .prepare<{
@@ -1067,6 +1070,7 @@ export class ProjectRepository {
       .get(id);
     if (row === undefined) return null;
     const validation = JSON.parse(row.validation_json) as ValidationResult;
+    const aiMetadata = this.getRunAiMetadata(id);
     return {
       runId: row.id,
       projectId: row.project_id,
@@ -1076,6 +1080,7 @@ export class ProjectRepository {
       appVersion: row.app_version,
       validation,
       finalResponseCount: validation.finalResponseCount,
+      aiMetadata: aiMetadata ?? undefined,
     };
   }
 
@@ -1183,9 +1188,26 @@ export class ProjectRepository {
     if (syntheticRows.some((row, index) => row.synthetic_index !== index)) {
       throw sidecarError("BACKEND_UNAVAILABLE", "Synthetic response ordering is corrupt", false);
     }
-    const syntheticResponses: NormalizedResponse[] = syntheticRows.map((row) =>
-      parseStoredSyntheticResponse(row.payload_json, row.response_id),
-    );
+    const aiTexts = this.getRunAiTexts(runRow.id as RunId);
+    const syntheticResponses: NormalizedResponse[] = syntheticRows.map((row) => {
+      const resp = parseStoredSyntheticResponse(row.payload_json, row.response_id);
+      if (aiTexts.size === 0) return resp;
+      let hasOverlay = false;
+      const answers = { ...resp.answers };
+      for (const [qId, slot] of Object.entries(answers)) {
+        const key = `${resp.responseId}:${qId}`;
+        const text = aiTexts.get(key);
+        if (text !== undefined && slot.state === "answered") {
+        if (text !== undefined && slot.state === "answered" && slot.value.kind === "text") {
+          answers[qId as QuestionId] = {
+            state: "answered",
+            value: { kind: "text", value: text },
+          };
+          hasOverlay = true;
+        }
+      }
+      return hasOverlay ? { ...resp, answers } : resp;
+    });
 
     if (originalResponses.length + syntheticResponses.length !== validation.finalResponseCount) {
       throw sidecarError(
@@ -1271,5 +1293,205 @@ export class ProjectRepository {
         )
         .run();
     });
+  }
+
+  public getRunAiMetadata(id: RunId): AiMetadata | null {
+    const row = this.database
+      .prepare<{
+        provider: string;
+        model: string;
+        prompt_version: number;
+        settings_hash: string;
+        status: string;
+        item_count: number;
+        generated_count: number;
+        failed_count: number;
+        generated_at: string;
+        warnings_json: string;
+      }>(
+        "SELECT provider, model, prompt_version, settings_hash, status, item_count, generated_count, failed_count, generated_at, warnings_json FROM run_ai_metadata WHERE run_id=?",
+      )
+      .get(id);
+    if (row === undefined) return null;
+    let warnings: string[] = [];
+    try {
+      warnings = JSON.parse(row.warnings_json) as string[];
+    } catch {
+      // ignore
+    }
+    return {
+      provider: row.provider,
+      model: row.model,
+      promptVersion: row.prompt_version,
+      settingsHash: row.settings_hash,
+      status: row.status as "completed" | "partial" | "failed",
+      itemCount: row.item_count,
+      generatedCount: row.generated_count,
+      failedCount: row.failed_count,
+      generatedAt: row.generated_at,
+      warnings,
+    };
+  }
+
+  public getRunAiTexts(id: RunId): Map<string, string> {
+    const rows = this.database
+      .prepare<{ response_id: string; question_id: string; text: string }>(
+        "SELECT response_id, question_id, text FROM run_ai_texts WHERE run_id=?",
+      )
+      .all(id);
+    const map = new Map<string, string>();
+    for (const row of rows) {
+      map.set(`${row.response_id}:${row.question_id}`, row.text);
+    }
+    return map;
+  }
+
+  public saveRunAiOverlay(input: {
+    readonly runId: RunId;
+    readonly metadata: AiMetadata;
+    readonly texts: ReadonlyMap<string, string>;
+  }): void {
+    const runExists = this.database
+      .prepare("SELECT 1 FROM synthesis_runs WHERE id=?")
+      .get(input.runId);
+    if (runExists === undefined) {
+      throw sidecarError("NOT_FOUND", "Run was not found", true);
+    }
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          "INSERT OR REPLACE INTO run_ai_metadata (run_id, provider, model, prompt_version, settings_hash, status, item_count, generated_count, failed_count, generated_at, warnings_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          input.runId,
+          input.metadata.provider,
+          input.metadata.model,
+          input.metadata.promptVersion,
+          input.metadata.settingsHash,
+          input.metadata.status,
+          input.metadata.itemCount,
+          input.metadata.generatedCount,
+          input.metadata.failedCount,
+          input.metadata.generatedAt,
+          JSON.stringify(input.metadata.warnings ?? []),
+        );
+
+      const insertText = this.database.prepare(
+        "INSERT OR REPLACE INTO run_ai_texts (run_id, response_id, question_id, text) VALUES (?, ?, ?, ?)",
+      );
+      for (const [key, text] of input.texts.entries()) {
+        const colonIndex = key.indexOf(":");
+        if (colonIndex !== -1) {
+          const responseId = key.substring(0, colonIndex);
+          const questionId = key.substring(colonIndex + 1);
+          insertText.run(input.runId, responseId, questionId, text);
+        }
+      }
+    });
+  }
+
+  public loadRunDataForAi(id: RunId): {
+    readonly runId: RunId;
+    readonly projectId: ProjectId;
+    readonly form: FormSnapshot;
+    readonly originalResponses: readonly NormalizedResponse[];
+    readonly syntheticResponses: readonly NormalizedResponse[];
+    readonly semanticInferences: readonly {
+      questionId: QuestionId;
+      inference: SemanticInference;
+    }[];
+    readonly semanticOverrides: readonly DomainSemanticOverride[];
+  } {
+    const runRow = this.database
+      .prepare<{
+        id: string;
+        project_id: string;
+        source_revision_id: string;
+        semantic_overrides_json: string | null;
+      }>(
+        "SELECT id, project_id, source_revision_id, semantic_overrides_json FROM synthesis_runs WHERE id=?",
+      )
+      .get(id);
+    if (runRow === undefined) {
+      throw sidecarError("NOT_FOUND", "Run was not found", true);
+    }
+    const revisionId = runRow.source_revision_id as SourceRevisionId;
+    const snapshot = this.database
+      .prepare<{ payload_json: string }>(
+        "SELECT fs.payload_json FROM form_snapshots fs JOIN source_revisions sr ON sr.form_snapshot_id=fs.id WHERE sr.id=? AND sr.project_id=?",
+      )
+      .get(revisionId, runRow.project_id);
+    if (snapshot === undefined) {
+      throw sidecarError("NOT_FOUND", "Historical Form snapshot was not found", false);
+    }
+    const form = parseStoredJson<FormSnapshot>(snapshot.payload_json, "Form snapshot is corrupt");
+    const originalResponses = this.loadRevisionResponses(
+      revisionId,
+      form,
+      runRow.project_id as ProjectId,
+    );
+
+    const syntheticRows = this.database
+      .prepare<{ response_id: string; payload_json: string; synthetic_index: number }>(
+        "SELECT response_id, payload_json, synthetic_index FROM synthetic_responses WHERE run_id=? ORDER BY synthetic_index ASC",
+      )
+      .all(runRow.id);
+    const syntheticResponses: NormalizedResponse[] = syntheticRows.map((row) =>
+      parseStoredSyntheticResponse(row.payload_json, row.response_id),
+    );
+
+    const semanticInferences: { questionId: QuestionId; inference: SemanticInference }[] = [];
+    const profileRows = this.database
+      .prepare<{ question_id: string; payload_json: string }>(
+        "SELECT question_id, payload_json FROM question_profiles WHERE revision_id=? ORDER BY question_id",
+      )
+      .all(revisionId);
+    for (const row of profileRows) {
+      const profile = parseStoredJson<QuestionProfile>(
+        row.payload_json,
+        "Historical question profile is corrupt",
+      );
+      if (profile.semanticInference) {
+        semanticInferences.push({
+          questionId: row.question_id as QuestionId,
+          inference: profile.semanticInference,
+        });
+      }
+    }
+
+    const semanticOverridesJson = runRow.semantic_overrides_json;
+    const semanticOverrides: DomainSemanticOverride[] =
+      semanticOverridesJson !== null && semanticOverridesJson !== undefined
+        ? parseStoredJson<DomainSemanticOverride[]>(
+            semanticOverridesJson,
+            "Semantic overrides snapshot is corrupt",
+          )
+        : [];
+
+    return {
+      runId: id,
+      projectId: runRow.project_id as ProjectId,
+      form,
+      originalResponses,
+      syntheticResponses,
+      semanticInferences,
+      semanticOverrides,
+    };
+  }
+
+  public getAppSetting(key: string): string | null {
+    const row = this.database
+      .prepare<{ value: string }>("SELECT value FROM app_settings WHERE key=?")
+      .get(key);
+    return row?.value ?? null;
+  }
+
+  public setAppSetting(key: string, value: string): void {
+    const updatedAt = new Date().toISOString();
+    this.database
+      .prepare(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+      )
+      .run(key, value, updatedAt);
   }
 }

@@ -32,6 +32,50 @@ describe("sidecar NDJSON boundary", () => {
     }
   });
 
+  it("permits allowed AI fields and strictly strips disallowed secrets, prompts, and survey data", () => {
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      stderrLogger.info("ai_generation_completed", {
+        runId: "run-123",
+        batchCount: 2,
+        fieldCount: 10,
+        model: "gpt-4o-mini",
+        promptVersion: 1,
+        retryCount: 0,
+        durationMs: 450,
+        // Disallowed fields that must NEVER appear in output:
+        apiKey: "sk-secret-key",
+        prompt: "Generate survey response for question",
+        sourceExamples: ["배송이 빠릅니다"],
+        generatedText: "친절하고 좋습니다",
+        pii: "010-1234-5678",
+        rawResponse: { id: "chatcmpl-1" },
+      } as unknown as SafeLogFields);
+
+      const lastCall = write.mock.calls[0]?.[0] as string;
+      const parsed = JSON.parse(lastCall);
+      expect(parsed).toEqual({
+        level: "info",
+        event: "ai_generation_completed",
+        runId: "run-123",
+        batchCount: 2,
+        fieldCount: 10,
+        model: "gpt-4o-mini",
+        promptVersion: 1,
+        retryCount: 0,
+        durationMs: 450,
+      });
+      expect(parsed.apiKey).toBeUndefined();
+      expect(parsed.prompt).toBeUndefined();
+      expect(parsed.sourceExamples).toBeUndefined();
+      expect(parsed.generatedText).toBeUndefined();
+      expect(parsed.pii).toBeUndefined();
+      expect(parsed.rawResponse).toBeUndefined();
+    } finally {
+      write.mockRestore();
+    }
+  });
+
   it("handles one message per chunk, multiple lines, and split JSON", () => {
     const decoder = new NdjsonDecoder();
     expect(decoder.push('{"a":1}\n')).toEqual(['{"a":1}']);

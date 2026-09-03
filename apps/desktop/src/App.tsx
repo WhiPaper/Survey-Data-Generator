@@ -29,6 +29,11 @@ import {
   refreshSource,
   cancelRefreshSource,
   resolveMigrationIssue,
+  getAiStatus,
+  configureAi,
+  acknowledgeAiDisclosure,
+  generateAiText,
+  cancelAiGeneration,
 } from "./api/backend";
 
 export const sessionQueryKey = ["session.get"] as const;
@@ -638,6 +643,91 @@ export function App() {
     exportMutation.mutate({ runId: completedRun.runId, format });
   };
 
+  const aiStatusQuery = useQuery({
+    queryKey: ["ai.status"],
+    queryFn: () => getAiStatus(),
+  });
+
+  const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [showDisclosureDialog, setShowDisclosureDialog] = useState(false);
+  const [aiFeedback, setAiFeedback] = useState<string | undefined>(undefined);
+  const [aiOperationId, setAiOperationId] = useState<string | undefined>(undefined);
+
+  const aiConfigureMutation = useMutation({
+    mutationFn: (apiKey: string) => configureAi(apiKey),
+    onSuccess: () => {
+      setShowApiKeyDialog(false);
+      setApiKeyInput("");
+      void queryClient.invalidateQueries({ queryKey: ["ai.status"] });
+      if (!aiStatusQuery.data?.disclosed) {
+        setShowDisclosureDialog(true);
+      } else if (completedRun) {
+        startAiGeneration();
+      }
+    },
+  });
+
+  const aiDisclosureMutation = useMutation({
+    mutationFn: () => acknowledgeAiDisclosure(),
+    onSuccess: () => {
+      setShowDisclosureDialog(false);
+      void queryClient.invalidateQueries({ queryKey: ["ai.status"] });
+      if (completedRun) {
+        startAiGeneration();
+      }
+    },
+  });
+
+  const aiGenerateMutation = useMutation({
+    mutationFn: ({ runId, operationId }: { runId: string; operationId?: string }) =>
+      generateAiText(runId, operationId),
+    onSuccess: (result) => {
+      setAiOperationId(undefined);
+      if (result.status === "skipped") {
+        setAiFeedback("AI 적용 가능한 텍스트 항목이 없습니다.");
+      } else {
+        setAiFeedback(`AI 텍스트 채움 완료 (${result.generatedFieldCount}개 항목).`);
+      }
+      if (completedRun) {
+        void queryClient.invalidateQueries({ queryKey: ["runs.get", completedRun.runId] });
+      }
+    },
+    onError: () => {
+      setAiOperationId(undefined);
+    },
+  });
+
+  const aiCancelMutation = useMutation({
+    mutationFn: (operationId: string) => cancelAiGeneration(operationId),
+  });
+
+  const startAiGeneration = () => {
+    if (!completedRun) return;
+    const opId = crypto.randomUUID();
+    setAiOperationId(opId);
+    setAiFeedback(undefined);
+    aiGenerateMutation.mutate({ runId: completedRun.runId, operationId: opId });
+  };
+
+  const handleStartAi = () => {
+    if (!aiStatusQuery.data?.configured) {
+      setShowApiKeyDialog(true);
+      return;
+    }
+    if (!aiStatusQuery.data?.disclosed) {
+      setShowDisclosureDialog(true);
+      return;
+    }
+    startAiGeneration();
+  };
+
+  const handleCancelAi = () => {
+    if (aiOperationId) {
+      aiCancelMutation.mutate(aiOperationId);
+    }
+  };
+
   const importOperationId = importMutation.variables?.operationId;
   const synthesisOperationId = synthesisMutation.variables?.operationId;
   const authBusy =
@@ -1086,6 +1176,49 @@ export function App() {
                         </tbody>
                       </table>
                     )}
+                    <div className="ai-actions">
+                      {aiStatusQuery.data?.enabled &&
+                        ((runQuery.data as unknown as { aiMetadata?: { generatedCount: number } })
+                          ?.aiMetadata ? (
+                          <span>
+                            AI 텍스트 채움 완료 (
+                            {
+                              (
+                                runQuery.data as unknown as {
+                                  aiMetadata: { generatedCount: number };
+                                }
+                              ).aiMetadata.generatedCount
+                            }
+                            개 항목)
+                          </span>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleStartAi}
+                              disabled={aiGenerateMutation.isPending || exportMutation.isPending}
+                            >
+                              텍스트도 자연스럽게 채우기
+                            </button>
+                            {aiGenerateMutation.isPending && (
+                              <span>
+                                텍스트 채우는 중…{" "}
+                                <button
+                                  type="button"
+                                  onClick={handleCancelAi}
+                                  disabled={aiCancelMutation.isPending}
+                                >
+                                  취소
+                                </button>
+                              </span>
+                            )}
+                            {aiFeedback && <p role="status">{aiFeedback}</p>}
+                            {aiGenerateMutation.error && (
+                              <p role="alert">{errorMessage(aiGenerateMutation.error)}</p>
+                            )}
+                          </>
+                        ))}
+                    </div>
                     <div className="export-actions">
                       <button
                         type="button"
@@ -1115,6 +1248,88 @@ export function App() {
                       결과 다시 만들기
                     </button>
                   </section>
+                )}
+                {showApiKeyDialog && (
+                  <div className="ai-dialog-backdrop">
+                    <div
+                      className="ai-dialog"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="api-key-dialog-title"
+                    >
+                      <h3 id="api-key-dialog-title">OpenAI API 키 설정</h3>
+                      <p>
+                        자연스러운 텍스트 생성을 위해 OpenAI API 키가 필요합니다. 입력된 키는 안전한
+                        저장소에만 보관됩니다.
+                      </p>
+                      <input
+                        type="password"
+                        placeholder="sk-..."
+                        value={apiKeyInput}
+                        onChange={(e) => setApiKeyInput(e.target.value)}
+                        disabled={aiConfigureMutation.isPending}
+                        style={{ width: "100%", padding: "0.5rem", boxSizing: "border-box" }}
+                      />
+                      {aiConfigureMutation.error && (
+                        <p role="alert">{errorMessage(aiConfigureMutation.error)}</p>
+                      )}
+                      <div className="ai-dialog-actions">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowApiKeyDialog(false);
+                            setApiKeyInput("");
+                          }}
+                          disabled={aiConfigureMutation.isPending}
+                        >
+                          취소
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => aiConfigureMutation.mutate(apiKeyInput)}
+                          disabled={aiConfigureMutation.isPending || apiKeyInput.trim() === ""}
+                        >
+                          저장
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {showDisclosureDialog && (
+                  <div className="ai-dialog-backdrop">
+                    <div
+                      className="ai-dialog"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="disclosure-dialog-title"
+                    >
+                      <h3 id="disclosure-dialog-title">AI 텍스트 생성 안내</h3>
+                      <p>
+                        설문 응답 생성에 필요한 문항 내용과 비식별화된 일부 예시가 AI
+                        서비스(OpenAI)로 전송됩니다. 개인식별정보(이름, 연락처 등)는 전송에서
+                        제외됩니다.
+                      </p>
+                      {aiDisclosureMutation.error && (
+                        <p role="alert">{errorMessage(aiDisclosureMutation.error)}</p>
+                      )}
+                      <div className="ai-dialog-actions">
+                        <button
+                          type="button"
+                          onClick={() => setShowDisclosureDialog(false)}
+                          disabled={aiDisclosureMutation.isPending}
+                        >
+                          취소
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => aiDisclosureMutation.mutate()}
+                          disabled={aiDisclosureMutation.isPending}
+                        >
+                          동의 및 계속
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 )}
                 {synthesisMutation.isPending && (
                   <button

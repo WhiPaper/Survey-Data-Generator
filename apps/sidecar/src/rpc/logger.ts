@@ -16,6 +16,12 @@ export interface SafeLogFields {
   readonly columnCount?: number;
   readonly bytesWritten?: number;
   readonly format?: string;
+  readonly batchCount?: number;
+  readonly fieldCount?: number;
+  readonly model?: string;
+  readonly promptVersion?: number;
+  readonly retryCount?: number;
+  readonly runId?: string;
 }
 
 type SafeLogField = keyof SafeLogFields;
@@ -36,6 +42,12 @@ const safeLogFields: readonly SafeLogField[] = [
   "columnCount",
   "bytesWritten",
   "format",
+  "batchCount",
+  "fieldCount",
+  "model",
+  "promptVersion",
+  "retryCount",
+  "runId",
 ];
 
 export interface SafeLogger {

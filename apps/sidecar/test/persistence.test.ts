@@ -42,7 +42,7 @@ describe("encrypted project database", () => {
       reopened.prepare<{ name: string }>("SELECT name FROM projects WHERE id='p'").get(),
     ).toEqual({ name: "marker" });
     expect(reopened.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 9,
+      user_version: 10,
     });
     reopened.close();
     const wrong = new TestSecrets();
@@ -68,7 +68,7 @@ describe("encrypted project database", () => {
       .map((column) => column.name);
     expect(columns).toContain("target_revision");
     expect(migrated.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 9,
+      user_version: 10,
     });
     migrated.close();
     await rm(directory, { recursive: true, force: true });
@@ -96,7 +96,7 @@ describe("encrypted project database", () => {
       .get();
     expect(project).toEqual({ name: "V7 Project", time_zone: null });
     expect(migrated.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 9,
+      user_version: 10,
     });
     migrated.close();
     await rm(directory, { recursive: true, force: true });
@@ -372,7 +372,7 @@ describe("encrypted project database", () => {
     // 2. Reopen DB - will trigger v7 and v8 migration
     const migratedDb = await ProjectDatabase.open(path, secrets);
     expect(migratedDb.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 9,
+      user_version: 10,
     });
     expect(
       migratedDb

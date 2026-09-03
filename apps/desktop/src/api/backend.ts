@@ -266,3 +266,20 @@ export const exportRun = (
   format: RunExportFormat,
   backend?: BackendInvoker,
 ): Promise<RunsExportResult> => callBackend("runs.export", { runId, format }, backend);
+
+export const getAiStatus = (backend?: BackendInvoker) => callBackend("ai.status", {}, backend);
+
+export const configureAi = (apiKey: string, backend?: BackendInvoker) =>
+  callBackend("ai.configure", { apiKey }, backend);
+
+export const clearAiCredentials = (backend?: BackendInvoker) =>
+  callBackend("ai.clearCredentials", {}, backend);
+
+export const acknowledgeAiDisclosure = (backend?: BackendInvoker) =>
+  callBackend("ai.acknowledgeDisclosure", {}, backend);
+
+export const generateAiText = (runId: string, operationId?: string, backend?: BackendInvoker) =>
+  callBackend("ai.generate", { runId, ...(operationId ? { operationId } : {}) }, backend);
+
+export const cancelAiGeneration = (operationId: string, backend?: BackendInvoker) =>
+  callBackend("ai.cancel", { operationId }, backend);
