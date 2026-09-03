@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, useWatch } from "react-hook-form";
+import { invoke } from "@tauri-apps/api/core";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 
 import type { FormId, FormListItem, GoogleAccountId, SessionView } from "@survey-synth/contracts";
 import type { FormSnapshot, ProjectTargets, QuestionTarget } from "@survey-synth/domain";
@@ -35,6 +37,7 @@ import {
   generateAiText,
   cancelAiGeneration,
 } from "./api/backend";
+import { checkOnceDaily } from "./updater";
 
 export const sessionQueryKey = ["session.get"] as const;
 
@@ -738,7 +741,25 @@ export function App() {
     revokeMutation.isPending;
   const importBusy = importMutation.isPending || cancelMutation.isPending;
   const refreshBusy = refreshMutation.isPending || cancelRefreshMutation.isPending;
-  const busy = authBusy || importBusy || refreshBusy;
+  const updateBlocked =
+    importBusy ||
+    refreshBusy ||
+    synthesisMutation.isPending ||
+    exportMutation.isPending ||
+    aiGenerateMutation.isPending;
+  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
+  const updateInstallMutation = useMutation({
+    mutationFn: async () => {
+      if (availableUpdate === null || updateBlocked) return;
+      await availableUpdate.download();
+      await flushTargets();
+      if (updateBlocked) return;
+      await invoke("checkpoint_for_update");
+      await availableUpdate.install();
+      await invoke("restart_after_update");
+    },
+  });
+  const busy = authBusy || importBusy || refreshBusy || updateInstallMutation.isPending;
   const forms = (formsQuery.data?.pages ?? []).reduce<FormListItem[]>(
     (current, page) => mergeForms(current, page.items),
     [],
@@ -756,6 +777,12 @@ export function App() {
     importMutation.error.backendError.code === "JOB_CANCELLED"
       ? undefined
       : importMutation.error;
+
+  useEffect(() => {
+    void checkOnceDaily(check, window.localStorage)
+      .then(setAvailableUpdate)
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     importMutation.reset();
@@ -884,6 +911,10 @@ export function App() {
   const handleCancelRefresh = (): void => {
     if (refreshOperationId !== undefined) cancelRefreshMutation.mutate(refreshOperationId);
   };
+  const handleInstallUpdate = (): void => {
+    if (availableUpdate === null || updateBlocked) return;
+    updateInstallMutation.mutate();
+  };
   const handleResolveIssue = (
     issueId: string,
     resolution: "acknowledge" | "remove_target",
@@ -929,6 +960,20 @@ export function App() {
     <main>
       <h1>Survey Synth</h1>
       <p>{session.account.email}</p>
+      {availableUpdate !== null && (
+        <p role="status">
+          새 버전 {availableUpdate.version}이 있습니다.{" "}
+          <button
+            type="button"
+            onClick={handleInstallUpdate}
+            disabled={updateBlocked || updateInstallMutation.isPending}
+          >
+            업데이트
+          </button>
+          {updateBlocked && " 진행 중인 작업이 끝나면 설치할 수 있습니다."}
+          {updateInstallMutation.error && <span role="alert"> 업데이트를 설치할 수 없습니다.</span>}
+        </p>
+      )}
       <details>
         <summary>계정 메뉴</summary>
         <div className="account-menu">

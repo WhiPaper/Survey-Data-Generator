@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -71,6 +71,40 @@ describe("encrypted project database", () => {
       user_version: 10,
     });
     migrated.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  it("keeps an encrypted recovery copy before migrating an existing database", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "survey-synth-migration-backup-"));
+    const path = join(directory, "projects.db");
+    const secrets = new TestSecrets();
+    const previous = await ProjectDatabase.open(path, secrets);
+    previous
+      .prepare(
+        "INSERT INTO projects (id,google_account_id,google_form_id,name,current_source_revision_id,created_at,updated_at) VALUES ('backup','a','f','recovery-marker','r','now','now')",
+      )
+      .run();
+    previous.prepare("ALTER TABLE synthesis_runs DROP COLUMN target_revision").run();
+    previous.prepare("PRAGMA user_version = 4").run();
+    previous.close();
+
+    const migrated = await ProjectDatabase.open(path, secrets);
+    migrated.close();
+
+    const backups = await readdir(join(directory, "migration-backups"));
+    expect(backups).toHaveLength(1);
+    const encryptedBackup = await readFile(join(directory, "migration-backups", backups[0]!));
+    expect(encryptedBackup.includes(Buffer.from("recovery-marker"))).toBe(false);
+    const recovered = await ProjectDatabase.open(
+      join(directory, "migration-backups", backups[0]!),
+      secrets,
+    );
+    expect(
+      recovered.prepare<{ name: string }>("SELECT name FROM projects WHERE id='backup'").get(),
+    ).toEqual({
+      name: "recovery-marker",
+    });
+    recovered.close();
     await rm(directory, { recursive: true, force: true });
   });
 

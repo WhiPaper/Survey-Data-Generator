@@ -2,7 +2,7 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     env,
     io::{BufRead, BufReader, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{mpsc, Arc, Mutex},
     thread,
@@ -65,6 +65,25 @@ impl SidecarCommand {
 
     pub fn node(script: impl Into<PathBuf>) -> Self {
         Self::new("node", vec![script.into().to_string_lossy().into_owned()])
+    }
+
+    pub fn bundled(resource_root: impl AsRef<Path>) -> Result<Self, String> {
+        let root = resource_root.as_ref();
+        let runtime = root.join("runner").join(if cfg!(target_os = "windows") {
+            "node.exe"
+        } else {
+            "node"
+        });
+        let entrypoint = root.join("app").join("dist").join("main.js");
+        if !runtime.is_file() || !entrypoint.is_file() {
+            return Err("Packaged sidecar resources are missing".to_owned());
+        }
+        let mut command = Self::new(
+            runtime.to_string_lossy().into_owned(),
+            vec![entrypoint.to_string_lossy().into_owned()],
+        );
+        command.current_dir = Some(root.join("app"));
+        Ok(command.with_env("SURVEY_SYNTH_PACKAGED", "1"))
     }
 
     pub fn from_environment() -> Self {
@@ -298,6 +317,17 @@ impl BackendBridge {
             }
         }
         mark_unavailable(&self.shared);
+    }
+
+    pub fn checkpoint(&self) -> Result<(), BackendErrorDto> {
+        let request = json!({
+            "v": expected_protocol_version(),
+            "type": "request",
+            "id": "host_checkpoint",
+            "method": "system.checkpoint",
+            "params": {}
+        });
+        self.send(&request.to_string()).map(|_| ())
     }
 }
 

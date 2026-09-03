@@ -1,15 +1,18 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { VERSIONS } from "@survey-synth/contracts";
 
 describe("compiled sidecar native dependency smoke", () => {
-  it("starts from dist, opens encrypted SQLite, and answers RPC", async () => {
+  it("starts from staged bundled runtime, opens encrypted SQLite, and answers RPC", async () => {
     const directory = await mkdtemp(join(tmpdir(), "survey-synth-packaged-"));
-    const child = spawn(process.execPath, [join(process.cwd(), "dist", "main.js")], {
-      cwd: process.cwd(),
+    const sidecarRoot = resolve(process.cwd(), "../../src-tauri/resources/sidecar");
+    const runtime = join(sidecarRoot, "runner", process.platform === "win32" ? "node.exe" : "node");
+    const appRoot = join(sidecarRoot, "app");
+    const child = spawn(runtime, [join(appRoot, "dist", "main.js")], {
+      cwd: appRoot,
       env: { ...process.env, SURVEY_SYNTH_APP_DATA_DIR: directory },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -27,6 +30,10 @@ describe("compiled sidecar native dependency smoke", () => {
     let resolveProjectList!: () => void;
     const projectListSeen = new Promise<void>((resolve) => {
       resolveProjectList = resolve;
+    });
+    let resolveCheckpoint!: () => void;
+    const checkpointSeen = new Promise<void>((resolve) => {
+      resolveCheckpoint = resolve;
     });
     const result = await new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("compiled sidecar smoke timed out")), 10_000);
@@ -55,6 +62,7 @@ describe("compiled sidecar native dependency smoke", () => {
             resolve(message);
           }
           if (message.type === "response" && message.id === "projects") resolveProjectList();
+          if (message.type === "response" && message.id === "checkpoint") resolveCheckpoint();
         }
       });
       child.on("error", (error) => {
@@ -81,6 +89,10 @@ describe("compiled sidecar native dependency smoke", () => {
       `${JSON.stringify({ v: VERSIONS.protocolVersion, type: "request", id: "projects", method: "projects.list", params: {} })}\n`,
     );
     await projectListSeen;
+    child.stdin.write(
+      `${JSON.stringify({ v: VERSIONS.protocolVersion, type: "request", id: "checkpoint", method: "system.checkpoint", params: {} })}\n`,
+    );
+    await checkpointSeen;
     child.stdin.write(
       `${JSON.stringify({ v: VERSIONS.protocolVersion, type: "request", id: "shutdown", method: "system.shutdown", params: {} })}\n`,
     );

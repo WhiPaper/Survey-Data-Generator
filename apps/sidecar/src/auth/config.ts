@@ -99,9 +99,13 @@ export const loadGoogleOAuthConfig = async (): Promise<GoogleOAuthConfig> => {
     };
   }
 
-  const path =
-    process.env.SURVEY_SYNTH_GOOGLE_OAUTH_CONFIG?.trim() ??
-    join(process.cwd(), "google_oauth.local.json");
+  const configuredPath = process.env.SURVEY_SYNTH_GOOGLE_OAUTH_CONFIG?.trim();
+  if (configuredPath === undefined || configuredPath.length === 0) {
+    if (process.env.SURVEY_SYNTH_PACKAGED === "1") {
+      throw sidecarError("VALIDATION_FAILED", "Google OAuth client ID is not configured", true);
+    }
+  }
+  const path = configuredPath ?? join(process.cwd(), "google_oauth.local.json");
   let raw: string;
   try {
     raw = await readFile(path, "utf8");

@@ -18,3 +18,5 @@ skills-lock.json
 src-tauri/gen/
 src-tauri/binaries/*
 !src-tauri/binaries/README.md
+src-tauri/resources/sidecar/
+src-tauri/tauri.release.generated.conf.json

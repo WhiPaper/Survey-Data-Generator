@@ -17,6 +17,9 @@
       "import": "./dist/rpc/index.js"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "pnpm --filter @survey-synth/contracts build && tsc -p tsconfig.build.json",
     "typecheck": "pnpm --filter @survey-synth/contracts build && tsc -p tsconfig.json --noEmit",

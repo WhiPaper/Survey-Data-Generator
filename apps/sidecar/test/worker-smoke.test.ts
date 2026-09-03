@@ -1,5 +1,7 @@
 import { Worker } from "node:worker_threads";
 import { performance } from "node:perf_hooks";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 import type { FormSnapshot, NormalizedResponse } from "@survey-synth/domain";
@@ -29,10 +31,18 @@ const source: NormalizedResponse[] = [
   },
 ];
 
+const stagedWorker = (): URL =>
+  pathToFileURL(
+    resolve(
+      process.cwd(),
+      "../../src-tauri/resources/sidecar/app/dist/workers/synthesis-worker.js",
+    ),
+  );
+
 describe("compiled synthesis worker", () => {
   it("loads as an explicit compiled entry and returns a deterministic result", async () => {
     const result = await new Promise<unknown>((resolve, reject) => {
-      const worker = new Worker(new URL("../dist/workers/synthesis-worker.js", import.meta.url));
+      const worker = new Worker(stagedWorker());
       worker.once("message", resolve);
       worker.once("error", reject);
       worker.postMessage({
@@ -47,7 +57,7 @@ describe("compiled synthesis worker", () => {
 
   it("uses safe value repair when template-only allocation is infeasible", async () => {
     const result = await new Promise<unknown>((resolve, reject) => {
-      const worker = new Worker(new URL("../dist/workers/synthesis-worker.js", import.meta.url));
+      const worker = new Worker(stagedWorker());
       worker.once("message", resolve);
       worker.once("error", reject);
       worker.postMessage({
@@ -160,7 +170,7 @@ describe("compiled synthesis worker", () => {
     };
     const run = (): Promise<Record<string, unknown>> =>
       new Promise((resolve, reject) => {
-        const worker = new Worker(new URL("../dist/workers/synthesis-worker.js", import.meta.url));
+        const worker = new Worker(stagedWorker());
         worker.once("message", (message) => resolve(message as Record<string, unknown>));
         worker.once("error", reject);
         worker.postMessage(work);
@@ -235,9 +245,7 @@ describe("compiled synthesis worker", () => {
       };
       const run = (): Promise<Record<string, unknown>> =>
         new Promise((resolve, reject) => {
-          const worker = new Worker(
-            new URL("../dist/workers/synthesis-worker.js", import.meta.url),
-          );
+          const worker = new Worker(stagedWorker());
           worker.once("message", (message) => resolve(message as Record<string, unknown>));
           worker.once("error", reject);
           worker.postMessage({

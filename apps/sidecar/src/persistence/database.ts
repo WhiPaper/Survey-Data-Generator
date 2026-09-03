@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { copyFile, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import Database from "better-sqlite3-multiple-ciphers";
 
 import { VERSIONS } from "@survey-synth/contracts";
@@ -34,14 +34,15 @@ export class ProjectDatabase {
       db.pragma("secure_delete = ON");
       db.pragma("journal_mode = WAL");
       const opened = new ProjectDatabase(path, db);
+      await opened.backupBeforeMigration(existing);
       opened.migrate();
       if (stored === null) await secrets.set(DB_KEY_NAME, key);
       return opened;
-    } catch (error) {
+    } catch (_error) {
       if (db?.open) db.close();
       throw sidecarError(
         "BACKEND_UNAVAILABLE",
-        `Project database could not be opened: ${error instanceof Error ? error.message : "unknown error"}`,
+        "Project database could not be opened safely",
         true,
       );
     }
@@ -55,6 +56,27 @@ export class ProjectDatabase {
   }
   public close(): void {
     if (this.db.open) this.db.close();
+  }
+
+  public checkpoint(): void {
+    if (this.db.open) this.db.pragma("wal_checkpoint(FULL)");
+  }
+
+  private async backupBeforeMigration(existing: boolean): Promise<void> {
+    const current = Number(this.db.pragma("user_version", { simple: true }));
+    if (!existing || current >= VERSIONS.databaseSchemaVersion) return;
+    // This is an encrypted byte-for-byte recovery copy. Checkpoint first so a
+    // later migration failure never leaves recovery dependent on a WAL file.
+    this.db.pragma("wal_checkpoint(FULL)");
+    const backupDirectory = join(dirname(this.path), "migration-backups");
+    mkdirSync(backupDirectory, { recursive: true });
+    const backupPath = join(
+      backupDirectory,
+      `projects-v${current}-to-v${VERSIONS.databaseSchemaVersion}-${randomUUID()}.db`,
+    );
+    await new Promise<void>((resolve, reject) => {
+      copyFile(this.path, backupPath, (error) => (error === null ? resolve() : reject(error)));
+    });
   }
 
   private hasColumn(table: string, column: string): boolean {

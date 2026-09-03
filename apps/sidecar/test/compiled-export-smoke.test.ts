@@ -93,9 +93,12 @@ describe("compiled sidecar export smoke", () => {
 
     db.close();
 
-    // Launch compiled sidecar dist/main.js
-    const child = spawn(process.execPath, [join(process.cwd(), "dist", "main.js")], {
-      cwd: process.cwd(),
+    // Launch exact staged runtime layout used by Tauri resources.
+    const sidecarRoot = resolve(process.cwd(), "../../src-tauri/resources/sidecar");
+    const runtime = join(sidecarRoot, "runner", process.platform === "win32" ? "node.exe" : "node");
+    const appRoot = join(sidecarRoot, "app");
+    const child = spawn(runtime, [join(appRoot, "dist", "main.js")], {
+      cwd: appRoot,
       env: { ...process.env, SURVEY_SYNTH_APP_DATA_DIR: directory },
       stdio: ["pipe", "pipe", "pipe"],
     });

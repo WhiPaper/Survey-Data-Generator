@@ -1,0 +1,116 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - run: pnpm run test:integration
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  bundle:
+    name: ${{ matrix.name }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            bundle: nsis
+          - name: macos-arm64
+            os: macos-14
+            bundle: dmg
+          - name: macos-x64
+            os: macos-13
+            bundle: dmg
+          - name: linux-x64
+            os: ubuntu-22.04
+            bundle: appimage
+    runs-on: ${{ matrix.os }}
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      SURVEY_SYNTH_UPDATER_ENDPOINT: ${{ vars.SURVEY_SYNTH_UPDATER_ENDPOINT }}
+      SURVEY_SYNTH_UPDATER_PUBKEY: ${{ vars.SURVEY_SYNTH_UPDATER_PUBKEY }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test:packaged-runtime
+      - name: Build signed release bundle from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: pnpm run bundle:release -- --bundles ${{ matrix.bundle }}
+      - name: Build unsigned manual artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: pnpm run bundle:tauri -- --bundles ${{ matrix.bundle }}
+      - name: Produce checksums
+        shell: bash
+        run: |
+          find target/release/bundle -type f -print0 | sort -z | xargs -0 sha256sum > target/release/bundle/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: target/release/bundle/
+          if-no-files-found: error
+
+  publish:
+    name: publish GitHub Release
+    needs: bundle
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-input
+      - name: Assemble signed updater feed
+        run: node scripts/create-github-updater-manifest.mjs release-input release-assets
+      - name: Publish release and updater feed
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/**

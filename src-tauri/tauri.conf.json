@@ -5,7 +5,7 @@
   "identifier": "com.surveysynth.desktop",
   "build": {
     "beforeDevCommand": "pnpm --filter @survey-synth/desktop dev",
-    "beforeBuildCommand": "pnpm --filter @survey-synth/desktop build",
+    "beforeBuildCommand": "node scripts/build-production.mjs",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../apps/desktop/dist"
   },
@@ -20,12 +20,27 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'",
+      "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "resources": ["binaries"]
+    "targets": ["nsis", "dmg", "appimage"],
+    "resources": {
+      "resources/sidecar/": "sidecar/"
+    },
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    },
+    "macOS": {
+      "hardenedRuntime": true
+    }
   }
 }

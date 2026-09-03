@@ -20,6 +20,12 @@ fn sidecar_script() -> PathBuf {
         .join("main.js")
 }
 
+fn staged_sidecar_resources() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("resources")
+        .join("sidecar")
+}
+
 #[test]
 fn reports_spawn_and_handshake_failures_without_panicking() {
     assert!(BackendBridge::spawn(SidecarCommand::new(
@@ -69,6 +75,7 @@ fn launches_actual_sidecar_and_round_trips_system_ping() {
 
     let result = bridge.send(&request.to_string()).expect("ping response");
     assert_eq!(result, json!({ "ok": true, "message": "pong" }));
+    bridge.checkpoint().expect("database checkpoint response");
 
     let session_request = json!({
         "v": expected_protocol_version(),
@@ -83,6 +90,38 @@ fn launches_actual_sidecar_and_round_trips_system_ping() {
             .expect("session response"),
         Value::Null
     );
+    bridge.shutdown();
+}
+
+#[test]
+#[ignore = "requires generated sidecar staging"]
+fn launches_staged_self_contained_sidecar_without_system_node() {
+    let resources = staged_sidecar_resources();
+    assert!(
+        resources.is_dir(),
+        "stage sidecar resources before this test: {}",
+        resources.display()
+    );
+    let bridge = BackendBridge::spawn(
+        SidecarCommand::bundled(resources).expect("staged sidecar layout is complete"),
+    )
+    .expect("staged sidecar starts");
+    let request = json!({
+        "v": expected_protocol_version(),
+        "type": "request",
+        "id": "staged_ping",
+        "method": "system.ping",
+        "params": {}
+    });
+    assert_eq!(
+        bridge
+            .send(&request.to_string())
+            .expect("staged ping response"),
+        json!({ "ok": true, "message": "pong" })
+    );
+    bridge
+        .checkpoint()
+        .expect("staged database checkpoint response");
     bridge.shutdown();
 }
 
