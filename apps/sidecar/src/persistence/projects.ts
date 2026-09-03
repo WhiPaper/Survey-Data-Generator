@@ -1197,7 +1197,6 @@ export class ProjectRepository {
       for (const [qId, slot] of Object.entries(answers)) {
         const key = `${resp.responseId}:${qId}`;
         const text = aiTexts.get(key);
-        if (text !== undefined && slot.state === "answered") {
         if (text !== undefined && slot.state === "answered" && slot.value.kind === "text") {
           answers[qId as QuestionId] = {
             state: "answered",

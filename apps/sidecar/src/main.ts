@@ -2,12 +2,6 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import {
-  AiAcknowledgeDisclosureParamsSchema,
-  AiCancelParamsSchema,
-  AiClearCredentialsParamsSchema,
-  AiConfigureParamsSchema,
-  AiGenerateParamsSchema,
-  AiStatusParamsSchema,
   AuthRevokeAccessParamsSchema,
   AuthSwitchAccountParamsSchema,
   FormsImportCancelParamsSchema,
@@ -27,8 +21,6 @@ import {
   SynthesisStartParamsSchema,
 } from "@survey-synth/contracts";
 import { checkFeasibility } from "@survey-synth/synthesis-core";
-
-import { AiTextService, LlmCredentialStore } from "./ai/index.js";
 
 import {
   FileGoogleAccountRepository,
@@ -84,7 +76,6 @@ let projects: Promise<ProjectRepository | null> = Promise.resolve(null);
 let synthesisJobs: Promise<SynthesisJobs | null> = Promise.resolve(null);
 let refreshService: Promise<RefreshService | null> = Promise.resolve(null);
 let exportService: Promise<ExportService | null> = Promise.resolve(null);
-let aiService: Promise<AiTextService | null> = Promise.resolve(null);
 
 const server = createSidecarServer({
   input: process.stdin,
@@ -93,7 +84,6 @@ const server = createSidecarServer({
   onShutdown: async () => {
     for (const controller of activeImportControllers.values()) controller.abort();
     (await synthesisJobs)?.shutdown();
-    (await aiService)?.shutdown();
     forms.cancelImports();
     await oauth.close();
     try {
@@ -304,50 +294,6 @@ const server = createSidecarServer({
       activeImportControllers.get(operationId)?.abort();
       return authActionResult();
     },
-    "ai.status": async (params) => {
-      AiStatusParamsSchema.parse(params);
-      const service = await aiService;
-      if (service === null)
-        throw sidecarError("BACKEND_UNAVAILABLE", "AI service is unavailable", true);
-      return service.getStatus();
-    },
-    "ai.configure": async (params) => {
-      const input = AiConfigureParamsSchema.parse(params);
-      const service = await aiService;
-      if (service === null)
-        throw sidecarError("BACKEND_UNAVAILABLE", "AI service is unavailable", true);
-      await service.configure(input.apiKey);
-      return authActionResult();
-    },
-    "ai.clearCredentials": async (params) => {
-      AiClearCredentialsParamsSchema.parse(params);
-      const service = await aiService;
-      if (service === null)
-        throw sidecarError("BACKEND_UNAVAILABLE", "AI service is unavailable", true);
-      await service.clearCredentials();
-      return authActionResult();
-    },
-    "ai.acknowledgeDisclosure": async (params) => {
-      AiAcknowledgeDisclosureParamsSchema.parse(params);
-      const service = await aiService;
-      if (service === null)
-        throw sidecarError("BACKEND_UNAVAILABLE", "AI service is unavailable", true);
-      service.acknowledgeDisclosure();
-      return authActionResult();
-    },
-    "ai.generate": async (params) => {
-      const input = AiGenerateParamsSchema.parse(params);
-      const service = await aiService;
-      if (service === null)
-        throw sidecarError("BACKEND_UNAVAILABLE", "AI service is unavailable", true);
-      return service.generateText(input.runId as never, input.operationId);
-    },
-    "ai.cancel": async (params) => {
-      const input = AiCancelParamsSchema.parse(params);
-      const service = await aiService;
-      if (service !== null) service.cancel(input.operationId);
-      return authActionResult();
-    },
   },
   hostClient,
 });
@@ -372,15 +318,6 @@ exportService = projects.then((repository) =>
     : new ExportService({
         projects: repository,
         hostClient,
-        logger: stderrLogger,
-      }),
-);
-aiService = projects.then((repository) =>
-  repository === null
-    ? null
-    : new AiTextService({
-        repository,
-        credentials: new LlmCredentialStore(new RemoteSecureSecretStore(hostClient)),
         logger: stderrLogger,
       }),
 );

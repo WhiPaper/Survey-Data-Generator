@@ -397,22 +397,6 @@ export const TargetsCheckFeasibilityResultSchema = z
   })
   .strict();
 export type TargetsCheckFeasibilityResult = z.infer<typeof TargetsCheckFeasibilityResultSchema>;
-export const AiMetadataSchema = z
-  .object({
-    provider: z.string().min(1),
-    model: z.string().min(1),
-    promptVersion: z.number().int().positive(),
-    settingsHash: z.string().min(1),
-    status: z.enum(["completed", "partial", "failed"]),
-    itemCount: z.number().int().nonnegative(),
-    generatedCount: z.number().int().nonnegative(),
-    failedCount: z.number().int().nonnegative(),
-    generatedAt: z.string().min(1),
-    warnings: z.array(z.string()).optional(),
-  })
-  .strict();
-export type AiMetadata = z.infer<typeof AiMetadataSchema>;
-
 export const RunsGetParamsSchema = z.object({ runId: z.string().min(1) }).strict();
 export const RunsGetResultSchema = z
   .object({
@@ -423,7 +407,6 @@ export const RunsGetResultSchema = z
     targetRevision: z.number().int().nonnegative(),
     validation: z.record(z.string(), z.unknown()),
     finalResponseCount: z.number().int().nonnegative(),
-    aiMetadata: AiMetadataSchema.optional(),
   })
   .strict();
 export type RunsGetResult = z.infer<typeof RunsGetResultSchema>;
@@ -450,59 +433,6 @@ export const RunsExportResultSchema = z
   })
   .strict();
 export type RunsExportResult = z.infer<typeof RunsExportResultSchema>;
-
-export const AiStatusParamsSchema = z.object({}).strict();
-export const AiStatusResultSchema = z
-  .object({
-    enabled: z.boolean(),
-    configured: z.boolean(),
-    disclosed: z.boolean(),
-    provider: z.string().min(1),
-    model: z.string().min(1),
-  })
-  .strict();
-export type AiStatusParams = z.infer<typeof AiStatusParamsSchema>;
-export type AiStatusResult = z.infer<typeof AiStatusResultSchema>;
-
-export const AiConfigureParamsSchema = z
-  .object({
-    apiKey: z.string().min(1),
-  })
-  .strict();
-export type AiConfigureParams = z.infer<typeof AiConfigureParamsSchema>;
-
-export const AiClearCredentialsParamsSchema = z.object({}).strict();
-export type AiClearCredentialsParams = z.infer<typeof AiClearCredentialsParamsSchema>;
-
-export const AiAcknowledgeDisclosureParamsSchema = z.object({}).strict();
-export type AiAcknowledgeDisclosureParams = z.infer<typeof AiAcknowledgeDisclosureParamsSchema>;
-
-export const AiGenerateParamsSchema = z
-  .object({
-    runId: z.string().min(1),
-    operationId: z.string().min(1).max(200).optional(),
-  })
-  .strict();
-export type AiGenerateParams = z.infer<typeof AiGenerateParamsSchema>;
-
-export const AiGenerateResultSchema = z
-  .object({
-    status: z.enum(["completed", "partial", "skipped"]),
-    runId: z.string().min(1),
-    generatedFieldCount: z.number().int().nonnegative(),
-    totalEligibleFieldCount: z.number().int().nonnegative(),
-    warnings: z.array(z.string()),
-    metadata: AiMetadataSchema.optional(),
-  })
-  .strict();
-export type AiGenerateResult = z.infer<typeof AiGenerateResultSchema>;
-
-export const AiCancelParamsSchema = z
-  .object({
-    operationId: z.string().min(1).max(200),
-  })
-  .strict();
-export type AiCancelParams = z.infer<typeof AiCancelParamsSchema>;
 
 export const ProjectDetailSchema = ProjectSummarySchema.extend({
   form: z.record(z.string(), z.unknown()),
@@ -755,30 +685,6 @@ export interface BackendRpc {
     input: RunsExportParams;
     output: RunsExportResult;
   };
-  "ai.status": {
-    input: AiStatusParams;
-    output: AiStatusResult;
-  };
-  "ai.configure": {
-    input: AiConfigureParams;
-    output: AuthActionResult;
-  };
-  "ai.clearCredentials": {
-    input: AiClearCredentialsParams;
-    output: AuthActionResult;
-  };
-  "ai.acknowledgeDisclosure": {
-    input: AiAcknowledgeDisclosureParams;
-    output: AuthActionResult;
-  };
-  "ai.generate": {
-    input: AiGenerateParams;
-    output: AiGenerateResult;
-  };
-  "ai.cancel": {
-    input: AiCancelParams;
-    output: AuthActionResult;
-  };
 }
 
 export type RpcMethod = keyof BackendRpc;
@@ -809,12 +715,6 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "synthesis.start": SynthesisStartResultSchema,
   "synthesis.cancel": AuthActionResultSchema,
   "runs.export": RunsExportResultSchema,
-  "ai.status": AiStatusResultSchema,
-  "ai.configure": AuthActionResultSchema,
-  "ai.clearCredentials": AuthActionResultSchema,
-  "ai.acknowledgeDisclosure": AuthActionResultSchema,
-  "ai.generate": AiGenerateResultSchema,
-  "ai.cancel": AuthActionResultSchema,
 };
 
 const parseKnownParams = (method: string, params: unknown): void => {
@@ -868,18 +768,6 @@ const parseKnownParams = (method: string, params: unknown): void => {
     SynthesisCancelParamsSchema.parse(params);
   } else if (method === "runs.export") {
     RunsExportParamsSchema.parse(params);
-  } else if (method === "ai.status") {
-    AiStatusParamsSchema.parse(params);
-  } else if (method === "ai.configure") {
-    AiConfigureParamsSchema.parse(params);
-  } else if (method === "ai.clearCredentials") {
-    AiClearCredentialsParamsSchema.parse(params);
-  } else if (method === "ai.acknowledgeDisclosure") {
-    AiAcknowledgeDisclosureParamsSchema.parse(params);
-  } else if (method === "ai.generate") {
-    AiGenerateParamsSchema.parse(params);
-  } else if (method === "ai.cancel") {
-    AiCancelParamsSchema.parse(params);
   }
 };
 
