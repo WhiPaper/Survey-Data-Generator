@@ -12,6 +12,10 @@ export interface SafeLogFields {
   readonly durationMs?: number;
   readonly errorCode?: string;
   readonly scopesGranted?: number;
+  readonly rowCount?: number;
+  readonly columnCount?: number;
+  readonly bytesWritten?: number;
+  readonly format?: string;
 }
 
 type SafeLogField = keyof SafeLogFields;
@@ -28,6 +32,10 @@ const safeLogFields: readonly SafeLogField[] = [
   "durationMs",
   "errorCode",
   "scopesGranted",
+  "rowCount",
+  "columnCount",
+  "bytesWritten",
+  "format",
 ];
 
 export interface SafeLogger {

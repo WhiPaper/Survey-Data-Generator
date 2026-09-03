@@ -16,6 +16,7 @@ import {
   TargetsUpdateParamsSchema,
   TargetsCheckFeasibilityParamsSchema,
   RunsGetParamsSchema,
+  RunsExportParamsSchema,
   SynthesisCancelParamsSchema,
   SynthesisStartParamsSchema,
 } from "@survey-synth/contracts";
@@ -42,6 +43,7 @@ import { createSidecarServer } from "./rpc/server.js";
 import { ProjectDatabase, ProjectRepository, defaultDatabasePath } from "./persistence/index.js";
 import { SynthesisJobs } from "./application/synthesis-jobs.js";
 import { RefreshService } from "./application/refresh-service.js";
+import { ExportService } from "./export/index.js";
 import { sidecarError } from "./errors.js";
 
 const hostClient = createHostCapabilityClient(process.stdout);
@@ -73,6 +75,7 @@ let database: Promise<ProjectDatabase | null> = Promise.resolve(null);
 let projects: Promise<ProjectRepository | null> = Promise.resolve(null);
 let synthesisJobs: Promise<SynthesisJobs | null> = Promise.resolve(null);
 let refreshService: Promise<RefreshService | null> = Promise.resolve(null);
+let exportService: Promise<ExportService | null> = Promise.resolve(null);
 
 const server = createSidecarServer({
   input: process.stdin,
@@ -163,6 +166,13 @@ const server = createSidecarServer({
       const run = repository.getRun(input.runId as never);
       if (run === null) throw sidecarError("NOT_FOUND", "Run was not found", true);
       return run;
+    },
+    "runs.export": async (params) => {
+      const input = RunsExportParamsSchema.parse(params);
+      const service = await exportService;
+      if (service === null)
+        throw sidecarError("BACKEND_UNAVAILABLE", "Project database unavailable", true);
+      return service.export(input);
     },
     "synthesis.start": async (params) => {
       const input = SynthesisStartParamsSchema.parse(params);
@@ -301,6 +311,15 @@ refreshService = projects.then((repository) =>
   repository === null
     ? null
     : new RefreshService({ projectRepository: repository, formImportService: forms }),
+);
+exportService = projects.then((repository) =>
+  repository === null
+    ? null
+    : new ExportService({
+        projects: repository,
+        hostClient,
+        logger: stderrLogger,
+      }),
 );
 void database.catch(() => {
   stderrLogger.error("sidecar_startup_failed", { errorCode: "BACKEND_UNAVAILABLE" });

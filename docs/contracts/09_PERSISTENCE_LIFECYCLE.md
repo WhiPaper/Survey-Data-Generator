@@ -256,6 +256,17 @@ Maintain user semantic overrides across source refresh if the same compatible qu
 
 If question kind becomes incompatible, report migration issue instead of silently applying/deleting the override.
 
+## Historical export compatibility
+
+Database migration keeps pre-v8 projects and pre-v9 Runs readable, but readability does not guarantee historical exportability.
+
+Historical export is supported only when its export-critical inputs are present:
+
+- A project must contain a valid persisted IANA timezone. A pre-v8 project with a valid timezone already persisted on its migrated project row may use that value as evidence. A missing value is unknown; the app must not infer it from the current OS timezone, response timestamp offsets, or other timestamps.
+- A Run must contain a frozen semantic-override snapshot. The empty snapshot (`[]`) is valid. A `NULL` snapshot on a pre-v9 Run is missing historical information; the app must not substitute the project's current overrides.
+
+When either input is missing, export returns the typed `LEGACY_COMPATIBILITY_REQUIRED` backend outcome and does not write a file. There is no promise that every historical Run remains exportable after migration when the old schema did not persist information required to reproduce export semantics.
+
 ## Form access loss
 
 If the Google Form is deleted or sharing is revoked:

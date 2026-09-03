@@ -25,6 +25,7 @@ import {
   updateTargets,
   checkTargetFeasibility,
   getRun,
+  exportRun,
   refreshSource,
   cancelRefreshSource,
   resolveMigrationIssue,
@@ -620,6 +621,23 @@ export function App() {
     },
   });
 
+  const [exportFeedback, setExportFeedback] = useState<string | undefined>(undefined);
+  const exportMutation = useMutation({
+    mutationFn: ({ runId, format }: { runId: string; format: "csv" | "xlsx" }) =>
+      exportRun(runId, format),
+    onSuccess: (result) => {
+      if (!result.cancelled && result.destination) {
+        setExportFeedback(`저장 완료: ${result.destination}`);
+      }
+    },
+  });
+
+  const handleExport = (format: "csv" | "xlsx") => {
+    if (!completedRun) return;
+    setExportFeedback(undefined);
+    exportMutation.mutate({ runId: completedRun.runId, format });
+  };
+
   const importOperationId = importMutation.variables?.operationId;
   const synthesisOperationId = synthesisMutation.variables?.operationId;
   const authBusy =
@@ -1068,6 +1086,27 @@ export function App() {
                         </tbody>
                       </table>
                     )}
+                    <div className="export-actions">
+                      <button
+                        type="button"
+                        onClick={() => handleExport("xlsx")}
+                        disabled={exportMutation.isPending}
+                      >
+                        Excel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleExport("csv")}
+                        disabled={exportMutation.isPending}
+                      >
+                        CSV
+                      </button>
+                      {exportMutation.isPending && <span>저장 중…</span>}
+                      {exportFeedback && <p role="status">{exportFeedback}</p>}
+                      {exportMutation.error && (
+                        <p role="alert">{errorMessage(exportMutation.error)}</p>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={handleGenerate}

@@ -58,6 +58,15 @@ Use this consistently for:
 - timestamp generation
 - XLSX display
 
+### Historical compatibility boundary
+
+The v8/v9 migrations preserve legacy rows without inventing export inputs. Historical export is supported at the field boundary below:
+
+- v8+ project timezone data, or a valid IANA timezone already persisted on a legacy project row, is required for timestamp rendering. `NULL` is an unknown historical timezone and returns `LEGACY_COMPATIBILITY_REQUIRED` with reason `missing_project_timezone`.
+- v9+ frozen semantic-override data is required for semantic column typing. A non-null snapshot, including `[]`, is accepted. `NULL` on a legacy Run returns `LEGACY_COMPATIBILITY_REQUIRED` with reason `missing_semantic_override_snapshot`.
+
+The current OS timezone and current project semantic overrides are never used to make an old export appear successful. This means some pre-v8/pre-v9 Runs are readable but intentionally not exportable because their original export semantics cannot be proven from persisted data.
+
 ## Columns
 
 Order:

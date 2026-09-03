@@ -27,6 +27,7 @@ type HostCapabilityParams = {
   "host.secret.set": { key: string; value: string };
   "host.secret.delete": { key: string };
   "host.open_external": { url: string };
+  "host.dialog.save": { defaultName?: string; filterName?: string; filterExtension?: string };
 };
 
 type HostCapabilityResult = {
@@ -34,6 +35,7 @@ type HostCapabilityResult = {
   "host.secret.set": { ok: true };
   "host.secret.delete": { ok: true };
   "host.open_external": { ok: true };
+  "host.dialog.save": { path: string | null };
 };
 
 interface PendingHostCall {

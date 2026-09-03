@@ -29,7 +29,11 @@ describe("encrypted project database", () => {
     const path = join(directory, "projects.db");
     const secrets = new TestSecrets();
     const first = await ProjectDatabase.open(path, secrets);
-    first.prepare("INSERT INTO projects VALUES ('p','a','f','marker','r','now','now')").run();
+    first
+      .prepare(
+        "INSERT INTO projects (id,google_account_id,google_form_id,name,current_source_revision_id,created_at,updated_at) VALUES ('p','a','f','marker','r','now','now')",
+      )
+      .run();
     first.close();
     const raw = await readFile(path);
     expect(raw.includes(Buffer.from("marker"))).toBe(false);
@@ -38,7 +42,7 @@ describe("encrypted project database", () => {
       reopened.prepare<{ name: string }>("SELECT name FROM projects WHERE id='p'").get(),
     ).toEqual({ name: "marker" });
     expect(reopened.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 7,
+      user_version: 9,
     });
     reopened.close();
     const wrong = new TestSecrets();
@@ -64,7 +68,35 @@ describe("encrypted project database", () => {
       .map((column) => column.name);
     expect(columns).toContain("target_revision");
     expect(migrated.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 7,
+      user_version: 9,
+    });
+    migrated.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  it("adds the v8 timezone column without rebuilding existing v7 project rows", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "survey-synth-v8-timezone-"));
+    const path = join(directory, "projects.db");
+    const secrets = new TestSecrets();
+    const previous = await ProjectDatabase.open(path, secrets);
+    previous
+      .prepare(
+        "INSERT INTO projects (id,google_account_id,google_form_id,name,current_source_revision_id,created_at,updated_at) VALUES ('p-v7','acc','form','V7 Project','rev','2026-01-01','2026-01-01')",
+      )
+      .run();
+    previous.prepare("ALTER TABLE projects DROP COLUMN time_zone").run();
+    previous.prepare("PRAGMA user_version = 7").run();
+    previous.close();
+
+    const migrated = await ProjectDatabase.open(path, secrets);
+    const project = migrated
+      .prepare<{ name: string; time_zone: string | null }>(
+        "SELECT name, time_zone FROM projects WHERE id='p-v7'",
+      )
+      .get();
+    expect(project).toEqual({ name: "V7 Project", time_zone: null });
+    expect(migrated.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
+      user_version: 9,
     });
     migrated.close();
     await rm(directory, { recursive: true, force: true });
@@ -159,6 +191,15 @@ describe("encrypted project database", () => {
     expect(reopenedRepository.loadSynthesisSource(created.project.id)?.responses[0]?.path).toEqual(
       expectedPath,
     );
+    db.prepare("DELETE FROM revision_response_versions WHERE revision_id=?").run(
+      created.project.currentSourceRevisionId,
+    );
+    expect(() =>
+      reopenedRepository.loadSynthesisSource(
+        created.project.id,
+        created.project.currentSourceRevisionId,
+      ),
+    ).toThrow("Source revision response membership is incomplete");
     reopenedRepository.delete(created.project.id);
     expect(reopenedRepository.list()).toHaveLength(0);
     for (const table of [
@@ -301,7 +342,7 @@ describe("encrypted project database", () => {
       // Insert mock pre-v7 records
       rawDb
         .prepare(
-          "INSERT INTO projects VALUES ('p-v6','acc','f1','V6 Project','rev-1','2026-01-01','2026-01-01')",
+          "INSERT INTO projects (id,google_account_id,google_form_id,name,current_source_revision_id,created_at,updated_at) VALUES ('p-v6','acc','f1','V6 Project','rev-1','2026-01-01','2026-01-01')",
         )
         .run();
       rawDb
@@ -328,11 +369,16 @@ describe("encrypted project database", () => {
     });
     rawDb.close();
 
-    // 2. Reopen DB - will trigger v7 migration
+    // 2. Reopen DB - will trigger v7 and v8 migration
     const migratedDb = await ProjectDatabase.open(path, secrets);
     expect(migratedDb.prepare<{ user_version: number }>("PRAGMA user_version").get()).toEqual({
-      user_version: 7,
+      user_version: 9,
     });
+    expect(
+      migratedDb
+        .prepare<{ time_zone: string | null }>("SELECT time_zone FROM projects WHERE id='p-v6'")
+        .get(),
+    ).toEqual({ time_zone: null });
 
     // 3. Verify backfilled records
     const vRows = migratedDb

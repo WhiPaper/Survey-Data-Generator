@@ -197,6 +197,43 @@ export class ProjectDatabase {
       });
       current = 7;
     }
+    if (current < 8) {
+      this.transaction(() => {
+        if (!this.hasColumn("projects", "time_zone")) {
+          this.db.exec("ALTER TABLE projects ADD COLUMN time_zone TEXT");
+        }
+        this.db.pragma("user_version = 8");
+      });
+      current = 8;
+    }
+    if (current < 9) {
+      this.transaction(() => {
+        if (!this.hasColumn("synthetic_responses", "synthetic_index")) {
+          this.db.exec(
+            "ALTER TABLE synthetic_responses ADD COLUMN synthetic_index INTEGER NOT NULL DEFAULT 0",
+          );
+          const runs = this.db
+            .prepare<{ run_id: string }>("SELECT DISTINCT run_id FROM synthetic_responses")
+            .all();
+          const rows = this.db.prepare<{ response_id: string }>(
+            "SELECT response_id FROM synthetic_responses WHERE run_id=? ORDER BY rowid ASC",
+          );
+          const update = this.db.prepare(
+            "UPDATE synthetic_responses SET synthetic_index=? WHERE run_id=? AND response_id=?",
+          );
+          for (const run of runs) {
+            rows.all(run.run_id).forEach((row, index) => {
+              update.run(index, run.run_id, row.response_id);
+            });
+          }
+        }
+        if (!this.hasColumn("synthesis_runs", "semantic_overrides_json")) {
+          this.db.exec("ALTER TABLE synthesis_runs ADD COLUMN semantic_overrides_json TEXT");
+        }
+        this.db.pragma("user_version = 9");
+      });
+      current = 9;
+    }
   }
 }
 

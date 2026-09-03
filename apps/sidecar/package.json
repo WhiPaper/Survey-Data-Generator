@@ -28,6 +28,7 @@
     "@survey-synth/statistics": "workspace:*",
     "@survey-synth/synthesis-core": "workspace:*",
     "better-sqlite3-multiple-ciphers": "13.0.3",
+    "exceljs": "^4.4.0",
     "highs": "1.15.2"
   },
   "devDependencies": {

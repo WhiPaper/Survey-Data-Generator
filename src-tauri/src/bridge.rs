@@ -34,8 +34,8 @@ fn expected_protocol_version() -> u64 {
 
 fn response_timeout(method: &str) -> Duration {
     match method {
-        "auth.login" | "auth.addAccount" => INTERACTIVE_RESPONSE_TIMEOUT,
         "forms.import" => IMPORT_RESPONSE_TIMEOUT,
+        "auth.login" | "auth.addAccount" => INTERACTIVE_RESPONSE_TIMEOUT,
         _ => RESPONSE_TIMEOUT,
     }
 }
@@ -419,7 +419,11 @@ fn host_request_fields(message: &Value) -> Result<(String, String, Value), Backe
         .filter(|method| {
             matches!(
                 *method,
-                "host.secret.get" | "host.secret.set" | "host.secret.delete" | "host.open_external"
+                "host.secret.get"
+                    | "host.secret.set"
+                    | "host.secret.delete"
+                    | "host.open_external"
+                    | "host.dialog.save"
             )
         })
         .ok_or_else(|| BackendErrorDto::validation("Host capability method is invalid"))?
@@ -531,6 +535,21 @@ fn execute_host_request<S: SecretStore>(
         }),
         "host.open_external" => string_param(&params, "url")
             .and_then(|url| open_external(&url).map(|()| json!({ "ok": true }))),
+        "host.dialog.save" => {
+            let default_name = params.get("defaultName").and_then(Value::as_str);
+            let filter_name = params.get("filterName").and_then(Value::as_str);
+            let filter_ext = params.get("filterExtension").and_then(Value::as_str);
+
+            let mut dialog = rfd::FileDialog::new();
+            if let Some(name) = default_name {
+                dialog = dialog.set_file_name(name);
+            }
+            if let (Some(name), Some(ext)) = (filter_name, filter_ext) {
+                dialog = dialog.add_filter(name, &[ext]);
+            }
+            let path = dialog.save_file();
+            Ok(json!({ "path": path.map(|p| p.to_string_lossy().to_string()) }))
+        }
         _ => Err(BackendErrorDto::validation(
             "Host capability method is invalid",
         )),
@@ -751,6 +770,7 @@ mod tests {
             INTERACTIVE_RESPONSE_TIMEOUT
         );
         assert_eq!(response_timeout("forms.import"), IMPORT_RESPONSE_TIMEOUT);
+        assert_eq!(response_timeout("runs.export"), RESPONSE_TIMEOUT);
         assert_eq!(response_timeout("system.ping"), RESPONSE_TIMEOUT);
     }
 

@@ -165,6 +165,8 @@ If migration fails:
 - stop opening project data
 - allow retry/recovery
 
+Migration compatibility is not the same as historical export compatibility. Pre-v8 projects with no persisted timezone and pre-v9 Runs with no frozen semantic-override snapshot remain readable, but their export is outside the supported historical-export boundary. Export must report the typed `LEGACY_COMPATIBILITY_REQUIRED` outcome rather than infer or replace either value.
+
 Downgrade of a newer database is not supported.
 
 If app expected schema is older than the DB, do not modify the DB.

@@ -17,6 +17,8 @@ import {
   parseRpcResult,
   type RpcMethod,
   type SynthesisStartResult,
+  type RunExportFormat,
+  type RunsExportResult,
 } from "@survey-synth/contracts";
 import type { ProjectTargets } from "@survey-synth/domain";
 
@@ -258,3 +260,9 @@ export const cancelSynthesis = (
   operationId: string,
   backend?: BackendInvoker,
 ): Promise<{ ok: true }> => callBackend("synthesis.cancel", { operationId }, backend);
+
+export const exportRun = (
+  runId: string,
+  format: RunExportFormat,
+  backend?: BackendInvoker,
+): Promise<RunsExportResult> => callBackend("runs.export", { runId, format }, backend);

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
+  AnswerSlot,
   DomainSemanticOverride,
   FormSnapshot,
   GoogleAccountId,
@@ -15,7 +16,12 @@ import type {
 } from "@survey-synth/domain";
 import { resolveResponsePath, type SynthesisRun } from "@survey-synth/domain";
 import type { ValidationResult } from "@survey-synth/synthesis-core";
-import { VERSIONS } from "@survey-synth/contracts";
+import {
+  LegacyCompatibilityOutcomeSchema,
+  VERSIONS,
+  type LegacyCompatibilityOutcome,
+  type LegacyCompatibilityReason,
+} from "@survey-synth/contracts";
 import {
   analyzeRelationships,
   profileForm,
@@ -47,8 +53,229 @@ export interface SynthesisSource {
   readonly relationships: readonly RelationshipProfile[];
 }
 
+export interface HistoricalRunExportData {
+  readonly run: {
+    readonly id: RunId;
+    readonly projectId: ProjectId;
+    readonly sourceRevisionId: SourceRevisionId;
+    readonly targetSnapshot: ProjectTargets;
+    readonly targetRevision: number;
+    readonly seed: number;
+    readonly engineVersion: number;
+    readonly profilerVersion: number;
+    readonly appVersion: string;
+    readonly createdAt: string;
+    readonly validation: ValidationResult;
+    readonly finalResponseCount: number;
+  };
+  readonly form: FormSnapshot;
+  readonly originalResponses: readonly NormalizedResponse[];
+  readonly syntheticResponses: readonly NormalizedResponse[];
+  readonly timeZone: string;
+  readonly semanticInferences: readonly {
+    readonly questionId: QuestionId;
+    readonly value: string;
+  }[];
+  readonly semanticOverrides: readonly DomainSemanticOverride[];
+}
+
+export type LegacyCompatibilityRequired = Omit<LegacyCompatibilityOutcome, "runId"> & {
+  readonly runId: RunId;
+};
+
 const hash = (value: unknown): string =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+const parseStoredJson = <T>(json: string, message: string): T => {
+  try {
+    return JSON.parse(json) as T;
+  } catch {
+    throw sidecarError("BACKEND_UNAVAILABLE", message, false);
+  }
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+const isAnswerValue = (value: unknown): boolean => {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  switch (value.kind) {
+    case "single_choice":
+      return typeof value.optionKey === "string" && typeof value.label === "string";
+    case "multi_choice":
+      return isStringArray(value.optionKeys) && isStringArray(value.labels);
+    case "ordinal":
+      return typeof value.value === "number" && Number.isFinite(value.value);
+    case "text":
+      return typeof value.value === "string";
+    case "date":
+      return (
+        typeof value.value === "string" &&
+        typeof value.includeTime === "boolean" &&
+        typeof value.includeYear === "boolean"
+      );
+    case "time":
+      return typeof value.value === "string" && typeof value.duration === "boolean";
+    case "file":
+      return (
+        Array.isArray(value.files) &&
+        value.files.every(
+          (file) =>
+            isRecord(file) &&
+            (file.fileName === undefined || typeof file.fileName === "string") &&
+            (file.mimeType === undefined || typeof file.mimeType === "string"),
+        )
+      );
+    case "unsupported":
+      return isStringArray(value.values);
+    default:
+      return false;
+  }
+};
+
+const isAnswerSlot = (value: unknown): value is AnswerSlot => {
+  if (!isRecord(value) || typeof value.state !== "string") return false;
+  if (value.state === "answered") return isAnswerValue(value.value);
+  return (
+    value.state === "skipped" || value.state === "not_reached" || value.state === "indeterminate"
+  );
+};
+
+const isPathResolution = (value: unknown): value is NormalizedResponse["path"] =>
+  isRecord(value) &&
+  ((isRecord(value.questions) &&
+    Object.values(value.questions).every(
+      (state) => state === "reached" || state === "not_reached" || state === "indeterminate",
+    ) &&
+    (value.confidence === "certain" ||
+      value.confidence === "partial" ||
+      value.confidence === "ambiguous")) ||
+    (Array.isArray(value.visitedQuestionIds) && typeof value.status === "string"));
+
+const parseStoredAnswerSlot = (json: string): AnswerSlot => {
+  const slot = parseStoredJson<unknown>(json, "Historical response answer is corrupt");
+  if (!isAnswerSlot(slot)) {
+    throw sidecarError("BACKEND_UNAVAILABLE", "Historical response answer is corrupt", false);
+  }
+  return slot;
+};
+
+const parseStoredPath = (json: string): NormalizedResponse["path"] => {
+  const path = parseStoredJson<unknown>(json, "Historical response path is corrupt");
+  if (!isPathResolution(path)) {
+    throw sidecarError("BACKEND_UNAVAILABLE", "Historical response path is corrupt", false);
+  }
+  return path;
+};
+
+const parseStoredSyntheticResponse = (
+  json: string,
+  expectedResponseId: string,
+): NormalizedResponse => {
+  const response = parseStoredJson<unknown>(json, "Synthetic response is corrupt");
+  if (
+    !isRecord(response) ||
+    typeof response.responseId !== "string" ||
+    response.responseId !== expectedResponseId ||
+    response.origin !== "synthetic" ||
+    !isRecord(response.answers) ||
+    !Object.values(response.answers).every(isAnswerSlot) ||
+    !isPathResolution(response.path) ||
+    (response.createdAt !== undefined && typeof response.createdAt !== "string") ||
+    (response.lastSubmittedAt !== undefined && typeof response.lastSubmittedAt !== "string")
+  ) {
+    throw sidecarError("BACKEND_UNAVAILABLE", "Synthetic response is corrupt", false);
+  }
+  return response as unknown as NormalizedResponse;
+};
+
+const isPersistedValidation = (value: unknown): value is ValidationResult =>
+  isRecord(value) &&
+  typeof value.valid === "boolean" &&
+  typeof value.originalMutationCount === "number" &&
+  Number.isInteger(value.originalMutationCount) &&
+  value.originalMutationCount === 0 &&
+  typeof value.finalResponseCount === "number" &&
+  Number.isInteger(value.finalResponseCount) &&
+  value.finalResponseCount >= 0 &&
+  Array.isArray(value.metrics) &&
+  Array.isArray(value.errors);
+
+const isPersistedTargetSnapshot = (value: unknown): value is ProjectTargets =>
+  isRecord(value) &&
+  typeof value.targetResponseCount === "number" &&
+  Number.isInteger(value.targetResponseCount) &&
+  value.targetResponseCount >= 0 &&
+  Array.isArray(value.questionTargets) &&
+  (value.detailedGoals === undefined || Array.isArray(value.detailedGoals));
+
+const isPersistedFormSnapshot = (value: unknown): value is FormSnapshot =>
+  isRecord(value) &&
+  typeof value.formId === "string" &&
+  typeof value.title === "string" &&
+  typeof value.capturedAt === "string" &&
+  typeof value.schemaHash === "string" &&
+  Array.isArray(value.questions) &&
+  Array.isArray(value.groups) &&
+  (value.logic === undefined || isRecord(value.logic));
+
+const validateProjectTimeZone = (timeZone: string | null | undefined): string => {
+  if (typeof timeZone !== "string" || timeZone.length === 0) {
+    throw sidecarError("VALIDATION_FAILED", "Project timezone is unavailable", true);
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format();
+  } catch {
+    throw sidecarError("VALIDATION_FAILED", "Project timezone is invalid", false);
+  }
+  return timeZone;
+};
+
+const captureProjectTimeZone = (): string =>
+  validateProjectTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+
+const legacyCompatibilityRequired = (
+  runId: RunId,
+  reason: LegacyCompatibilityReason,
+): LegacyCompatibilityRequired => ({
+  kind: "legacy_compatibility_required",
+  runId,
+  reason,
+  supportedSinceDatabaseSchemaVersion: reason === "missing_project_timezone" ? 8 : 9,
+});
+
+const throwLegacyCompatibilityRequired = (outcome: LegacyCompatibilityRequired): never => {
+  const message =
+    outcome.reason === "missing_project_timezone"
+      ? "Historical export requires a persisted project timezone; this legacy project has none"
+      : "Historical export requires a frozen semantic override snapshot; this legacy Run has none";
+  throw sidecarError(
+    "LEGACY_COMPATIBILITY_REQUIRED",
+    message,
+    false,
+    LegacyCompatibilityOutcomeSchema.parse(outcome),
+  );
+};
+
+/**
+ * A valid IANA value already persisted on the project row is the only accepted
+ * legacy timezone evidence. Response offsets, timestamps, and the current OS
+ * timezone do not prove the historical project timezone.
+ */
+const resolveHistoricalProjectTimeZone = (
+  runId: RunId,
+  timeZone: string | null | undefined,
+): string => {
+  if (typeof timeZone !== "string" || timeZone.length === 0) {
+    throwLegacyCompatibilityRequired(
+      legacyCompatibilityRequired(runId, "missing_project_timezone"),
+    );
+  }
+  return validateProjectTimeZone(timeZone);
+};
 
 const responseContentHash = (response: NormalizedResponse): string =>
   hash({
@@ -64,7 +291,7 @@ export class ProjectRepository {
   public list(): ProjectSummary[] {
     return this.database
       .prepare<ProjectSummary>(
-        `SELECT p.id, p.google_account_id AS googleAccountId, p.google_form_id AS googleFormId, p.name, p.current_source_revision_id AS currentSourceRevisionId, p.created_at AS createdAt, p.updated_at AS updatedAt, COALESCE((SELECT COUNT(*) FROM revision_response_versions rrv WHERE rrv.revision_id = p.current_source_revision_id), (SELECT COUNT(*) FROM revision_responses rr WHERE rr.revision_id = p.current_source_revision_id), 0) AS responseCount, (SELECT json_array_length(fs.payload_json, '$.questions') FROM form_snapshots fs JOIN source_revisions sr ON sr.form_snapshot_id=fs.id WHERE sr.id=p.current_source_revision_id) AS questionCount, (SELECT COUNT(*) FROM question_profiles qp WHERE qp.revision_id=p.current_source_revision_id) AS profileCount FROM projects p ORDER BY p.updated_at DESC`,
+        `SELECT p.id, p.google_account_id AS googleAccountId, p.google_form_id AS googleFormId, p.name, p.time_zone AS timeZone, p.current_source_revision_id AS currentSourceRevisionId, p.created_at AS createdAt, p.updated_at AS updatedAt, COALESCE((SELECT COUNT(*) FROM revision_response_versions rrv WHERE rrv.revision_id = p.current_source_revision_id), (SELECT COUNT(*) FROM revision_responses rr WHERE rr.revision_id = p.current_source_revision_id), 0) AS responseCount, (SELECT json_array_length(fs.payload_json, '$.questions') FROM form_snapshots fs JOIN source_revisions sr ON sr.form_snapshot_id=fs.id WHERE sr.id=p.current_source_revision_id) AS questionCount, (SELECT COUNT(*) FROM question_profiles qp WHERE qp.revision_id=p.current_source_revision_id) AS profileCount FROM projects p ORDER BY p.updated_at DESC`,
       )
       .all();
   }
@@ -74,6 +301,7 @@ export class ProjectRepository {
     form: FormSnapshot,
     responses: readonly NormalizedResponse[],
     importedAt = new Date().toISOString(),
+    timeZone = captureProjectTimeZone(),
   ): CreatedProject {
     const projectId = randomUUID() as ProjectId;
     const revisionId = randomUUID() as SourceRevisionId;
@@ -84,6 +312,7 @@ export class ProjectRepository {
       googleAccountId: accountId,
       googleFormId: form.formId,
       name: form.title,
+      timeZone: validateProjectTimeZone(timeZone),
       currentSourceRevisionId: revisionId,
       createdAt: now,
       updatedAt: now,
@@ -93,7 +322,7 @@ export class ProjectRepository {
     this.database.transaction(() => {
       this.database
         .prepare(
-          `INSERT INTO projects VALUES (@id,@googleAccountId,@googleFormId,@name,@currentSourceRevisionId,@createdAt,@updatedAt)`,
+          `INSERT INTO projects (id,google_account_id,google_form_id,name,time_zone,current_source_revision_id,created_at,updated_at) VALUES (@id,@googleAccountId,@googleFormId,@name,@timeZone,@currentSourceRevisionId,@createdAt,@updatedAt)`,
         )
         .run(project);
       this.database
@@ -279,6 +508,153 @@ export class ProjectRepository {
     });
   }
 
+  private loadRevisionResponses(
+    revisionId: SourceRevisionId,
+    form: FormSnapshot,
+    projectId?: ProjectId,
+  ): NormalizedResponse[] {
+    const revisionRow = this.database
+      .prepare<{ source_response_count: number; project_id: string }>(
+        "SELECT source_response_count, project_id FROM source_revisions WHERE id=?",
+      )
+      .get(revisionId);
+    if (revisionRow === undefined) {
+      throw sidecarError("NOT_FOUND", "Source revision was not found", false);
+    }
+    if (projectId !== undefined && revisionRow.project_id !== projectId) {
+      throw sidecarError("BACKEND_UNAVAILABLE", "Run source revision ownership is corrupt", false);
+    }
+    const expectedCount = revisionRow.source_response_count;
+    if (!Number.isInteger(expectedCount) || expectedCount < 0) {
+      throw sidecarError("BACKEND_UNAVAILABLE", "Source revision response count is corrupt", false);
+    }
+
+    const storageTableNames = this.database
+      .prepare<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('response_versions','response_version_answers','revision_response_versions','target_migration_issues','semantic_overrides')",
+      )
+      .all()
+      .map((row) => row.name);
+    const canonicalTableCount = storageTableNames.filter((name) =>
+      ["response_versions", "response_version_answers", "revision_response_versions"].includes(
+        name,
+      ),
+    ).length;
+    if (canonicalTableCount > 0 && canonicalTableCount < 3) {
+      throw sidecarError("BACKEND_UNAVAILABLE", "Versioned response storage is incomplete", false);
+    }
+    if (
+      canonicalTableCount === 0 &&
+      storageTableNames.some((name) =>
+        ["target_migration_issues", "semantic_overrides"].includes(name),
+      )
+    ) {
+      throw sidecarError("BACKEND_UNAVAILABLE", "Versioned response storage is incomplete", false);
+    }
+
+    type ResponseRow = {
+      id: string;
+      created_at: string | null;
+      last_submitted_at: string | null;
+      path_json: string;
+      version_id: string;
+    };
+    const versionRows =
+      canonicalTableCount === 3
+        ? this.database
+            .prepare<ResponseRow>(
+              "SELECT rv.response_id AS id, rv.created_at, rv.last_submitted_at, rv.path_json, rrv.response_version_id AS version_id FROM response_versions rv JOIN revision_response_versions rrv ON rrv.response_version_id=rv.id WHERE rrv.revision_id=? ORDER BY rv.response_id",
+            )
+            .all(revisionId)
+        : [];
+
+    if (canonicalTableCount === 3) {
+      if (versionRows.length !== expectedCount) {
+        throw sidecarError(
+          "BACKEND_UNAVAILABLE",
+          `Source revision response membership is incomplete: expected ${expectedCount}, found ${versionRows.length}`,
+          false,
+        );
+      }
+      if (new Set(versionRows.map((row) => row.id)).size !== expectedCount) {
+        throw sidecarError(
+          "BACKEND_UNAVAILABLE",
+          "Source revision contains duplicate response versions",
+          false,
+        );
+      }
+      if (versionRows.length === 0) {
+        const legacyCount = this.database
+          .prepare<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM revision_responses WHERE revision_id=?",
+          )
+          .get(revisionId)?.count;
+        if (legacyCount !== 0) {
+          throw sidecarError(
+            "BACKEND_UNAVAILABLE",
+            "Source revision response storage is mixed",
+            false,
+          );
+        }
+      }
+      const answers = this.database.prepare<{ question_id: string; slot_json: string }>(
+        "SELECT question_id, slot_json FROM response_version_answers WHERE version_id=?",
+      );
+      return versionRows.map((row) => {
+        const responseAnswers = Object.fromEntries(
+          answers
+            .all(row.version_id)
+            .map((answer) => [answer.question_id, parseStoredAnswerSlot(answer.slot_json)]),
+        ) as NormalizedResponse["answers"];
+        return {
+          responseId: row.id as never,
+          createdAt: row.created_at ?? undefined,
+          lastSubmittedAt: row.last_submitted_at ?? undefined,
+          answers: responseAnswers,
+          origin: "original" as const,
+          path:
+            row.path_json === "{}"
+              ? resolveResponsePath(form, responseAnswers)
+              : parseStoredPath(row.path_json),
+        };
+      });
+    }
+
+    const legacyRows = this.database
+      .prepare<ResponseRow>(
+        "SELECT r.id, r.created_at, r.last_submitted_at, r.path_json FROM responses r JOIN revision_responses rr ON rr.response_id=r.id WHERE rr.revision_id=? ORDER BY r.id",
+      )
+      .all(revisionId);
+    if (legacyRows.length !== expectedCount) {
+      throw sidecarError(
+        "BACKEND_UNAVAILABLE",
+        `Source revision response membership is incomplete: expected ${expectedCount}, found ${legacyRows.length}`,
+        false,
+      );
+    }
+    const answers = this.database.prepare<{ question_id: string; slot_json: string }>(
+      "SELECT question_id, slot_json FROM answers WHERE response_id=?",
+    );
+    return legacyRows.map((row) => {
+      const responseAnswers = Object.fromEntries(
+        answers
+          .all(row.id)
+          .map((answer) => [answer.question_id, parseStoredAnswerSlot(answer.slot_json)]),
+      ) as NormalizedResponse["answers"];
+      return {
+        responseId: row.id as never,
+        createdAt: row.created_at ?? undefined,
+        lastSubmittedAt: row.last_submitted_at ?? undefined,
+        answers: responseAnswers,
+        origin: "original" as const,
+        path:
+          row.path_json === "{}"
+            ? resolveResponsePath(form, responseAnswers)
+            : parseStoredPath(row.path_json),
+      };
+    });
+  }
+
   public loadSynthesisSource(
     id: ProjectId,
     targetRevisionId?: SourceRevisionId,
@@ -292,81 +668,17 @@ export class ProjectRepository {
       )
       .get(revisionId);
     if (snapshot === undefined) return null;
-    const form = JSON.parse(snapshot.payload_json) as FormSnapshot;
-
-    const versionRows = this.database
-      .prepare<{
-        id: string;
-        created_at: string | null;
-        last_submitted_at: string | null;
-        path_json: string;
-        version_id: string;
-      }>(
-        "SELECT rv.response_id AS id, rv.created_at, rv.last_submitted_at, rv.path_json, rrv.response_version_id AS version_id FROM response_versions rv JOIN revision_response_versions rrv ON rrv.response_version_id=rv.id WHERE rrv.revision_id=? ORDER BY rv.response_id",
-      )
-      .all(revisionId);
-
-    let responses: NormalizedResponse[];
-    if (versionRows.length > 0) {
-      const answers = this.database.prepare<{ question_id: string; slot_json: string }>(
-        "SELECT question_id, slot_json FROM response_version_answers WHERE version_id=?",
-      );
-      responses = versionRows.map((row) => {
-        const responseAnswers = Object.fromEntries(
-          answers
-            .all(row.version_id)
-            .map((answer) => [answer.question_id, JSON.parse(answer.slot_json)]),
-        ) as NormalizedResponse["answers"];
-        return {
-          responseId: row.id as never,
-          createdAt: row.created_at ?? undefined,
-          lastSubmittedAt: row.last_submitted_at ?? undefined,
-          answers: responseAnswers,
-          origin: "original" as const,
-          path:
-            row.path_json === "{}"
-              ? resolveResponsePath(form, responseAnswers)
-              : JSON.parse(row.path_json),
-        };
-      });
-    } else {
-      const rows = this.database
-        .prepare<{
-          id: string;
-          created_at: string | null;
-          last_submitted_at: string | null;
-          path_json: string;
-        }>(
-          "SELECT r.id, r.created_at, r.last_submitted_at, r.path_json FROM responses r JOIN revision_responses rr ON rr.response_id=r.id WHERE rr.revision_id=? ORDER BY r.id",
-        )
-        .all(revisionId);
-      const answers = this.database.prepare<{ question_id: string; slot_json: string }>(
-        "SELECT question_id, slot_json FROM answers WHERE response_id=?",
-      );
-      responses = rows.map((row) => {
-        const responseAnswers = Object.fromEntries(
-          answers.all(row.id).map((answer) => [answer.question_id, JSON.parse(answer.slot_json)]),
-        ) as NormalizedResponse["answers"];
-        return {
-          responseId: row.id as never,
-          createdAt: row.created_at ?? undefined,
-          lastSubmittedAt: row.last_submitted_at ?? undefined,
-          answers: responseAnswers,
-          origin: "original" as const,
-          path:
-            row.path_json === "{}"
-              ? resolveResponsePath(form, responseAnswers)
-              : JSON.parse(row.path_json),
-        };
-      });
-    }
+    const form = parseStoredJson<FormSnapshot>(snapshot.payload_json, "Form snapshot is corrupt");
+    const responses = this.loadRevisionResponses(revisionId, form, id);
 
     const relationships = this.database
       .prepare<{ payload_json: string }>(
         "SELECT payload_json FROM relationship_profiles WHERE revision_id=? ORDER BY question_a, question_b",
       )
       .all(revisionId)
-      .map((row) => JSON.parse(row.payload_json) as RelationshipProfile);
+      .map((row) =>
+        parseStoredJson<RelationshipProfile>(row.payload_json, "Relationship profile is corrupt"),
+      );
     return {
       form,
       responses,
@@ -661,11 +973,31 @@ export class ProjectRepository {
     readonly validation: ValidationResult;
     readonly targetRevision: number;
     readonly createdAt?: string;
+    readonly semanticOverrides?: readonly DomainSemanticOverride[];
   }): SynthesisRun {
     if (!input.validation.valid) throw new Error("Invalid synthesis Run cannot be persisted");
+    const sourceRow = this.database
+      .prepare<{ source_response_count: number }>(
+        "SELECT source_response_count FROM source_revisions WHERE id=? AND project_id=?",
+      )
+      .get(input.sourceRevisionId, input.projectId);
+    if (sourceRow === undefined) {
+      throw sidecarError("NOT_FOUND", "Source revision was not found", false);
+    }
+    if (
+      sourceRow.source_response_count + input.synthetic.length !==
+      input.validation.finalResponseCount
+    ) {
+      throw sidecarError(
+        "VALIDATION_FAILED",
+        `Run response count mismatch: expected ${input.validation.finalResponseCount}, found ${sourceRow.source_response_count + input.synthetic.length}`,
+        false,
+      );
+    }
     const id = randomUUID() as RunId;
     const targetSnapshotId = randomUUID();
     const createdAt = input.createdAt ?? new Date().toISOString();
+    const semanticOverrides = input.semanticOverrides ?? this.getSemanticOverrides(input.projectId);
     const run: SynthesisRun = {
       id,
       projectId: input.projectId,
@@ -684,7 +1016,7 @@ export class ProjectRepository {
         .run(targetSnapshotId, input.projectId, JSON.stringify(input.targets), createdAt);
       this.database
         .prepare(
-          "INSERT INTO synthesis_runs (id,project_id,source_revision_id,target_snapshot_id,seed,engine_version,profiler_version,app_version,created_at,validation_json,target_revision) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+          "INSERT INTO synthesis_runs (id,project_id,source_revision_id,target_snapshot_id,seed,engine_version,profiler_version,app_version,created_at,validation_json,target_revision,semantic_overrides_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .run(
           id,
@@ -698,10 +1030,14 @@ export class ProjectRepository {
           createdAt,
           JSON.stringify(input.validation),
           input.targetRevision,
+          JSON.stringify(semanticOverrides),
         );
-      const insert = this.database.prepare("INSERT INTO synthetic_responses VALUES (?,?,?)");
-      for (const response of input.synthetic)
-        insert.run(id, response.responseId, JSON.stringify(response));
+      const insert = this.database.prepare(
+        "INSERT INTO synthetic_responses (run_id,response_id,payload_json,synthetic_index) VALUES (?,?,?,?)",
+      );
+      input.synthetic.forEach((response, syntheticIndex) => {
+        insert.run(id, response.responseId, JSON.stringify(response), syntheticIndex);
+      });
     });
     return run;
   }
@@ -740,6 +1076,182 @@ export class ProjectRepository {
       appVersion: row.app_version,
       validation,
       finalResponseCount: validation.finalResponseCount,
+    };
+  }
+
+  public loadHistoricalRunExportData(id: RunId): HistoricalRunExportData {
+    const runRow = this.database
+      .prepare<{
+        id: string;
+        project_id: string;
+        source_revision_id: string;
+        payload_json: string;
+        validation_json: string;
+        target_revision: number;
+        seed: number;
+        engine_version: number;
+        profiler_version: number;
+        app_version: string;
+        created_at: string;
+        semantic_overrides_json: string | null;
+      }>(
+        "SELECT sr.id, sr.project_id, sr.source_revision_id, ts.payload_json, sr.validation_json, sr.target_revision, sr.seed, sr.engine_version, sr.profiler_version, sr.app_version, sr.created_at, sr.semantic_overrides_json FROM synthesis_runs sr JOIN target_snapshots ts ON ts.id=sr.target_snapshot_id AND ts.project_id=sr.project_id WHERE sr.id=?",
+      )
+      .get(id);
+    if (runRow === undefined) {
+      throw sidecarError("NOT_FOUND", "Run was not found", true);
+    }
+
+    const validationValue = parseStoredJson<unknown>(
+      runRow.validation_json,
+      "Persisted Run validation is corrupt",
+    );
+    if (!isPersistedValidation(validationValue) || !validationValue.valid) {
+      throw sidecarError("VALIDATION_FAILED", "Invalid synthesis Run cannot be exported", false);
+    }
+    const validation = validationValue;
+
+    const projectRow = this.database
+      .prepare<{ time_zone: string | null }>("SELECT time_zone FROM projects WHERE id=?")
+      .get(runRow.project_id);
+    if (projectRow === undefined) {
+      throw sidecarError("NOT_FOUND", "Project was not found", true);
+    }
+    const timeZone = resolveHistoricalProjectTimeZone(id, projectRow.time_zone);
+
+    const revisionId = runRow.source_revision_id as SourceRevisionId;
+    const snapshot = this.database
+      .prepare<{ payload_json: string }>(
+        "SELECT fs.payload_json FROM form_snapshots fs JOIN source_revisions sr ON sr.form_snapshot_id=fs.id WHERE sr.id=? AND sr.project_id=?",
+      )
+      .get(revisionId, runRow.project_id);
+    if (snapshot === undefined) {
+      throw sidecarError("NOT_FOUND", "Historical Form snapshot was not found", false);
+    }
+    const formValue = parseStoredJson<unknown>(snapshot.payload_json, "Form snapshot is corrupt");
+    if (!isPersistedFormSnapshot(formValue)) {
+      throw sidecarError("BACKEND_UNAVAILABLE", "Form snapshot is corrupt", false);
+    }
+    const form = formValue;
+    const originalResponses = this.loadRevisionResponses(
+      revisionId,
+      form,
+      runRow.project_id as ProjectId,
+    );
+    const semanticInferences = this.database
+      .prepare<{ question_id: string; payload_json: string }>(
+        "SELECT question_id, payload_json FROM question_profiles WHERE revision_id=? ORDER BY question_id",
+      )
+      .all(revisionId)
+      .flatMap((row) => {
+        const profile = parseStoredJson<unknown>(
+          row.payload_json,
+          "Historical question profile is corrupt",
+        );
+        if (!isRecord(profile)) {
+          throw sidecarError(
+            "BACKEND_UNAVAILABLE",
+            "Historical question profile is corrupt",
+            false,
+          );
+        }
+        const semanticInference = profile.semanticInference;
+        if (
+          semanticInference !== undefined &&
+          (!isRecord(semanticInference) || typeof semanticInference.inferred !== "string")
+        ) {
+          throw sidecarError(
+            "BACKEND_UNAVAILABLE",
+            "Historical question profile is corrupt",
+            false,
+          );
+        }
+        const inferred =
+          isRecord(semanticInference) && typeof semanticInference.inferred === "string"
+            ? semanticInference.inferred
+            : undefined;
+        return inferred === undefined
+          ? []
+          : [{ questionId: row.question_id as QuestionId, value: inferred }];
+      });
+
+    const syntheticRows = this.database
+      .prepare<{ response_id: string; payload_json: string; synthetic_index: number }>(
+        "SELECT response_id, payload_json, synthetic_index FROM synthetic_responses WHERE run_id=? ORDER BY synthetic_index ASC",
+      )
+      .all(runRow.id);
+    if (syntheticRows.some((row, index) => row.synthetic_index !== index)) {
+      throw sidecarError("BACKEND_UNAVAILABLE", "Synthetic response ordering is corrupt", false);
+    }
+    const syntheticResponses: NormalizedResponse[] = syntheticRows.map((row) =>
+      parseStoredSyntheticResponse(row.payload_json, row.response_id),
+    );
+
+    if (originalResponses.length + syntheticResponses.length !== validation.finalResponseCount) {
+      throw sidecarError(
+        "INTERNAL",
+        `Persisted Run response count mismatch: expected ${validation.finalResponseCount}, found ${originalResponses.length + syntheticResponses.length}`,
+        false,
+      );
+    }
+
+    const semanticOverridesJson = runRow.semantic_overrides_json;
+    const frozenSemanticOverridesJson =
+      semanticOverridesJson ??
+      throwLegacyCompatibilityRequired(
+        legacyCompatibilityRequired(id, "missing_semantic_override_snapshot"),
+      );
+    const semanticOverrides = parseStoredJson<DomainSemanticOverride[]>(
+      frozenSemanticOverridesJson,
+      "Persisted Run semantic overrides are corrupt",
+    );
+    if (
+      !Array.isArray(semanticOverrides) ||
+      semanticOverrides.some(
+        (override) =>
+          typeof override !== "object" ||
+          override === null ||
+          typeof override.questionId !== "string" ||
+          typeof override.value !== "string" ||
+          typeof override.updatedAt !== "string",
+      )
+    ) {
+      throw sidecarError(
+        "BACKEND_UNAVAILABLE",
+        "Persisted Run semantic overrides are corrupt",
+        false,
+      );
+    }
+
+    const targetSnapshotValue = parseStoredJson<unknown>(
+      runRow.payload_json,
+      "Persisted Run target snapshot is corrupt",
+    );
+    if (!isPersistedTargetSnapshot(targetSnapshotValue)) {
+      throw sidecarError("BACKEND_UNAVAILABLE", "Persisted Run target snapshot is corrupt", false);
+    }
+
+    return {
+      run: {
+        id: runRow.id as RunId,
+        projectId: runRow.project_id as ProjectId,
+        sourceRevisionId: revisionId,
+        targetSnapshot: targetSnapshotValue,
+        targetRevision: runRow.target_revision,
+        seed: runRow.seed,
+        engineVersion: runRow.engine_version,
+        profilerVersion: runRow.profiler_version,
+        appVersion: runRow.app_version,
+        createdAt: runRow.created_at,
+        validation,
+        finalResponseCount: validation.finalResponseCount,
+      },
+      form,
+      originalResponses,
+      syntheticResponses,
+      timeZone,
+      semanticInferences,
+      semanticOverrides,
     };
   }
 

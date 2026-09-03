@@ -68,6 +68,8 @@ export interface SynthesisProject {
   googleAccountId: GoogleAccountId;
   googleFormId: FormId;
   name: string;
+  /** Null only for pre-v8 projects whose creation timezone was never persisted. */
+  timeZone: string | null;
   currentSourceRevisionId: SourceRevisionId;
   createdAt: string;
   updatedAt: string;
@@ -428,5 +430,4 @@ export const resolveResponsePath = (
   }
   return { questions, confidence };
 };
-
 export * from "./migration.js";

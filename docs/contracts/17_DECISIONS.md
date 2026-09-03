@@ -134,3 +134,9 @@ Use optimization abstraction; initial candidate HiGHS.
 ## ADR-025 — Generic shared/utils package is avoided
 
 **Decision:** code belongs to the package that owns its meaning; dependency boundaries are enforced in CI.
+
+## ADR-026 — Legacy export is evidence-gated
+
+**Decision:** migrations preserve pre-v8/pre-v9 records, but historical export is supported only when a valid persisted project timezone and a non-null frozen semantic-override snapshot are available. Missing values return typed `LEGACY_COMPATIBILITY_REQUIRED`; current OS timezone and current semantic overrides are never substituted.
+
+**Why:** export must not silently change historical semantics, and the old schemas did not persist enough information to reconstruct every Run.

@@ -16,6 +16,7 @@ export const BackendErrorCodeSchema = z.enum([
   "GOOGLE_API_ERROR",
   "RATE_LIMITED",
   "JOB_CANCELLED",
+  "LEGACY_COMPATIBILITY_REQUIRED",
   "BACKEND_UNAVAILABLE",
   "INTERNAL",
 ]);
@@ -32,6 +33,22 @@ export const BackendErrorSchema = z
   .strict();
 
 export type BackendError = z.infer<typeof BackendErrorSchema>;
+
+export const LegacyCompatibilityReasonSchema = z.enum([
+  "missing_project_timezone",
+  "missing_semantic_override_snapshot",
+]);
+export type LegacyCompatibilityReason = z.infer<typeof LegacyCompatibilityReasonSchema>;
+
+export const LegacyCompatibilityOutcomeSchema = z
+  .object({
+    kind: z.literal("legacy_compatibility_required"),
+    runId: z.string().min(1),
+    reason: LegacyCompatibilityReasonSchema,
+    supportedSinceDatabaseSchemaVersion: z.union([z.literal(8), z.literal(9)]),
+  })
+  .strict();
+export type LegacyCompatibilityOutcome = z.infer<typeof LegacyCompatibilityOutcomeSchema>;
 
 export const GoogleAccountIdSchema = z
   .string()
@@ -225,6 +242,7 @@ export const ProjectSummarySchema = z
     googleAccountId: GoogleAccountIdSchema,
     googleFormId: FormIdSchema,
     name: z.string().min(1),
+    timeZone: z.string().min(1).nullable(),
     currentSourceRevisionId: z.string().min(1),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
@@ -393,6 +411,29 @@ export const RunsGetResultSchema = z
   .strict();
 export type RunsGetResult = z.infer<typeof RunsGetResultSchema>;
 
+export const RunExportFormatSchema = z.enum(["csv", "xlsx"]);
+export type RunExportFormat = z.infer<typeof RunExportFormatSchema>;
+
+export const RunsExportParamsSchema = z
+  .object({
+    runId: z.string().min(1),
+    format: RunExportFormatSchema,
+  })
+  .strict();
+export type RunsExportParams = z.infer<typeof RunsExportParamsSchema>;
+
+export const RunsExportResultSchema = z
+  .object({
+    ok: z.literal(true),
+    cancelled: z.boolean(),
+    destination: z.string().optional(),
+    rowCount: z.number().int().nonnegative().optional(),
+    columnCount: z.number().int().nonnegative().optional(),
+    bytesWritten: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export type RunsExportResult = z.infer<typeof RunsExportResultSchema>;
+
 export const ProjectDetailSchema = ProjectSummarySchema.extend({
   form: z.record(z.string(), z.unknown()),
   targets: ProjectTargetsSchema,
@@ -501,11 +542,15 @@ export const HostCapabilityMethodSchema = z.enum([
   "host.secret.set",
   "host.secret.delete",
   "host.open_external",
+  "host.dialog.save",
 ]);
 export type HostCapabilityMethod = z.infer<typeof HostCapabilityMethodSchema>;
 
 export const HostSecretGetResultSchema = z.object({ value: z.string().nullable() }).strict();
 export type HostSecretGetResult = z.infer<typeof HostSecretGetResultSchema>;
+
+export const HostDialogSaveResultSchema = z.object({ path: z.string().min(1).nullable() }).strict();
+export type HostDialogSaveResult = z.infer<typeof HostDialogSaveResultSchema>;
 
 export const HostMutationResultSchema = z.object({ ok: z.literal(true) }).strict();
 export type HostMutationResult = z.infer<typeof HostMutationResultSchema>;
@@ -636,6 +681,10 @@ export interface BackendRpc {
     input: z.infer<typeof SynthesisCancelParamsSchema>;
     output: AuthActionResult;
   };
+  "runs.export": {
+    input: RunsExportParams;
+    output: RunsExportResult;
+  };
 }
 
 export type RpcMethod = keyof BackendRpc;
@@ -665,6 +714,7 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "runs.get": RunsGetResultSchema,
   "synthesis.start": SynthesisStartResultSchema,
   "synthesis.cancel": AuthActionResultSchema,
+  "runs.export": RunsExportResultSchema,
 };
 
 const parseKnownParams = (method: string, params: unknown): void => {
@@ -716,6 +766,8 @@ const parseKnownParams = (method: string, params: unknown): void => {
     SynthesisStartParamsSchema.parse(params);
   } else if (method === "synthesis.cancel") {
     SynthesisCancelParamsSchema.parse(params);
+  } else if (method === "runs.export") {
+    RunsExportParamsSchema.parse(params);
   }
 };
 
