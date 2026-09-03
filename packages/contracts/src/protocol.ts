@@ -182,6 +182,9 @@ export type AuthLogoutParams = z.infer<typeof AuthLogoutParamsSchema>;
 export const AuthRevokeAccessParamsSchema = z.object({ id: GoogleAccountIdSchema }).strict();
 export type AuthRevokeAccessParams = z.infer<typeof AuthRevokeAccessParamsSchema>;
 
+export const AuthDeleteAccountDataParamsSchema = z.object({ id: GoogleAccountIdSchema }).strict();
+export type AuthDeleteAccountDataParams = z.infer<typeof AuthDeleteAccountDataParamsSchema>;
+
 export const FormIdSchema = z
   .string()
   .min(1)
@@ -710,6 +713,10 @@ export interface BackendRpc {
     input: AuthRevokeAccessParams;
     output: AuthActionResult;
   };
+  "auth.deleteAccountData": {
+    input: AuthDeleteAccountDataParams;
+    output: AuthActionResult;
+  };
   "forms.list": {
     input: FormsListParams;
     output: FormsListResult;
@@ -804,6 +811,7 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "auth.switchAccount": SessionViewSchema,
   "auth.logout": AuthActionResultSchema,
   "auth.revokeAccess": AuthActionResultSchema,
+  "auth.deleteAccountData": AuthActionResultSchema,
   "forms.list": FormsListResultSchema,
   "forms.import": FormImportSummarySchema,
   "forms.import.cancel": AuthActionResultSchema,
@@ -849,6 +857,8 @@ const parseKnownParams = (method: string, params: unknown): void => {
     AuthLogoutParamsSchema.parse(params);
   } else if (method === "auth.revokeAccess") {
     AuthRevokeAccessParamsSchema.parse(params);
+  } else if (method === "auth.deleteAccountData") {
+    AuthDeleteAccountDataParamsSchema.parse(params);
   } else if (method === "forms.list") {
     FormsListParamsSchema.parse(params);
   } else if (method === "forms.import") {

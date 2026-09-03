@@ -140,3 +140,9 @@ Use optimization abstraction; initial candidate HiGHS.
 **Decision:** migrations preserve pre-v8/pre-v9 records, but historical export is supported only when a valid persisted project timezone and a non-null frozen semantic-override snapshot are available. Missing values return typed `LEGACY_COMPATIBILITY_REQUIRED`; current OS timezone and current semantic overrides are never substituted.
 
 **Why:** export must not silently change historical semantics, and the old schemas did not persist enough information to reconstruct every Run.
+
+## ADR-027 — macOS excluded from initial release packaging targets
+
+**Decision:** exclude macOS DMG/app bundles from release targets and CI packaging matrix, focusing release installers on Windows (x64 NSIS) and Linux (x64 AppImage).
+
+**Why:** macOS desktop distribution outside the Mac App Store mandates an active paid Apple Developer Program membership ($99/year), Developer ID Application signing certificates, and Apple Notarization (`notarytool`); without these, Gatekeeper blocks downloaded apps as damaged/untrusted.

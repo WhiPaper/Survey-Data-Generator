@@ -41,12 +41,6 @@ jobs:
           - name: windows-x64
             os: windows-latest
             bundle: nsis
-          - name: macos-arm64
-            os: macos-14
-            bundle: dmg
-          - name: macos-x64
-            os: macos-13
-            bundle: dmg
           - name: linux-x64
             os: ubuntu-22.04
             bundle: appimage
@@ -56,12 +50,6 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       SURVEY_SYNTH_UPDATER_ENDPOINT: ${{ vars.SURVEY_SYNTH_UPDATER_ENDPOINT }}
       SURVEY_SYNTH_UPDATER_PUBKEY: ${{ vars.SURVEY_SYNTH_UPDATER_PUBKEY }}
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
       WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     steps:

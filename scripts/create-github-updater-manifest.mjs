@@ -15,8 +15,6 @@ if (!sourceDirectory || !outputDirectory || !repository || !tag?.startsWith("v")
 const platformSources = [
   ["windows-x86_64", "windows-x64", /-setup\.exe$/i],
   ["linux-x86_64", "linux-x64", /\.AppImage$/i],
-  ["darwin-aarch64", "macos-arm64", /\.app\.tar\.gz$/i],
-  ["darwin-x86_64", "macos-x64", /\.app\.tar\.gz$/i],
 ];
 
 async function filesUnder(directory) {

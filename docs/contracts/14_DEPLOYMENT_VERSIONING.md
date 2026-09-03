@@ -39,23 +39,15 @@ Recommended initial set:
 | OS | Arch | Package |
 |---|---|---|
 | Windows | x86_64 | NSIS `.exe` |
-| macOS | arm64 | DMG |
-| macOS | x86_64 | DMG |
 | Linux | x86_64 | AppImage |
 
 Do not add Windows ARM/Linux ARM until justified by demand.
 
-macOS may use architecture-specific builds instead of Universal initially because sidecar/native DB packaging is simpler to validate.
+macOS is excluded from initial release packaging targets (requires Apple Developer Program membership, Developer ID signing certificate, and notarization credentials).
 
 ## Signing
 
 Production requirements:
-
-### macOS
-
-- Developer ID signing
-- notarization
-- validate final bundle and sidecar launch
 
 ### Windows
 

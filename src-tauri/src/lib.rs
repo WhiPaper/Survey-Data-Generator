@@ -40,6 +40,23 @@ fn restart_after_update(
     app.restart();
 }
 
+const COMPILED_GOOGLE_CLIENT_ID: Option<&str> = match option_env!("SURVEY_SYNTH_GOOGLE_CLIENT_ID") {
+    Some(id) if !id.is_empty() => Some(id),
+    _ => match option_env!("GOOGLE_OAUTH_ID") {
+        Some(id) if !id.is_empty() => Some(id),
+        _ => None,
+    },
+};
+
+const COMPILED_GOOGLE_CLIENT_SECRET: Option<&str> =
+    match option_env!("SURVEY_SYNTH_GOOGLE_CLIENT_SECRET") {
+        Some(secret) if !secret.is_empty() => Some(secret),
+        _ => match option_env!("GOOGLE_OAUTH_SECRET") {
+            Some(secret) if !secret.is_empty() => Some(secret),
+            _ => None,
+        },
+    };
+
 pub fn run() {
     let app = match tauri::Builder::default()
         .setup(|app| {
@@ -52,11 +69,17 @@ pub fn run() {
                 bridge::SidecarCommand::bundled(app.path().resource_dir()?.join("sidecar"))
                     .map_err(std::io::Error::other)?
             };
-            let bridge = BackendBridge::spawn(command.with_env(
+            let mut command = command.with_env(
                 "SURVEY_SYNTH_APP_DATA_DIR",
                 app_data_dir.to_string_lossy().into_owned(),
-            ))
-            .map_err(std::io::Error::other)?;
+            );
+            if let Some(client_id) = COMPILED_GOOGLE_CLIENT_ID {
+                command = command.with_env("SURVEY_SYNTH_GOOGLE_CLIENT_ID", client_id);
+            }
+            if let Some(client_secret) = COMPILED_GOOGLE_CLIENT_SECRET {
+                command = command.with_env("SURVEY_SYNTH_GOOGLE_CLIENT_SECRET", client_secret);
+            }
+            let bridge = BackendBridge::spawn(command).map_err(std::io::Error::other)?;
             app.manage(AppState {
                 bridge: Arc::new(bridge),
             });

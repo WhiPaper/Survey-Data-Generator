@@ -16,6 +16,8 @@ import {
   getSession,
   importForm,
   listForms,
+  deleteAccountData,
+  deleteProject,
   login,
   listProjects,
   logout,
@@ -431,6 +433,8 @@ export function App() {
   const saveSequence = useRef(0);
   const appliedSaveSequence = useRef(0);
   const debouncedFormQuery = useDebouncedValue(formQuery, 250);
+  const [confirmDeleteProject, setConfirmDeleteProject] = useState(false);
+  const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
 
   const sessionQuery = useQuery({
     queryKey: sessionQueryKey,
@@ -516,6 +520,26 @@ export function App() {
       queryClient.setQueryData(sessionQueryKey, null);
       queryClient.removeQueries({ queryKey: ["auth.accounts"] });
       queryClient.removeQueries({ queryKey: ["forms.list"] });
+    },
+  });
+  const deleteProjectMutation = useMutation({
+    mutationFn: (projectId: string) => deleteProject(projectId),
+    onSuccess: () => {
+      setConfirmDeleteProject(false);
+      setSelectedProjectId(null);
+      setCompletedRun(null);
+      void queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+    },
+  });
+  const deleteAccountDataMutation = useMutation({
+    mutationFn: (id: GoogleAccountId) => deleteAccountData(id),
+    onSuccess: async () => {
+      setConfirmDeleteAccountId(null);
+      setSelectedProjectId(null);
+      setCompletedRun(null);
+      await queryClient.invalidateQueries({ queryKey: sessionQueryKey });
+      await queryClient.invalidateQueries({ queryKey: ["auth.accounts"] });
+      await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
     },
   });
   const importMutation = useMutation({
@@ -738,7 +762,8 @@ export function App() {
     addAccountMutation.isPending ||
     switchAccountMutation.isPending ||
     logoutMutation.isPending ||
-    revokeMutation.isPending;
+    revokeMutation.isPending ||
+    deleteAccountDataMutation.isPending;
   const importBusy = importMutation.isPending || cancelMutation.isPending;
   const refreshBusy = refreshMutation.isPending || cancelRefreshMutation.isPending;
   const updateBlocked =
@@ -746,7 +771,9 @@ export function App() {
     refreshBusy ||
     synthesisMutation.isPending ||
     exportMutation.isPending ||
-    aiGenerateMutation.isPending;
+    aiGenerateMutation.isPending ||
+    deleteProjectMutation.isPending ||
+    deleteAccountDataMutation.isPending;
   const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
   const updateInstallMutation = useMutation({
     mutationFn: async () => {
@@ -759,7 +786,12 @@ export function App() {
       await invoke("restart_after_update");
     },
   });
-  const busy = authBusy || importBusy || refreshBusy || updateInstallMutation.isPending;
+  const busy =
+    authBusy ||
+    importBusy ||
+    refreshBusy ||
+    deleteProjectMutation.isPending ||
+    updateInstallMutation.isPending;
   const forms = (formsQuery.data?.pages ?? []).reduce<FormListItem[]>(
     (current, page) => mergeForms(current, page.items),
     [],
@@ -866,6 +898,7 @@ export function App() {
     cancelMutation.mutate(importOperationId);
   };
   const handleProjectSelect = (projectId: string): void => {
+    setConfirmDeleteProject(false);
     void flushTargets().then(() => {
       setCompletedRun(null);
       setSelectedProjectId(projectId);
@@ -988,6 +1021,39 @@ export function App() {
                 >
                   {account.email}
                 </button>
+                {confirmDeleteAccountId !== account.id ? (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteAccountId(account.id)}
+                    disabled={busy || deleteAccountDataMutation.isPending}
+                  >
+                    기기 데이터 삭제
+                  </button>
+                ) : (
+                  <div
+                    role="alertdialog"
+                    aria-labelledby={`delete-account-desc-${account.id}`}
+                    className="confirm-delete"
+                  >
+                    <span id={`delete-account-desc-${account.id}`}>
+                      이 기기에 저장된 계정 정보와 연결된 모든 프로젝트가 영구 삭제됩니다.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => deleteAccountDataMutation.mutate(account.id)}
+                      disabled={deleteAccountDataMutation.isPending}
+                    >
+                      {deleteAccountDataMutation.isPending ? "삭제 중…" : "영구 삭제"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteAccountId(null)}
+                      disabled={deleteAccountDataMutation.isPending}
+                    >
+                      취소
+                    </button>
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -1092,8 +1158,8 @@ export function App() {
         {projectQuery.data !== undefined &&
           projectQuery.data !== null &&
           (() => {
-            const migrationIssues =
-              projectQuery.data.migrationIssues ?? targetsQuery.data?.issues ?? [];
+            const project = projectQuery.data;
+            const migrationIssues = project.migrationIssues ?? targetsQuery.data?.issues ?? [];
             const hasBlockingIssues = migrationIssues.some(
               (issue) => issue.severity === "blocking",
             );
@@ -1101,7 +1167,7 @@ export function App() {
             return (
               <div aria-live="polite">
                 <div className="project-header">
-                  <p className="project-title">{projectQuery.data.name}</p>
+                  <p className="project-title">{project.name}</p>
                   <button
                     type="button"
                     onClick={handleRefreshSource}
@@ -1109,6 +1175,39 @@ export function App() {
                   >
                     새 응답 가져오기
                   </button>
+                  {!confirmDeleteProject ? (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteProject(true)}
+                      disabled={busy || refreshMutation.isPending}
+                    >
+                      프로젝트 삭제
+                    </button>
+                  ) : (
+                    <div
+                      role="alertdialog"
+                      aria-labelledby="delete-project-desc"
+                      className="confirm-delete"
+                    >
+                      <span id="delete-project-desc">
+                        이 프로젝트와 관련된 모든 데이터가 영구 삭제됩니다.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => deleteProjectMutation.mutate(project.id)}
+                        disabled={deleteProjectMutation.isPending}
+                      >
+                        {deleteProjectMutation.isPending ? "삭제 중…" : "영구 삭제"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteProject(false)}
+                        disabled={deleteProjectMutation.isPending}
+                      >
+                        취소
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {refreshMutation.isPending && (
                   <div role="status">

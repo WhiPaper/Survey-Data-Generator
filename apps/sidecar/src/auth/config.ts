@@ -86,9 +86,45 @@ const parseConfigFile = (raw: unknown): GoogleOAuthConfig => {
 };
 
 export const loadGoogleOAuthConfig = async (): Promise<GoogleOAuthConfig> => {
-  const clientId = process.env.SURVEY_SYNTH_GOOGLE_CLIENT_ID?.trim();
+  const rawClientId =
+    process.env.SURVEY_SYNTH_GOOGLE_CLIENT_ID?.trim() || process.env.GOOGLE_OAUTH_ID?.trim();
+  let clientId = rawClientId !== undefined && rawClientId.length > 0 ? rawClientId : undefined;
+
+  const rawClientSecret =
+    process.env.SURVEY_SYNTH_GOOGLE_CLIENT_SECRET?.trim() ||
+    process.env.GOOGLE_OAUTH_SECRET?.trim();
+  let clientSecret =
+    rawClientSecret !== undefined && rawClientSecret.length > 0 ? rawClientSecret : undefined;
+
+  if (
+    (clientId === undefined || clientId.length === 0) &&
+    process.env.SURVEY_SYNTH_PACKAGED === "1"
+  ) {
+    try {
+      const manifestPath = join(process.cwd(), "..", "manifest.json");
+      const manifestRaw = await readFile(manifestPath, "utf8");
+      const manifest = JSON.parse(manifestRaw) as {
+        googleClientId?: unknown;
+        googleClientSecret?: unknown;
+      };
+      if (
+        typeof manifest.googleClientId === "string" &&
+        manifest.googleClientId.trim().length > 0
+      ) {
+        clientId = manifest.googleClientId.trim();
+        if (
+          typeof manifest.googleClientSecret === "string" &&
+          manifest.googleClientSecret.trim().length > 0
+        ) {
+          clientSecret = manifest.googleClientSecret.trim();
+        }
+      }
+    } catch {
+      // manifest is optional or unreadable
+    }
+  }
+
   if (clientId !== undefined && clientId.length > 0) {
-    const clientSecret = process.env.SURVEY_SYNTH_GOOGLE_CLIENT_SECRET?.trim();
     return {
       clientId,
       ...(clientSecret === undefined || clientSecret.length === 0 ? {} : { clientSecret }),

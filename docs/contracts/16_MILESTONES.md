@@ -212,9 +212,8 @@ Deliver/verify:
 - account/project delete
 - tight Tauri capabilities/CSP
 - sidecar packaging
-- Windows/macOS/Linux installers
+- Windows/Linux installers (macOS excluded: requires Apple Developer Program membership)
 - code signing
-- macOS notarization
 - updater signing
 - migration backup/recovery
 - privacy/support web pages

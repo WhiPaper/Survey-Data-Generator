@@ -20,6 +20,7 @@ for (const args of commands) {
   const result = spawnSync(executable, commandArgs, {
     stdio: "inherit",
     shell: false,
+    env: { ...process.env, CI: "true" },
   });
   if (result.error) {
     console.error(`Command failed to start: ${executable} ${commandArgs.join(" ")}`);

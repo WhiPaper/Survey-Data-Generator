@@ -98,3 +98,5 @@ await writeFile(
   `${JSON.stringify({ ...versions, entrypoint: "app/dist/main.js", runtime: `runner/${nodeName}` }, null, 2)}\n`,
   "utf8",
 );
+
+runPnpm(["install", "--production=false"]);

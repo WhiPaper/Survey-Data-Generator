@@ -8,6 +8,7 @@ import {
   AiConfigureParamsSchema,
   AiGenerateParamsSchema,
   AiStatusParamsSchema,
+  AuthDeleteAccountDataParamsSchema,
   AuthRevokeAccessParamsSchema,
   AuthSwitchAccountParamsSchema,
   FormsImportCancelParamsSchema,
@@ -51,12 +52,15 @@ import { createSidecarServer } from "./rpc/server.js";
 import { ProjectDatabase, ProjectRepository, defaultDatabasePath } from "./persistence/index.js";
 import { SynthesisJobs } from "./application/synthesis-jobs.js";
 import { RefreshService } from "./application/refresh-service.js";
-import { ExportService } from "./export/index.js";
+import { ExportService, cleanupOrphanTempFiles } from "./export/index.js";
 import { sidecarError } from "./errors.js";
 
 const hostClient = createHostCapabilityClient(process.stdout);
 const accountStatePath = process.env.SURVEY_SYNTH_ACCOUNT_STORE_PATH;
 const appDataDirectory = process.env.SURVEY_SYNTH_APP_DATA_DIR;
+if (appDataDirectory !== undefined) {
+  void cleanupOrphanTempFiles([appDataDirectory]).catch(() => undefined);
+}
 const accounts =
   accountStatePath !== undefined
     ? new FileGoogleAccountRepository(accountStatePath)
@@ -265,6 +269,34 @@ const server = createSidecarServer({
     "auth.revokeAccess": async (params) => {
       forms.cancelImports();
       await auth.revokeAccess(AuthRevokeAccessParamsSchema.parse(params).id);
+      forms.clearStoredImport();
+      return authActionResult();
+    },
+    "auth.deleteAccountData": async (params) => {
+      forms.cancelImports();
+      const { id } = AuthDeleteAccountDataParamsSchema.parse(params);
+      const repository = await projects;
+      if (repository !== null) {
+        const allProjects = repository.list();
+        for (const project of allProjects) {
+          if (project.googleAccountId === id) {
+            repository.delete(project.id);
+          }
+        }
+      }
+      await accessTokens.clearAccessToken(id);
+      const account = await accounts.findById(id);
+      if (account !== null) {
+        try {
+          await tokenStore.deleteRefreshToken(account.subject);
+        } catch {
+          // Keyring delete failure is handled safely
+        }
+      }
+      await accounts.remove(id);
+      if ((await accounts.getLastAccountId()) === id) {
+        await accounts.setLastAccountId(null);
+      }
       forms.clearStoredImport();
       return authActionResult();
     },

@@ -26,7 +26,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "dmg", "appimage"],
+    "targets": ["nsis", "appimage"],
     "resources": {
       "resources/sidecar/": "sidecar/"
     },
@@ -38,9 +38,6 @@
         "type": "downloadBootstrapper",
         "silent": true
       }
-    },
-    "macOS": {
-      "hardenedRuntime": true
     }
   }
 }

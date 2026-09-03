@@ -121,6 +121,11 @@ export const revokeAccess = (
   backend?: BackendInvoker,
 ): Promise<{ ok: true }> => callBackend("auth.revokeAccess", { id }, backend);
 
+export const deleteAccountData = (
+  id: GoogleAccountId,
+  backend?: BackendInvoker,
+): Promise<{ ok: true }> => callBackend("auth.deleteAccountData", { id }, backend);
+
 export const listForms = (
   params: FormsListParams = {},
   backend?: BackendInvoker,
