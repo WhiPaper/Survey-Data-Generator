@@ -191,8 +191,9 @@ describe("encrypted project database", () => {
     };
     const responses: NormalizedResponse[] = [
       {
-        responseId: "response" as never,
-        origin: "original",
+      responseId: "response" as never,
+      origin: "original",
+      lastSubmittedAt: "2026-08-27T23:11:08+09:00",
         answers: {
           ["question"]: {
             state: "answered",
@@ -218,6 +219,31 @@ describe("encrypted project database", () => {
       profiles: [{ questionKind: "single_choice" }, { questionKind: "text" }],
       relationships: [],
     });
+    expect(
+      repository.loadSynthesisSource(created.project.id, undefined, {
+        start: "2026-08-27T00:00:00.000Z",
+        end: "2026-08-27T10:00:00.000Z",
+      }).responses,
+    ).toHaveLength(0);
+    expect(
+      repository.getTimeline(
+        created.project.id,
+        "2026-08-27T00:00:00.000Z",
+        "2026-08-28T00:00:00.000Z",
+        8,
+      ).totalOriginalCount,
+    ).toBe(1);
+    const secondImport = repository.createFromImport(
+      "account" as never,
+      form,
+      responses,
+      "imported-2",
+    );
+    expect(repository.list()).toHaveLength(2);
+    expect(repository.loadSynthesisSource(secondImport.project.id)?.responses).toHaveLength(1);
+    expect(repository.loadSynthesisSource(secondImport.project.id)?.responses[0]?.responseId).toBe(
+      responses[0]!.responseId,
+    );
     const expectedPath = responses[0]!.path;
     db.close();
     db = await ProjectDatabase.open(databasePath, secrets);
@@ -235,6 +261,7 @@ describe("encrypted project database", () => {
       ),
     ).toThrow("Source revision response membership is incomplete");
     reopenedRepository.delete(created.project.id);
+    reopenedRepository.delete(secondImport.project.id);
     expect(reopenedRepository.list()).toHaveLength(0);
     for (const table of [
       "source_revisions",

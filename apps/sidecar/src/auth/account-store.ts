@@ -36,6 +36,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
 
+const isHttpsUrl = (value: unknown): value is string =>
+  isNonEmptyString(value) && value.startsWith("https://");
+
 const parseAccount = (value: unknown): GoogleAccount | null => {
   if (!isRecord(value)) return null;
   if (
@@ -48,11 +51,13 @@ const parseAccount = (value: unknown): GoogleAccount | null => {
     return null;
   }
   if (value.displayName !== undefined && !isNonEmptyString(value.displayName)) return null;
+  if (value.avatarUrl !== undefined && !isHttpsUrl(value.avatarUrl)) return null;
   return {
     id: value.id as GoogleAccountId,
     subject: value.subject,
     email: value.email,
     ...(value.displayName === undefined ? {} : { displayName: value.displayName }),
+    ...(value.avatarUrl === undefined ? {} : { avatarUrl: value.avatarUrl }),
     createdAt: value.createdAt,
     lastUsedAt: value.lastUsedAt,
   };

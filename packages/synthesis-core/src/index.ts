@@ -18,6 +18,7 @@ import {
 } from "./advanced.js";
 
 export * from "./advanced.js";
+export * from "./generative/index.js";
 
 export type ConstraintPriority =
   | "form_hard"
@@ -30,9 +31,17 @@ export type ConstraintPriority =
   | "diversity";
 
 export interface CanonicalMetric {
-  readonly kind: "option_count" | "option_ratio" | "mean" | "selection_count_mean";
+  readonly kind:
+    | "option_count"
+    | "option_ratio"
+    | "mean"
+    | "selection_count_mean"
+    | "text_cluster_count"
+    | "text_cluster_ratio";
   readonly questionId: QuestionId;
   readonly optionKey?: string;
+  readonly clusterId?: string;
+  readonly memberTexts?: readonly string[];
   readonly condition?: ConditionPredicate;
 }
 
@@ -56,6 +65,7 @@ export type TargetLocation =
   | { type: "target-size" }
   | { type: "question-option"; questionId: QuestionId; optionKey: string }
   | { type: "question-mean"; questionId: QuestionId }
+  | { type: "text-cluster"; questionId: QuestionId; clusterId: string }
   | { type: "detailed-goal"; goalId: string };
 
 export interface FeasibilityIssue {
@@ -192,6 +202,25 @@ export const metricValue = (
         ? 0
         : count / answered.length;
   }
+  if (metric.kind === "text_cluster_count" || metric.kind === "text_cluster_ratio") {
+    const answered = scoped.filter(
+      (response) => slotFor(response, metric.questionId).state === "answered",
+    );
+    const members = new Set(metric.memberTexts ?? []);
+    const count = answered.filter((response) => {
+      const slot = slotFor(response, metric.questionId);
+      return (
+        slot.state === "answered" &&
+        slot.value.kind === "text" &&
+        members.has(slot.value.value.trim())
+      );
+    }).length;
+    return metric.kind === "text_cluster_count"
+      ? count
+      : answered.length === 0
+        ? 0
+        : count / answered.length;
+  }
   const values = scoped
     .map((response) => slotFor(response, metric.questionId))
     .map((answer) =>
@@ -208,22 +237,36 @@ export const metricValue = (
 export const metricFor = (
   target: QuestionTarget,
   condition?: ConditionPredicate,
-): CanonicalMetric =>
-  target.kind === "option"
-    ? {
-        kind:
-          target.target.kind === "ratio" || target.target.kind === "ratio_range"
-            ? "option_ratio"
-            : "option_count",
-        questionId: target.questionId,
-        optionKey: target.optionKey,
-        ...(condition === undefined ? {} : { condition }),
-      }
-    : {
-        kind: target.kind === "selection_count_mean" ? "selection_count_mean" : "mean",
-        questionId: target.questionId,
-        ...(condition === undefined ? {} : { condition }),
-      };
+): CanonicalMetric => {
+  if (target.kind === "option") {
+    return {
+      kind:
+        target.target.kind === "ratio" || target.target.kind === "ratio_range"
+          ? "option_ratio"
+          : "option_count",
+      questionId: target.questionId,
+      optionKey: target.optionKey,
+      ...(condition === undefined ? {} : { condition }),
+    };
+  }
+  if (target.kind === "text_cluster") {
+    return {
+      kind:
+        target.target.kind === "ratio" || target.target.kind === "ratio_range"
+          ? "text_cluster_ratio"
+          : "text_cluster_count",
+      questionId: target.questionId,
+      clusterId: target.clusterId,
+      memberTexts: target.memberTexts,
+      ...(condition === undefined ? {} : { condition }),
+    };
+  }
+  return {
+    kind: target.kind === "selection_count_mean" ? "selection_count_mean" : "mean",
+    questionId: target.questionId,
+    ...(condition === undefined ? {} : { condition }),
+  };
+};
 
 export interface CanonicalMetricAggregate {
   readonly numerator: number;
@@ -248,6 +291,16 @@ export const canonicalMetricContribution = (
     return {
       numerator: Number(selected),
       denominator: metric.kind === "option_ratio" ? Number(answered) : 1,
+    };
+  }
+  if (metric.kind === "text_cluster_count" || metric.kind === "text_cluster_ratio") {
+    const answered = answer.state === "answered";
+    const members = new Set(metric.memberTexts ?? []);
+    const selected =
+      answered && answer.value.kind === "text" && members.has(answer.value.value.trim());
+    return {
+      numerator: Number(selected),
+      denominator: metric.kind === "text_cluster_ratio" ? Number(answered) : 1,
     };
   }
   const value =
@@ -376,16 +429,24 @@ export const checkFeasibility = (
     });
   for (const target of targets.questionTargets) {
     const question = form.questions.find((entry) => entry.id === target.questionId);
+    const targetLocation: TargetLocation =
+      target.kind === "option"
+        ? {
+            type: "question-option",
+            questionId: target.questionId,
+            optionKey: target.optionKey,
+          }
+        : target.kind === "text_cluster"
+          ? {
+              type: "text-cluster",
+              questionId: target.questionId,
+              clusterId: target.clusterId,
+            }
+          : { type: "question-mean", questionId: target.questionId };
+
     if (question === undefined) {
       issues.push({
-        location:
-          target.kind === "option"
-            ? {
-                type: "question-option",
-                questionId: target.questionId,
-                optionKey: target.optionKey,
-              }
-            : { type: "question-mean", questionId: target.questionId },
+        location: targetLocation,
         code: "UNSUPPORTED_TARGET",
         message: "Question is not in this source revision",
         suggestion: "remove",
@@ -398,11 +459,7 @@ export const checkFeasibility = (
       question.kind !== "multi_choice"
     ) {
       issues.push({
-        location: {
-          type: "question-option",
-          questionId: target.questionId,
-          optionKey: target.optionKey,
-        },
+        location: targetLocation,
         code: "UNSUPPORTED_TARGET",
         message: "Option target requires a single-choice or checkbox question",
         suggestion: "remove",
@@ -415,13 +472,18 @@ export const checkFeasibility = (
       !question.options.some((option) => option.key === target.optionKey)
     ) {
       issues.push({
-        location: {
-          type: "question-option",
-          questionId: target.questionId,
-          optionKey: target.optionKey,
-        },
+        location: targetLocation,
         code: "UNSUPPORTED_TARGET",
         message: "Option is not in this source revision",
+        suggestion: "remove",
+      });
+      continue;
+    }
+    if (target.kind === "text_cluster" && question.kind !== "text") {
+      issues.push({
+        location: targetLocation,
+        code: "UNSUPPORTED_TARGET",
+        message: "Text cluster target requires a text question",
         suggestion: "remove",
       });
       continue;
@@ -429,14 +491,7 @@ export const checkFeasibility = (
     const invalid = invalidTargetMessage(target.target);
     if (invalid !== null) {
       issues.push({
-        location:
-          target.kind === "option"
-            ? {
-                type: "question-option",
-                questionId: target.questionId,
-                optionKey: target.optionKey,
-              }
-            : { type: "question-mean", questionId: target.questionId },
+        location: targetLocation,
         code: "INVALID_TARGET",
         message: invalid,
         suggestion: "remove",
@@ -683,7 +738,7 @@ export const validateSynthesis = (
         ? finalRows
         : finalRows.filter((row) => conditionMatches(row, condition));
     const denominator =
-      metric.kind === "option_ratio"
+      metric.kind === "option_ratio" || metric.kind === "text_cluster_ratio"
         ? scopedRows.filter((row) => slotFor(row, metric.questionId).state === "answered").length
         : 1;
     const question = form.questions.find((entry) => entry.id === target.questionId);
@@ -722,6 +777,11 @@ export const validateSynthesis = (
         const optionKey = slot.value.optionKey;
         if (!question.options.some((option) => option.key === optionKey))
           errors.push("INVALID_OPTION_VALUE");
+        if (
+          slot.value.otherValue !== undefined &&
+          !question.options.some((option) => option.key === optionKey && option.isOther === true)
+        )
+          errors.push("INVALID_OTHER_VALUE");
       }
       if (
         slot.state === "answered" &&
@@ -741,6 +801,14 @@ export const validateSynthesis = (
           )
         )
           errors.push("INVALID_CHECKBOX_VALUE");
+        if (
+          slot.value.kind === "multi_choice" &&
+          slot.value.otherValue !== undefined &&
+          !slot.value.optionKeys.some((key) =>
+            question.options.some((option) => option.key === key && option.isOther === true),
+          )
+        )
+          errors.push("INVALID_OTHER_VALUE");
       }
     }
     const resolved = resolveResponsePath(form, row.answers);
@@ -880,6 +948,7 @@ const repairOptionTarget = (
             kind: "multi_choice",
             optionKeys: [...answer.value.optionKeys, target.optionKey as never],
             labels: [...answer.value.labels, label],
+            ...(answer.value.otherValue !== undefined ? { otherValue: answer.value.otherValue } : {}),
           },
         });
       } else continue;
@@ -919,6 +988,9 @@ const repairOptionTarget = (
             labels: optionKeys.map(
               (key) => question.options.find((option) => option.key === key)?.label ?? "",
             ),
+            ...(answer.value.otherValue !== undefined && optionKeys.some((key) => question.options.some((option) => option.key === key && option.isOther === true))
+              ? { otherValue: answer.value.otherValue }
+              : {}),
           },
         });
       } else continue;
@@ -982,11 +1054,91 @@ const repairSelectionCountMean = (
         labels: optionKeys.map(
           (key) => question.options.find((option) => option.key === key)?.label ?? "",
         ),
+        ...(answer.value.otherValue !== undefined && optionKeys.some((key) => question.options.some((option) => option.key === key && option.isOther === true))
+          ? { otherValue: answer.value.otherValue }
+          : {}),
       },
     });
     remaining -= count;
   }
   return remaining === 0 ? null : "SELECTION_COUNT_TARGET_UNREACHABLE";
+};
+
+const repairTextClusterTarget = (
+  form: FormSnapshot,
+  original: readonly NormalizedResponse[],
+  synthetic: NormalizedResponse[],
+  target: Extract<QuestionTarget, { kind: "text_cluster" }>,
+): string | null => {
+  const question = form.questions.find((entry) => entry.id === target.questionId);
+  if (question === undefined || question.kind !== "text") return "UNSUPPORTED_TEXT_CLUSTER_REPAIR";
+
+  const answered = [...original, ...synthetic].filter(
+    (row) => slotFor(row, target.questionId).state === "answered",
+  );
+  let actual =
+    metricValue([...original, ...synthetic], {
+      kind: "text_cluster_count",
+      questionId: target.questionId,
+      clusterId: target.clusterId,
+      memberTexts: target.memberTexts,
+    }) ?? 0;
+  const desired =
+    target.target.kind === "count"
+      ? target.target.value
+      : target.target.kind === "ratio"
+        ? nearestRepresentable(target.target.value, answered.length)
+        : target.target.kind === "count_range"
+          ? Math.max(target.target.min, Math.min(target.target.max, actual))
+          : target.target.kind === "ratio_range"
+            ? (() => {
+                const min = Math.ceil(target.target.min * answered.length);
+                const max = Math.floor(target.target.max * answered.length);
+                return min <= max ? Math.max(min, Math.min(max, actual)) : null;
+              })()
+            : null;
+  if (desired === null) return "UNSUPPORTED_TEXT_CLUSTER_TARGET";
+
+  const memberSet = new Set(target.memberTexts);
+  const clusterValue = target.label || target.memberTexts[0] || "";
+
+  const outsideSample = original
+    .map((r) => slotFor(r, target.questionId))
+    .find(
+      (slot) =>
+        slot.state === "answered" &&
+        slot.value.kind === "text" &&
+        !memberSet.has(slot.value.value.trim()),
+    );
+  const outsideValue =
+    outsideSample && outsideSample.state === "answered" && outsideSample.value.kind === "text"
+      ? outsideSample.value.value
+      : "기타";
+
+  if (actual < desired) {
+    for (let index = 0; index < synthetic.length && actual < desired; index += 1) {
+      const answer = slotFor(synthetic[index]!, target.questionId);
+      if (answer.state !== "answered" || answer.value.kind !== "text") continue;
+      if (memberSet.has(answer.value.value.trim())) continue;
+      synthetic[index] = replaceSlot(synthetic[index]!, target.questionId, {
+        state: "answered",
+        value: { kind: "text", value: clusterValue },
+      });
+      actual += 1;
+    }
+  } else if (actual > desired) {
+    for (let index = 0; index < synthetic.length && actual > desired; index += 1) {
+      const answer = slotFor(synthetic[index]!, target.questionId);
+      if (answer.state !== "answered" || answer.value.kind !== "text") continue;
+      if (!memberSet.has(answer.value.value.trim())) continue;
+      synthetic[index] = replaceSlot(synthetic[index]!, target.questionId, {
+        state: "answered",
+        value: { kind: "text", value: outsideValue },
+      });
+      actual -= 1;
+    }
+  }
+  return actual === desired ? null : "TEXT_CLUSTER_REPAIR_FAILED";
 };
 
 const conditionQuestionIds = (condition: ConditionPredicate): readonly QuestionId[] =>
@@ -1012,7 +1164,9 @@ const repairConditionalGoal = (
   const error =
     goal.outcome.kind === "option"
       ? repairOptionTarget(form, originalPopulation, population, goal.outcome, seed)
-      : repairMeanTarget(form, originalPopulation, population, goal.outcome);
+      : goal.outcome.kind === "text_cluster"
+        ? repairTextClusterTarget(form, originalPopulation, population, goal.outcome)
+        : repairMeanTarget(form, originalPopulation, population, goal.outcome);
   if (error !== null) return error;
   indexes.forEach((index, populationIndex) => {
     synthetic[index] = population[populationIndex]!;
@@ -1321,9 +1475,11 @@ export const synthesize = (
     .map((target) =>
       target.kind === "option"
         ? repairOptionTarget(form, original, synthetic, target, seed)
-        : target.kind === "selection_count_mean"
-          ? repairSelectionCountMean(form, original, synthetic, target)
-          : repairMeanTarget(form, original, synthetic, target),
+        : target.kind === "text_cluster"
+          ? repairTextClusterTarget(form, original, synthetic, target)
+          : target.kind === "selection_count_mean"
+            ? repairSelectionCountMean(form, original, synthetic, target)
+            : repairMeanTarget(form, original, synthetic, target),
     )
     .filter((error): error is string => error !== null);
   errors.push(

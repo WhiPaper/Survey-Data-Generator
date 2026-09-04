@@ -271,5 +271,25 @@ export const analyzeRelationships = (
         preservationFeatures: features,
       });
     }
-  return output.sort((x, y) => y.selectionScore - x.selectionScore);
+  const merged = new Map<string, RelationshipProfile>();
+  for (const relationship of output) {
+    const key = `${relationship.questionA}\u0000${relationship.questionB}`;
+    const previous = merged.get(key);
+    if (previous === undefined || relationship.family !== "checkbox_option_option") {
+      merged.set(key, relationship);
+      continue;
+    }
+    merged.set(key, {
+      ...previous,
+      supportCount: Math.max(previous.supportCount, relationship.supportCount),
+      strength: Math.max(previous.strength, relationship.strength),
+      reliability: Math.max(previous.reliability, relationship.reliability),
+      selectionScore: Math.max(previous.selectionScore, relationship.selectionScore),
+      preserveRecommended: previous.preserveRecommended || relationship.preserveRecommended,
+      preservationFeatures: [
+        ...new Set([...previous.preservationFeatures, ...relationship.preservationFeatures]),
+      ],
+    });
+  }
+  return [...merged.values()].sort((x, y) => y.selectionScore - x.selectionScore);
 };

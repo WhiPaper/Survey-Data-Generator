@@ -14,7 +14,7 @@ import {
 } from "@survey-synth/contracts";
 
 import { NdjsonDecoder, encodeNdjson } from "./ndjson.js";
-import type { SafeLogger } from "./logger.js";
+import { safeErrorContext, type SafeLogger } from "./logger.js";
 import { isSidecarError } from "../errors.js";
 import type { HostCapabilityClient } from "../host.js";
 
@@ -104,6 +104,11 @@ export const createSidecarServer = (options: SidecarServerOptions): SidecarServe
     try {
       raw = JSON.parse(line) as unknown;
     } catch {
+      options.logger.error("request_parse_failed", {
+        errorCode: "VALIDATION_FAILED",
+        phase: "parse_json",
+        requestId: id,
+      });
       writeResponse(createErrorResponse(id, validationError("Request is not valid JSON")));
       return;
     }
@@ -112,6 +117,11 @@ export const createSidecarServer = (options: SidecarServerOptions): SidecarServe
     try {
       request = parseRpcRequest(raw);
     } catch {
+      options.logger.error("request_parse_failed", {
+        errorCode: "VALIDATION_FAILED",
+        phase: "parse_envelope",
+        requestId: id,
+      });
       writeResponse(
         createErrorResponse(id, validationError("Request envelope or parameters are invalid")),
       );
@@ -141,7 +151,13 @@ export const createSidecarServer = (options: SidecarServerOptions): SidecarServe
       writeResponse(createSuccessResponse(request.id, result));
     } catch (error: unknown) {
       const backendError = isSidecarError(error) ? error.backendError : internalError();
-      options.logger.error("request_failed", { errorCode: backendError.code });
+      options.logger.error("request_failed", {
+        errorCode: backendError.code,
+        method: request.method,
+        requestId: request.id,
+        phase: "rpc",
+        ...safeErrorContext(error),
+      });
       writeResponse(createErrorResponse(request.id, backendError));
     }
   };
@@ -154,8 +170,12 @@ export const createSidecarServer = (options: SidecarServerOptions): SidecarServe
   if (options.ready === undefined) emitReady();
   else
     void options.ready
-      .catch(() => {
-        options.logger.error("sidecar_startup_failed", { errorCode: "BACKEND_UNAVAILABLE" });
+      .catch((error: unknown) => {
+        options.logger.error("sidecar_startup_failed", {
+          errorCode: "BACKEND_UNAVAILABLE",
+          phase: "startup",
+          ...safeErrorContext(error),
+        });
         shutdown();
       })
       .then(() => {

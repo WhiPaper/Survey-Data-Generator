@@ -36,9 +36,15 @@ describe("Google HTTP token client", () => {
         ),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ email: "user@example.com", name: "User", sub: "subject" }), {
-          status: 200,
-        }),
+        new Response(
+          JSON.stringify({
+            email: "user@example.com",
+            name: "User",
+            picture: "https://lh3.googleusercontent.com/avatar",
+            sub: "subject",
+          }),
+          { status: 200 },
+        ),
       );
     const client = new GoogleHttpClient({ getConfig: async () => config, fetchImpl });
 
@@ -51,6 +57,7 @@ describe("Google HTTP token client", () => {
     const identity = await client.resolveIdentity(tokenSet.accessToken);
     expect(identity).toEqual({
       displayName: "User",
+      avatarUrl: "https://lh3.googleusercontent.com/avatar",
       email: "user@example.com",
       subject: "subject",
     });

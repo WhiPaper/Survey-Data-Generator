@@ -29,6 +29,14 @@ export type TargetValue =
   | { kind: "ratio_range"; min: number; max: number }
   | { kind: "mean"; value: number };
 
+export interface TextClusterGroup {
+  readonly id: string;
+  readonly label: string;
+  readonly count: number;
+  readonly share: number;
+  readonly memberTexts: readonly string[];
+}
+
 export type QuestionTarget =
   | { kind: "option"; questionId: QuestionId; optionKey: OptionKey; target: TargetValue }
   | { kind: "mean"; questionId: QuestionId; target: Extract<TargetValue, { kind: "mean" }> }
@@ -36,6 +44,14 @@ export type QuestionTarget =
       kind: "selection_count_mean";
       questionId: QuestionId;
       target: Extract<TargetValue, { kind: "mean" }>;
+    }
+  | {
+      kind: "text_cluster";
+      questionId: QuestionId;
+      clusterId: string;
+      label: string;
+      memberTexts: readonly string[];
+      target: TargetValue;
     };
 
 export type ConditionPredicate =
@@ -108,6 +124,7 @@ export interface GoogleAccount {
   subject: string;
   email: string;
   displayName?: string;
+  avatarUrl?: string;
   createdAt: string;
   lastUsedAt: string;
 }
@@ -254,8 +271,13 @@ export interface FileAnswer {
 }
 
 export type AnswerValue =
-  | { kind: "single_choice"; optionKey: OptionKey; label: string }
-  | { kind: "multi_choice"; optionKeys: readonly OptionKey[]; labels: readonly string[] }
+  | { kind: "single_choice"; optionKey: OptionKey; label: string; otherValue?: string }
+  | {
+      kind: "multi_choice";
+      optionKeys: readonly OptionKey[];
+      labels: readonly string[];
+      otherValue?: string;
+    }
   | { kind: "ordinal"; value: number }
   | { kind: "text"; value: string }
   | { kind: "date"; value: string; includeTime: boolean; includeYear: boolean }

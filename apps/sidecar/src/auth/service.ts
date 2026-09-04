@@ -8,7 +8,7 @@ import {
 } from "@survey-synth/contracts";
 
 import { sidecarError, SidecarError } from "../errors.js";
-import type { SafeLogger } from "../rpc/logger.js";
+import { safeErrorContext, type SafeLogger } from "../rpc/logger.js";
 import type { GoogleAccountRepository } from "./account-store.js";
 import {
   GoogleProviderError,
@@ -71,6 +71,8 @@ export class GoogleAuthServiceImpl implements GoogleAuthService {
       const backendError = error instanceof SidecarError ? error.backendError : undefined;
       this.options.logger.error("session_restore_failed", {
         errorCode: backendError?.code ?? "INTERNAL",
+        phase: "session_restore",
+        ...safeErrorContext(error),
       });
       if (error instanceof SidecarError && error.backendError.code === "REAUTH_REQUIRED") {
         await this.clearLastAccountId(accountId);
@@ -150,13 +152,30 @@ export class GoogleAuthServiceImpl implements GoogleAuthService {
   }
 
   private async authenticate(flow: GoogleInteractiveFlow): Promise<SessionView> {
-    const authorization = await this.options.oauth.authorize(flow);
+    const operationId = `auth_${randomUUID()}`;
+    this.options.logger.info("google_auth_started", { step: flow, operationId });
+    let authorization: Awaited<ReturnType<GoogleOAuthFlow["authorize"]>>;
+    try {
+      authorization = await this.options.oauth.authorize(flow);
+    } catch (error: unknown) {
+      this.options.logger.error("google_auth_failed", {
+        phase: "authorize",
+        operationId,
+        ...safeErrorContext(error),
+      });
+      throw error;
+    }
     let tokenSet: GoogleTokenSet;
     let identity: GoogleIdentity;
     try {
       tokenSet = await this.options.google.exchangeCode(authorization);
       identity = await this.options.google.resolveIdentity(tokenSet.accessToken);
     } catch (error: unknown) {
+      this.options.logger.error("google_auth_failed", {
+        phase: "token_exchange_or_identity",
+        operationId,
+        ...safeErrorContext(error),
+      });
       if (error instanceof SidecarError) throw error;
       if (error instanceof GoogleProviderError) {
         throw mapGoogleProviderError(error, "Google login failed");
@@ -194,6 +213,9 @@ export class GoogleAuthServiceImpl implements GoogleAuthService {
       ...(identity.displayName === undefined && existing?.displayName === undefined
         ? {}
         : { displayName: identity.displayName ?? existing?.displayName }),
+      ...(identity.avatarUrl === undefined && existing?.avatarUrl === undefined
+        ? {}
+        : { avatarUrl: identity.avatarUrl ?? existing?.avatarUrl }),
       createdAt: existing?.createdAt ?? this.timestamp(),
       lastUsedAt: this.timestamp(),
     };
@@ -261,6 +283,7 @@ const accountView = (account: GoogleAccount): GoogleAccountView => ({
   id: account.id,
   email: account.email,
   ...(account.displayName === undefined ? {} : { displayName: account.displayName }),
+  ...(account.avatarUrl === undefined ? {} : { avatarUrl: account.avatarUrl }),
 });
 
 const sessionView = (account: GoogleAccount): SessionView => ({

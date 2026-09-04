@@ -7,7 +7,13 @@ import "./styles.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: false },
+    queries: {
+      retry: false,
+      // Project data is local-first. Refetching every time the window regains
+      // focus can replace the editing draft while a screen is still active.
+      staleTime: Infinity,
+      refetchOnWindowFocus: false,
+    },
   },
 });
 

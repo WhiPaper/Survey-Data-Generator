@@ -16,7 +16,7 @@ import {
 
 import { isSidecarError, sidecarError } from "../errors.js";
 import type { GoogleAccountRepository } from "../auth/account-store.js";
-import type { SafeLogger } from "../rpc/logger.js";
+import { safeErrorContext, type SafeLogger } from "../rpc/logger.js";
 import type { GoogleFormsApi } from "./client.js";
 import type { RawGoogleFormResponse } from "./google-types.js";
 import {
@@ -117,8 +117,13 @@ export class FormImportService {
     accountId: GoogleAccountId,
     formId: FormId,
     signal?: AbortSignal,
+    operationId?: string,
   ): Promise<{ form: FormSnapshot; responses: readonly NormalizedResponse[] }> {
     const startedAt = this.now();
+    this.options.logger.info("form_import_started", {
+      step: "fetch_form_and_responses",
+      ...(operationId === undefined ? {} : { operationId }),
+    });
     const budget = new M2ImportSafetyBudget(this.limits, this.now, startedAt);
     const operation = createImportOperation(signal, this.limits.timeoutMs);
     this.activeImportCancellers.add(operation.cancel);
@@ -136,6 +141,12 @@ export class FormImportService {
       const rawForm = await Promise.race([rawFormPromise, operation.termination]);
       ensureDeadline(operation, budget);
       const form = this.formNormalizer.normalize(rawForm, new Date(startedAt).toISOString());
+      this.options.logger.info("form_import_phase_completed", {
+        step: "form_normalized",
+        ...(operationId === undefined ? {} : { operationId }),
+        questions: form.questions.length,
+        durationMs: Math.max(0, this.now() - startedAt),
+      });
       ensureDeadline(operation, budget);
       if (form.formId !== formId) {
         throw sidecarError(
@@ -151,12 +162,31 @@ export class FormImportService {
       );
       void rawResponsesPromise.catch(() => {});
       const rawResponses = await Promise.race([rawResponsesPromise, operation.termination]);
+      this.options.logger.info("form_import_phase_completed", {
+        step: "responses_fetched",
+        ...(operationId === undefined ? {} : { operationId }),
+        responses: rawResponses.length,
+        durationMs: Math.max(0, this.now() - startedAt),
+      });
       ensureDeadline(operation, budget);
       const responses = this.responseNormalizer.normalizeAll(form, rawResponses);
+      this.options.logger.info("form_import_phase_completed", {
+        step: "responses_normalized",
+        ...(operationId === undefined ? {} : { operationId }),
+        responses: responses.length,
+        questions: form.questions.length,
+        durationMs: Math.max(0, this.now() - startedAt),
+      });
       ensureDeadline(operation, budget);
       return { form, responses };
     } catch (error: unknown) {
       const normalizedError = importFailure(error, operation, signal, budget, this.now);
+      this.options.logger.error("form_import_failed", {
+        phase: "fetch_or_normalize",
+        ...(operationId === undefined ? {} : { operationId }),
+        ...safeErrorContext(normalizedError),
+        durationMs: Math.max(0, this.now() - startedAt),
+      });
       operation.cancel();
       void Promise.allSettled([
         rawFormPromise,
@@ -169,10 +199,19 @@ export class FormImportService {
     }
   }
 
-  public async importForm(formId: FormId, signal?: AbortSignal): Promise<FormImportSummary> {
+  public async importForm(
+    formId: FormId,
+    signal?: AbortSignal,
+    operationId?: string,
+  ): Promise<FormImportSummary> {
     const accountId = await this.activeAccountId();
     const startedAt = this.now();
-    const { form, responses } = await this.fetchAndNormalize(accountId, formId, signal);
+    const { form, responses } = await this.fetchAndNormalize(
+      accountId,
+      formId,
+      signal,
+      operationId,
+    );
     if (responses.length === 0) {
       throw sidecarError("VALIDATION_FAILED", "선택한 Google Form에 응답이 없습니다", true);
     }
@@ -197,6 +236,7 @@ export class FormImportService {
       responses: responses.length,
       questions: form.questions.length,
       durationMs: Math.max(0, this.now() - startedAt),
+      ...(operationId === undefined ? {} : { operationId }),
     });
     return summary;
   }

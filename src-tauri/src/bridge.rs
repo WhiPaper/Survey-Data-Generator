@@ -707,12 +707,40 @@ fn is_response(message: &Value) -> bool {
 
 fn read_stderr(stderr: impl std::io::Read) {
     for line in BufReader::new(stderr).lines() {
-        if line.is_ok() {
-            eprintln!("sidecar emitted a log record");
-        } else {
-            break;
+        match line {
+            Ok(line) => emit_sidecar_log(&line),
+            Err(_) => {
+                log::error!("sidecar stderr reader failed");
+                break;
+            }
         }
     }
+}
+
+fn emit_sidecar_log(line: &str) {
+    let value = match serde_json::from_str::<Value>(line) {
+        Ok(value) => value,
+        Err(_) => {
+            log::error!("sidecar emitted unstructured stderr ({} bytes)", line.len());
+            return;
+        }
+    };
+    let Some(level) = value.get("level").and_then(Value::as_str) else {
+        log::error!("sidecar emitted an invalid log record");
+        return;
+    };
+    if value.get("event").and_then(Value::as_str).is_none() {
+        log::error!("sidecar emitted an invalid log record");
+        return;
+    }
+    match level {
+        "error" => log::error!("{}", format_sidecar_log_line(line)),
+        _ => log::info!("{}", format_sidecar_log_line(line)),
+    }
+}
+
+fn format_sidecar_log_line(line: &str) -> String {
+    format!("sidecar: {line}")
 }
 
 fn remove_pending(shared: &Arc<SharedState>, id: &str) {
@@ -744,10 +772,10 @@ fn startup_failure<T>(child: &mut Child, message: &str) -> Result<T, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_host_request, expected_protocol_version, host_request_fields, open_external,
-        parse_transport_request, response_timeout, validate_ready, SecretStore, BASE64,
-        EXPECTED_APP_VERSION, IMPORT_RESPONSE_TIMEOUT, INTERACTIVE_RESPONSE_TIMEOUT,
-        RESPONSE_TIMEOUT,
+        execute_host_request, expected_protocol_version, format_sidecar_log_line,
+        host_request_fields, open_external, parse_transport_request, response_timeout,
+        validate_ready, SecretStore, BASE64, EXPECTED_APP_VERSION, IMPORT_RESPONSE_TIMEOUT,
+        INTERACTIVE_RESPONSE_TIMEOUT, RESPONSE_TIMEOUT,
     };
     use base64::Engine as _;
     use serde_json::json;
@@ -802,6 +830,16 @@ mod tests {
         assert_eq!(response_timeout("forms.import"), IMPORT_RESPONSE_TIMEOUT);
         assert_eq!(response_timeout("runs.export"), RESPONSE_TIMEOUT);
         assert_eq!(response_timeout("system.ping"), RESPONSE_TIMEOUT);
+    }
+
+    #[test]
+    fn preserves_sidecar_stderr_log_content() {
+        assert_eq!(
+            format_sidecar_log_line(
+                r#"{"level":"error","event":"request_failed","errorCode":"INTERNAL"}"#,
+            ),
+            r#"sidecar: {"level":"error","event":"request_failed","errorCode":"INTERNAL"}"#
+        );
     }
 
     #[test]

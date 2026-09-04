@@ -1,21 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useForm, useWatch } from "react-hook-form";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 
 import type { FormId, FormListItem, GoogleAccountId, SessionView } from "@survey-synth/contracts";
-import type { FormSnapshot, ProjectTargets, QuestionTarget } from "@survey-synth/domain";
+import type { FormSnapshot, ProjectTargets } from "@survey-synth/domain";
 
 import {
   BackendClientError,
   addAccount,
   cancelFormImport,
-  getAccounts,
-  getProject,
   getSession,
   importForm,
-  listForms,
   deleteAccountData,
   deleteProject,
   login,
@@ -25,9 +21,6 @@ import {
   switchAccount,
   cancelSynthesis,
   startSynthesis,
-  getTargets,
-  updateTargets,
-  checkTargetFeasibility,
   getRun,
   exportRun,
   refreshSource,
@@ -35,43 +28,80 @@ import {
   resolveMigrationIssue,
   getAiStatus,
   configureAi,
+  clearAiCredentials,
   acknowledgeAiDisclosure,
   generateAiText,
   cancelAiGeneration,
+  getProjectTimeline,
 } from "./api/backend";
 import { checkOnceDaily } from "./updater";
+import { AuthLoadingScreen, AuthLoginScreen } from "./components/auth-screen";
+import { ProjectSwitcher } from "./components/project-switcher";
+import { WorkspaceNav } from "./components/workspace-nav";
+import { SurveyTree } from "./components/survey-tree";
+import { AccountNavUser } from "./components/account-nav-user";
+import { WorkspaceScreen } from "./components/workspace-screen";
+import { type RunDetailView } from "./components/synthesis-results";
+import { WorkspaceResultsScreen } from "./components/workspace-results-screen";
+import { NewProjectDialog } from "./components/new-project-dialog";
+import { ApiKeyDialog, AiDisclosureDialog } from "./components/ai-dialogs";
+import {
+  ConfirmDeleteProjectDialog,
+  ConfirmDeleteAccountDataDialog,
+  ConfirmRevokeDialog,
+  ConfirmAiClearDialog,
+} from "./components/confirm-dialogs";
 
-export const sessionQueryKey = ["session.get"] as const;
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Empty, EmptyContent, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { FieldError } from "@/components/ui/field";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarInset,
+  SidebarProvider,
+  SidebarRail,
+  SidebarSeparator,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
+import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { useWorkspaceRoute } from "./hooks/use-workspace-route";
+import { useWorkspaceQueries } from "./hooks/use-workspace-queries";
+import { useTargetDraft } from "./hooks/use-target-draft";
+import { projectsQueryKey, sessionQueryKey } from "./lib/query-keys";
 
-export const accountsQueryKey = (accountId: GoogleAccountId | null) =>
-  ["auth.accounts", accountId] as const;
+export {
+  accountsQueryKey,
+  formsQueryKey,
+  projectsQueryKey,
+  sessionQueryKey,
+} from "./lib/query-keys";
 
-export const formsQueryKey = (accountId: GoogleAccountId | null, query: string) =>
-  ["forms.list", accountId, query] as const;
-export const projectsQueryKey = ["projects.list"] as const;
-
-const errorMessage = (error: unknown): string => {
-  if (error instanceof BackendClientError) return error.backendError.message;
-  return "Backend unavailable";
+export const errorMessage = (error: unknown): string => {
+  if (error instanceof BackendClientError) return error.message;
+  if (error instanceof Error) return error.message;
+  return "알 수 없는 오류가 발생했습니다";
 };
 
-const mergeForms = (
-  current: readonly FormListItem[],
-  next: readonly FormListItem[],
-): FormListItem[] => {
-  const merged = new Map(current.map((item) => [item.formId, item]));
-  for (const item of next) merged.set(item.formId, item);
+export const mergeForms = (
+  pages: readonly { readonly items: readonly FormListItem[] }[],
+): readonly FormListItem[] => {
+  const merged = new Map<string, FormListItem>();
+  for (const page of pages) {
+    for (const item of page.items) {
+      if (!merged.has(item.formId)) merged.set(item.formId, item);
+    }
+  }
   return [...merged.values()];
 };
 
-const formatModifiedAt = (value: string | undefined): string | undefined => {
-  if (value === undefined) return undefined;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return undefined;
-  return new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" }).format(date);
-};
-
-const useDebouncedValue = (value: string, delayMs: number): string => {
+export const useDebouncedValue = (value: string, delayMs: number): string => {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(value), delayMs);
@@ -80,361 +110,30 @@ const useDebouncedValue = (value: string, delayMs: number): string => {
   return debounced;
 };
 
-type ProjectEditorProps = {
-  form: FormSnapshot;
-  sourceCount: number;
-  targets: ProjectTargets;
-  onChange: (targets: ProjectTargets) => void;
-  onGenerate: () => void;
-  disabled: boolean;
-  error?: string;
-};
-
-const profileFor = (profiles: readonly Record<string, unknown>[], questionId: string) =>
-  profiles.find((profile) => profile.questionId === questionId);
-
-const isNumericText = (profiles: readonly Record<string, unknown>[], questionId: string): boolean =>
-  (profileFor(profiles, questionId)?.semanticInference as { inferred?: string } | undefined)
-    ?.inferred === "numeric";
-
-const TargetEditor = ({
-  form,
-  sourceCount,
-  targets,
-  onChange,
-  onGenerate,
-  disabled,
-  error,
-  profiles = [],
-}: ProjectEditorProps & { profiles?: readonly Record<string, unknown>[] }) => {
-  const [selectedQuestionId, setSelectedQuestionId] = useState("");
-  const [unit, setUnit] = useState<"ratio" | "count">("ratio");
-  const adjustableQuestions = form.questions.filter(
-    (question) =>
-      question.kind === "single_choice" ||
-      question.kind === "multi_choice" ||
-      question.kind === "ordinal" ||
-      (question.kind === "text" && isNumericText(profiles, question.id)),
-  );
-  const targetFor = (questionId: string) =>
-    targets.questionTargets.filter((target) => target.questionId === questionId);
-  const addQuestion = (questionId: string) => {
-    if (questionId === "") return;
-    const question = form.questions.find((item) => item.id === questionId);
-    if (
-      (question?.kind === "single_choice" || question?.kind === "multi_choice") &&
-      question.options[0] !== undefined
-    ) {
-      onChange({
-        ...targets,
-        questionTargets: [
-          ...targets.questionTargets,
-          {
-            kind: "option",
-            questionId: question.id,
-            optionKey: question.options[0].key,
-            target: { kind: "ratio", value: 0.5 },
-          },
-        ],
-      });
-    } else if (question?.kind === "ordinal") {
-      onChange({
-        ...targets,
-        questionTargets: [
-          ...targets.questionTargets,
-          {
-            kind: "mean",
-            questionId: question.id,
-            target: { kind: "mean", value: (question.min + question.max) / 2 },
-          },
-        ],
-      });
-    } else if (question?.kind === "text" && isNumericText(profiles, question.id)) {
-      const mean =
-        (profileFor(profiles, question.id)?.numeric as { mean?: number } | undefined)?.mean ?? 0;
-      onChange({
-        ...targets,
-        questionTargets: [
-          ...targets.questionTargets,
-          { kind: "mean", questionId: question.id, target: { kind: "mean", value: mean } },
-        ],
-      });
-    }
-    setSelectedQuestionId("");
-  };
-  const removeQuestion = (questionId: string) =>
-    onChange({
-      ...targets,
-      questionTargets: targets.questionTargets.filter((target) => target.questionId !== questionId),
-    });
-  const updateTarget = (
-    questionId: string,
-    optionKey: string,
-    value: string,
-    semantic: "ratio" | "count",
-  ) => {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) return;
-    const nextValue = semantic === "ratio" ? numeric / 100 : numeric;
-    const next = targets.questionTargets.map((target) =>
-      target.kind === "option" && target.questionId === questionId && target.optionKey === optionKey
-        ? { ...target, target: { kind: semantic, value: nextValue } }
-        : target,
-    );
-    onChange({ ...targets, questionTargets: next as QuestionTarget[] });
-  };
-  const updateMean = (questionId: string, value: string) => {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) return;
-    const question = form.questions.find((item) => item.id === questionId);
-    if (question?.kind === "ordinal" && (numeric < question.min || numeric > question.max)) return;
-    onChange({
-      ...targets,
-      questionTargets: targets.questionTargets.map((target) =>
-        target.kind === "mean" && target.questionId === questionId
-          ? { ...target, target: { kind: "mean", value: numeric } }
-          : target,
-      ),
-    });
-  };
-  return (
-    <section className="target-editor" aria-labelledby="target-editor-title">
-      <div className="count-editor">
-        <span>{sourceCount} →</span>
-        <label>
-          <span className="visually-hidden">최종 응답 수</span>
-          <input
-            type="number"
-            min={sourceCount}
-            step="1"
-            value={Number.isNaN(targets.targetResponseCount) ? "" : targets.targetResponseCount}
-            onChange={(event) =>
-              onChange({
-                ...targets,
-                targetResponseCount: event.target.value === "" ? NaN : Number(event.target.value),
-              })
-            }
-            disabled={disabled}
-            aria-invalid={
-              targets.targetResponseCount < sourceCount ||
-              !Number.isInteger(targets.targetResponseCount)
-            }
-          />
-        </label>
-        <span>명</span>
-      </div>
-      <h3 id="target-editor-title">조정할 문항</h3>
-      <div className="question-picker">
-        <select
-          aria-label="조정할 문항 추가"
-          value={selectedQuestionId}
-          onChange={(event) => addQuestion(event.target.value)}
-          disabled={disabled}
-        >
-          <option value="">+ 문항 추가</option>
-          {adjustableQuestions
-            .filter((question) => targetFor(question.id).length === 0)
-            .map((question) => (
-              <option key={question.id} value={question.id}>
-                {question.title}
-              </option>
-            ))}
-        </select>
-      </div>
-      <div className="target-list">
-        {adjustableQuestions
-          .filter((question) => targetFor(question.id).length > 0)
-          .map((question) => {
-            const target = targetFor(question.id)[0];
-            if (target === undefined) return null;
-            if (
-              (question.kind === "single_choice" || question.kind === "multi_choice") &&
-              target.kind === "option"
-            ) {
-              const option = question.options.find((item) => item.key === target.optionKey);
-              if (option === undefined) return null;
-              const current = (
-                profileFor(profiles, question.id)?.choices as
-                  Record<string, { share: number }> | undefined
-              )?.[String(option.key)]?.share;
-              if (target.target.kind !== "ratio" && target.target.kind !== "count") return null;
-              const displayValue =
-                target.target.kind === "ratio" ? target.target.value * 100 : target.target.value;
-              const derived =
-                target.target.kind === "ratio"
-                  ? 1 - target.target.value
-                  : targets.targetResponseCount - target.target.value;
-              return (
-                <div className="target-row" key={question.id}>
-                  <div className="target-row-head">
-                    <strong>{question.title}</strong>
-                    <button
-                      type="button"
-                      onClick={() => removeQuestion(question.id)}
-                      aria-label={`${question.title} 목표 제거`}
-                      disabled={disabled}
-                    >
-                      제거
-                    </button>
-                  </div>
-                  <div className="unit-toggle" role="group" aria-label="표시 단위">
-                    <button
-                      type="button"
-                      aria-pressed={unit === "ratio"}
-                      onClick={() => setUnit("ratio")}
-                    >
-                      %
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={unit === "count"}
-                      onClick={() => setUnit("count")}
-                    >
-                      명
-                    </button>
-                  </div>
-                  <div className="choice-target">
-                    <span>{option.label}</span>
-                    <span className="muted">
-                      현재 {current === undefined ? "-" : `${Math.round(current * 100)}%`}
-                    </span>
-                    <label>
-                      <span className="visually-hidden">{option.label} 목표</span>
-                      <input
-                        type="number"
-                        min="0"
-                        max={unit === "ratio" ? 100 : targets.targetResponseCount}
-                        step={unit === "ratio" ? 1 : 1}
-                        value={
-                          unit === "ratio"
-                            ? displayValue
-                            : target.target.kind === "ratio"
-                              ? Math.round((displayValue * targets.targetResponseCount) / 100)
-                              : displayValue
-                        }
-                        onChange={(event) =>
-                          updateTarget(question.id, String(option.key), event.target.value, unit)
-                        }
-                        disabled={disabled}
-                      />
-                      {unit === "ratio" ? "%" : "명"}
-                    </label>
-                    <span className="derived">
-                      ≈{" "}
-                      {unit === "ratio"
-                        ? `${Math.round(derived * 100)}%`
-                        : `${Math.round(target.target.kind === "ratio" ? target.target.value * targets.targetResponseCount : derived)}명`}
-                    </span>
-                  </div>
-                </div>
-              );
-            }
-            if (question.kind === "ordinal" && target.kind === "mean")
-              return (
-                <div className="target-row" key={question.id}>
-                  <div className="target-row-head">
-                    <strong>{question.title}</strong>
-                    <button
-                      type="button"
-                      onClick={() => removeQuestion(question.id)}
-                      aria-label={`${question.title} 목표 제거`}
-                      disabled={disabled}
-                    >
-                      제거
-                    </button>
-                  </div>
-                  <p className="muted">현재 평균</p>
-                  <label>
-                    목표 평균{" "}
-                    <input
-                      type="number"
-                      min={question.min}
-                      max={question.max}
-                      step="0.1"
-                      value={target.target.value}
-                      onChange={(event) => updateMean(question.id, event.target.value)}
-                      disabled={disabled}
-                    />
-                  </label>
-                </div>
-              );
-            if (
-              question.kind === "text" &&
-              target.kind === "mean" &&
-              isNumericText(profiles, question.id)
-            ) {
-              const current = (
-                profileFor(profiles, question.id)?.numeric as { mean?: number } | undefined
-              )?.mean;
-              return (
-                <div className="target-row" key={question.id}>
-                  <div className="target-row-head">
-                    <strong>{question.title}</strong>
-                    <button
-                      type="button"
-                      onClick={() => removeQuestion(question.id)}
-                      aria-label={`${question.title} 목표 제거`}
-                      disabled={disabled}
-                    >
-                      제거
-                    </button>
-                  </div>
-                  <p className="muted">
-                    현재 평균 {current === undefined ? "-" : current.toFixed(1)}
-                  </p>
-                  <label>
-                    목표 평균{" "}
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={target.target.value}
-                      onChange={(event) => updateMean(question.id, event.target.value)}
-                      disabled={disabled}
-                    />
-                  </label>
-                </div>
-              );
-            }
-            return null;
-          })}
-      </div>
-      {error !== undefined && <p role="alert">{error}</p>}
-      <button
-        type="button"
-        onClick={onGenerate}
-        disabled={
-          disabled ||
-          !Number.isInteger(targets.targetResponseCount) ||
-          targets.targetResponseCount < sourceCount
-        }
-      >
-        데이터 생성
-      </button>
-    </section>
-  );
-};
-
 export function App() {
   const queryClient = useQueryClient();
+  const { route, navigate } = useWorkspaceRoute();
   const [formQuery, setFormQuery] = useState("");
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const selectedProjectId = route.projectId;
+  const workspaceView = route.view;
+  const selectedSurveyQuestionId = route.questionId;
   const [completedRun, setCompletedRun] = useState<{
     runId: string;
     count: number;
     syntheticCount: number;
   } | null>(null);
-  const targetForm = useForm<ProjectTargets>({
-    defaultValues: { targetResponseCount: 0, questionTargets: [] },
-    mode: "onChange",
-  });
-  const draftTargets = useWatch({ control: targetForm.control });
-  const targetReady = useRef(false);
-  const targetRevision = useRef(0);
-  const saveSequence = useRef(0);
-  const appliedSaveSequence = useRef(0);
+  const [timestampRange, setTimestampRange] = useState<{ start: string; end: string } | undefined>();
   const debouncedFormQuery = useDebouncedValue(formQuery, 250);
   const [confirmDeleteProject, setConfirmDeleteProject] = useState(false);
-  const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
+  const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<GoogleAccountId | null>(
+    null,
+  );
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
+  const [confirmAiCredentialClear, setConfirmAiCredentialClear] = useState(false);
+  const [transitionPending, setTransitionPending] = useState(false);
+  const [transitionError, setTransitionError] = useState<string | undefined>(undefined);
+  const transitionLock = useRef(false);
 
   const sessionQuery = useQuery({
     queryKey: sessionQueryKey,
@@ -443,45 +142,22 @@ export function App() {
   });
   const session = sessionQuery.data;
   const activeAccountId = session?.account.id ?? null;
-  const projectsQuery = useQuery({
-    queryKey: projectsQueryKey,
-    queryFn: () => listProjects(),
-    retry: false,
-  });
-  const projectQuery = useQuery({
-    queryKey: ["projects.get", selectedProjectId],
-    queryFn: () => getProject(selectedProjectId ?? ""),
-    enabled: selectedProjectId !== null,
-    retry: false,
-  });
-  const targetsQuery = useQuery({
-    queryKey: ["targets.get", selectedProjectId],
-    queryFn: () => getTargets(selectedProjectId ?? ""),
-    enabled: selectedProjectId !== null,
-    retry: false,
-  });
+  const { projectsQuery, projectQuery, targetsQuery, accountsQuery, formsQuery } =
+    useWorkspaceQueries({
+      activeAccountId,
+      selectedProjectId,
+      formQuery: debouncedFormQuery,
+    });
+  // A run belongs to the route, not to the previous in-memory completion state.
+  // This prevents back/forward navigation or a direct URL from briefly showing
+  // another project's result query.
+  const activeRunId = workspaceView === "results" ? route.runId : null;
+  const completedRunForRoute =
+    completedRun !== null && completedRun.runId === activeRunId ? completedRun : null;
   const runQuery = useQuery({
-    queryKey: ["runs.get", completedRun?.runId],
-    queryFn: () => getRun(completedRun?.runId ?? ""),
-    enabled: completedRun !== null,
-    retry: false,
-  });
-  const accountsQuery = useQuery({
-    queryKey: accountsQueryKey(activeAccountId),
-    queryFn: () => getAccounts(),
-    enabled: activeAccountId !== null,
-    retry: false,
-  });
-  const formsQuery = useInfiniteQuery({
-    queryKey: formsQueryKey(activeAccountId, debouncedFormQuery),
-    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
-      listForms({
-        ...(debouncedFormQuery.length === 0 ? {} : { query: debouncedFormQuery }),
-        ...(pageParam === undefined ? {} : { cursor: pageParam }),
-      }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
-    enabled: activeAccountId !== null,
+    queryKey: ["runs.get", activeRunId],
+    queryFn: () => getRun(activeRunId ?? ""),
+    enabled: activeRunId !== null,
     retry: false,
   });
 
@@ -526,7 +202,7 @@ export function App() {
     mutationFn: (projectId: string) => deleteProject(projectId),
     onSuccess: () => {
       setConfirmDeleteProject(false);
-      setSelectedProjectId(null);
+      navigate({ projectId: null, view: "home", questionId: null, runId: null });
       setCompletedRun(null);
       void queryClient.invalidateQueries({ queryKey: projectsQueryKey });
     },
@@ -535,7 +211,7 @@ export function App() {
     mutationFn: (id: GoogleAccountId) => deleteAccountData(id),
     onSuccess: async () => {
       setConfirmDeleteAccountId(null);
-      setSelectedProjectId(null);
+      navigate({ projectId: null, view: "home", questionId: null, runId: null });
       setCompletedRun(null);
       await queryClient.invalidateQueries({ queryKey: sessionQueryKey });
       await queryClient.invalidateQueries({ queryKey: ["auth.accounts"] });
@@ -545,7 +221,20 @@ export function App() {
   const importMutation = useMutation({
     mutationFn: ({ formId, operationId }: { formId: FormId; operationId: string }) =>
       importForm(formId, operationId),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
+    onSuccess: async (result) => {
+      const projects = await queryClient.fetchQuery({
+        queryKey: projectsQueryKey,
+        queryFn: () => listProjects(),
+      });
+      const project = projects.find(
+        (item) =>
+          item.googleFormId === result.formId &&
+          (activeAccountId === null || item.googleAccountId === activeAccountId),
+      );
+      if (project !== undefined)
+        navigate({ projectId: project.id, view: "home", questionId: null, runId: null });
+      setNewProjectDialogOpen(false);
+    },
   });
   const cancelMutation = useMutation({
     mutationFn: (operationId: string) => cancelFormImport(operationId),
@@ -559,7 +248,16 @@ export function App() {
       projectId: string;
       targets: ProjectTargets;
       operationId: string;
-    }) => startSynthesis(projectId, targets, 1, operationId, undefined, targetRevision.current),
+    }) =>
+      startSynthesis(
+        projectId,
+        targets,
+        1,
+        operationId,
+        undefined,
+        targetRevision.current,
+        timestampRange,
+      ),
     onSuccess: (result) => {
       if (result.status !== "success" || selectedProjectId === null) return;
       setCompletedRun({
@@ -567,31 +265,47 @@ export function App() {
         count: result.finalResponseCount,
         syntheticCount: result.syntheticResponseCount,
       });
-      window.history.pushState({}, "", `/projects/${selectedProjectId}/runs/${result.runId}`);
+      navigate({
+        projectId: selectedProjectId,
+        view: "results",
+        questionId: null,
+        runId: result.runId,
+      });
     },
   });
-  const targetUpdateMutation = useMutation({
-    mutationFn: ({
-      revision,
-      targets,
-    }: {
-      revision: number;
-      targets: ProjectTargets;
-      sequence: number;
-    }) => updateTargets(selectedProjectId ?? "", revision, targets),
-    onSuccess: (result, variables) => {
-      if (variables.sequence < appliedSaveSequence.current) return;
-      appliedSaveSequence.current = variables.sequence;
-      if (result.revision < targetRevision.current) return;
-      targetRevision.current = result.revision;
-      if (JSON.stringify(targetForm.getValues()) === JSON.stringify(result.targets))
-        targetForm.reset(result.targets as unknown as ProjectTargets);
-      void queryClient.invalidateQueries({ queryKey: ["targets.get", selectedProjectId] });
-    },
+
+  useEffect(() => {
+    const range = projectQuery.data?.responseTimestampRange;
+    setTimestampRange(range === null || range === undefined ? undefined : range);
+  }, [projectQuery.data?.id, projectQuery.data?.responseTimestampRange]);
+  const rangeCountQuery = useQuery({
+    queryKey: ["projects.timeline.count", selectedProjectId, timestampRange?.start, timestampRange?.end],
+    queryFn: () =>
+      getProjectTimeline(
+        selectedProjectId!,
+        timestampRange!.start,
+        timestampRange!.end,
+        240,
+        0,
+        1,
+      ),
+    enabled: selectedProjectId !== null && timestampRange !== undefined,
+    staleTime: 60_000,
+    retry: false,
+    placeholderData: (previous) => previous,
   });
-  const feasibilityMutation = useMutation({
-    mutationFn: (targets: ProjectTargets) =>
-      checkTargetFeasibility(selectedProjectId ?? "", targets),
+  const {
+    draftTargets,
+    targetRevision,
+    saveSequence,
+    targetUpdateMutation,
+    feasibilityMutation,
+    flushTargets,
+    handleDraftChange: handleTargetDraftChange,
+  } = useTargetDraft({
+    projectId: selectedProjectId,
+    serverRevision: targetsQuery.data?.revision,
+    serverTargets: targetsQuery.data?.targets as unknown as ProjectTargets | undefined,
   });
   const cancelSynthesisMutation = useMutation({
     mutationFn: (operationId: string) => cancelSynthesis(operationId),
@@ -665,9 +379,9 @@ export function App() {
   });
 
   const handleExport = (format: "csv" | "xlsx") => {
-    if (!completedRun) return;
+    if (activeRunId === null) return;
     setExportFeedback(undefined);
-    exportMutation.mutate({ runId: completedRun.runId, format });
+    exportMutation.mutate({ runId: activeRunId, format });
   };
 
   const aiStatusQuery = useQuery({
@@ -676,22 +390,36 @@ export function App() {
   });
 
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
-  const [apiKeyInput, setApiKeyInput] = useState("");
   const [showDisclosureDialog, setShowDisclosureDialog] = useState(false);
   const [aiFeedback, setAiFeedback] = useState<string | undefined>(undefined);
   const [aiOperationId, setAiOperationId] = useState<string | undefined>(undefined);
+
+  const startAiGeneration = () => {
+    if (activeRunId === null) return;
+    const opId = crypto.randomUUID();
+    setAiOperationId(opId);
+    setAiFeedback(undefined);
+    aiGenerateMutation.mutate({ runId: activeRunId, operationId: opId });
+  };
 
   const aiConfigureMutation = useMutation({
     mutationFn: (apiKey: string) => configureAi(apiKey),
     onSuccess: () => {
       setShowApiKeyDialog(false);
-      setApiKeyInput("");
       void queryClient.invalidateQueries({ queryKey: ["ai.status"] });
       if (!aiStatusQuery.data?.disclosed) {
         setShowDisclosureDialog(true);
-      } else if (completedRun) {
+      } else if (activeRunId !== null) {
         startAiGeneration();
       }
+    },
+  });
+
+  const aiClearCredentialsMutation = useMutation({
+    mutationFn: () => clearAiCredentials(),
+    onSuccess: () => {
+      setConfirmAiCredentialClear(false);
+      void queryClient.invalidateQueries({ queryKey: ["ai.status"] });
     },
   });
 
@@ -700,7 +428,7 @@ export function App() {
     onSuccess: () => {
       setShowDisclosureDialog(false);
       void queryClient.invalidateQueries({ queryKey: ["ai.status"] });
-      if (completedRun) {
+      if (activeRunId !== null) {
         startAiGeneration();
       }
     },
@@ -716,8 +444,8 @@ export function App() {
       } else {
         setAiFeedback(`AI 텍스트 채움 완료 (${result.generatedFieldCount}개 항목).`);
       }
-      if (completedRun) {
-        void queryClient.invalidateQueries({ queryKey: ["runs.get", completedRun.runId] });
+      if (activeRunId !== null) {
+        void queryClient.invalidateQueries({ queryKey: ["runs.get", activeRunId] });
       }
     },
     onError: () => {
@@ -728,14 +456,6 @@ export function App() {
   const aiCancelMutation = useMutation({
     mutationFn: (operationId: string) => cancelAiGeneration(operationId),
   });
-
-  const startAiGeneration = () => {
-    if (!completedRun) return;
-    const opId = crypto.randomUUID();
-    setAiOperationId(opId);
-    setAiFeedback(undefined);
-    aiGenerateMutation.mutate({ runId: completedRun.runId, operationId: opId });
-  };
 
   const handleStartAi = () => {
     if (!aiStatusQuery.data?.configured) {
@@ -791,11 +511,9 @@ export function App() {
     importBusy ||
     refreshBusy ||
     deleteProjectMutation.isPending ||
-    updateInstallMutation.isPending;
-  const forms = (formsQuery.data?.pages ?? []).reduce<FormListItem[]>(
-    (current, page) => mergeForms(current, page.items),
-    [],
-  );
+    updateInstallMutation.isPending ||
+    transitionPending;
+  const forms = mergeForms(formsQuery.data?.pages ?? []);
   const formsLoading = formsQuery.isPending || formsQuery.isFetchingNextPage;
   const sessionError = sessionQuery.error;
   const actionError =
@@ -822,71 +540,46 @@ export function App() {
   }, [activeAccountId]);
 
   useEffect(() => {
-    if (selectedProjectId === null || targetsQuery.data === undefined) return;
-    targetRevision.current = targetsQuery.data.revision;
-    targetForm.reset(targetsQuery.data.targets as unknown as ProjectTargets);
-    targetReady.current = true;
-  }, [selectedProjectId, targetsQuery.data, targetForm]);
-
-  useEffect(() => {
-    if (!targetReady.current || selectedProjectId === null) return;
-    const timer = window.setTimeout(() => {
-      const targets = draftTargets as ProjectTargets;
-      if (!Number.isInteger(targets.targetResponseCount) || targets.targetResponseCount < 0) return;
-      saveSequence.current += 1;
-      targetUpdateMutation.mutate({
-        revision: targetRevision.current,
-        targets,
-        sequence: saveSequence.current,
-      });
-      feasibilityMutation.mutate(targets);
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [draftTargets, selectedProjectId]);
-
-  useEffect(() => {
-    const flush = (): void => {
-      const targets = targetForm.getValues() as ProjectTargets;
-      if (selectedProjectId === null || !Number.isInteger(targets.targetResponseCount)) return;
-      void targetUpdateMutation.mutateAsync({
-        revision: targetRevision.current,
-        targets,
-        sequence: ++saveSequence.current,
-      });
-    };
-    window.addEventListener("beforeunload", flush);
-    return () => window.removeEventListener("beforeunload", flush);
-  }, [selectedProjectId, targetForm, targetUpdateMutation]);
-
-  const flushTargets = async (): Promise<void> => {
-    const targets = targetForm.getValues() as ProjectTargets;
-    if (selectedProjectId === null || !Number.isInteger(targets.targetResponseCount)) return;
-    await targetUpdateMutation.mutateAsync({
-      revision: targetRevision.current,
-      targets,
-      sequence: ++saveSequence.current,
-    });
-  };
+    const form = projectQuery.data?.form as FormSnapshot | undefined;
+    if (form === undefined || workspaceView !== "survey") return;
+    if (form.questions.some((question) => String(question.id) === selectedSurveyQuestionId)) return;
+    const questionId = String(form.questions[0]?.id ?? "") || null;
+    navigate({ projectId: selectedProjectId, view: "survey", questionId, runId: null });
+  }, [navigate, projectQuery.data, selectedProjectId, selectedSurveyQuestionId, workspaceView]);
 
   const handleLogin = (): void => {
     loginMutation.mutate();
   };
 
+  const withFlushedTargets = (action: () => void): void => {
+    if (transitionLock.current) return;
+    transitionLock.current = true;
+    setTransitionPending(true);
+    setTransitionError(undefined);
+    void flushTargets()
+      .then(action)
+      .catch((error: unknown) => setTransitionError(errorMessage(error)))
+      .finally(() => {
+        transitionLock.current = false;
+        setTransitionPending(false);
+      });
+  };
+
   const handleAddAccount = (): void => {
-    void flushTargets().then(() => addAccountMutation.mutate());
+    withFlushedTargets(() => addAccountMutation.mutate());
   };
 
   const handleSwitchAccount = (id: GoogleAccountId): void => {
-    void flushTargets().then(() => switchAccountMutation.mutate(id));
+    withFlushedTargets(() => switchAccountMutation.mutate(id));
   };
 
   const handleLogout = (): void => {
-    void flushTargets().then(() => logoutMutation.mutate());
+    withFlushedTargets(() => logoutMutation.mutate());
   };
 
   const handleRevoke = (): void => {
-    if (activeAccountId === null || !window.confirm("Google 접근 권한을 해제하시겠습니까?")) return;
-    void flushTargets().then(() => revokeMutation.mutate(activeAccountId));
+    if (activeAccountId === null) return;
+    withFlushedTargets(() => revokeMutation.mutate(activeAccountId));
   };
 
   const handleImport = (formId: FormId): void => {
@@ -897,20 +590,25 @@ export function App() {
     if (importOperationId === undefined) return;
     cancelMutation.mutate(importOperationId);
   };
+
   const handleProjectSelect = (projectId: string): void => {
+    if (projectId === selectedProjectId) return;
     setConfirmDeleteProject(false);
-    void flushTargets().then(() => {
+    withFlushedTargets(() => {
       setCompletedRun(null);
-      setSelectedProjectId(projectId);
+      navigate({ projectId, view: "home", questionId: null, runId: null });
     });
   };
+
   const handleGenerate = (): void => {
     if (selectedProjectId === null) return;
+    const projectId = selectedProjectId;
     const targets = draftTargets as ProjectTargets;
     if (!Number.isInteger(targets.targetResponseCount) || targets.targetResponseCount < 0) return;
     saveSequence.current += 1;
     targetUpdateMutation.mutate(
       {
+        projectId,
         revision: targetRevision.current,
         targets,
         sequence: saveSequence.current,
@@ -918,16 +616,18 @@ export function App() {
       {
         onSuccess: (result) =>
           synthesisMutation.mutate({
-            projectId: selectedProjectId,
+            projectId,
             targets: result.targets as unknown as ProjectTargets,
             operationId: crypto.randomUUID(),
           }),
       },
     );
   };
+
   const handleCancelSynthesis = (): void => {
     if (synthesisOperationId !== undefined) cancelSynthesisMutation.mutate(synthesisOperationId);
   };
+
   const handleRefreshSource = (): void => {
     if (selectedProjectId === null) return;
     const currentDraft = draftTargets as ProjectTargets;
@@ -941,13 +641,16 @@ export function App() {
     setRefreshStatusMessage(undefined);
     refreshMutation.mutate(selectedProjectId);
   };
+
   const handleCancelRefresh = (): void => {
     if (refreshOperationId !== undefined) cancelRefreshMutation.mutate(refreshOperationId);
   };
+
   const handleInstallUpdate = (): void => {
     if (availableUpdate === null || updateBlocked) return;
     updateInstallMutation.mutate();
   };
+
   const handleResolveIssue = (
     issueId: string,
     resolution: "acknowledge" | "remove_target",
@@ -957,25 +660,21 @@ export function App() {
   };
 
   if (sessionQuery.isPending) {
-    return (
-      <main>
-        <h1>Survey Synth</h1>
-        <p>Loading…</p>
-      </main>
-    );
+    return <AuthLoadingScreen />;
   }
 
   if (session === null || session === undefined) {
     return (
-      <main>
-        <h1>Survey Synth</h1>
-        <button type="button" onClick={handleLogin} disabled={busy}>
-          {loginMutation.isPending ? "Google 로그인 중…" : "Google로 계속하기"}
-        </button>
-        {(sessionError ?? actionError) !== null && (sessionError ?? actionError) !== undefined && (
-          <p role="alert">{errorMessage(sessionError ?? actionError)}</p>
-        )}
-      </main>
+      <AuthLoginScreen
+        onLogin={handleLogin}
+        loginPending={loginMutation.isPending}
+        busy={busy}
+        error={
+          (sessionError ?? actionError) !== null && (sessionError ?? actionError) !== undefined
+            ? errorMessage(sessionError ?? actionError)
+            : undefined
+        }
+      />
     );
   }
 
@@ -990,519 +689,404 @@ export function App() {
         : undefined;
 
   return (
-    <main>
-      <h1>Survey Synth</h1>
-      <p>{session.account.email}</p>
-      {availableUpdate !== null && (
-        <p role="status">
-          새 버전 {availableUpdate.version}이 있습니다.{" "}
-          <button
-            type="button"
-            onClick={handleInstallUpdate}
-            disabled={updateBlocked || updateInstallMutation.isPending}
-          >
-            업데이트
-          </button>
-          {updateBlocked && " 진행 중인 작업이 끝나면 설치할 수 있습니다."}
-          {updateInstallMutation.error && <span role="alert"> 업데이트를 설치할 수 없습니다.</span>}
-        </p>
-      )}
-      <details>
-        <summary>계정 메뉴</summary>
-        <div className="account-menu">
-          <p>저장된 Google 계정</p>
-          <ul>
-            {accounts.map((account) => (
-              <li key={account.id}>
-                <button
-                  type="button"
-                  onClick={() => handleSwitchAccount(account.id)}
-                  disabled={busy || account.id === session.account.id}
+    <TooltipProvider>
+      <SidebarProvider defaultOpen>
+        <Sidebar collapsible="icon">
+          <SidebarHeader>
+            <ProjectSwitcher
+              projects={projectsQuery.data ?? []}
+              selectedProjectId={selectedProjectId}
+              onProjectSelect={handleProjectSelect}
+              onNewProject={() => setNewProjectDialogOpen(true)}
+              onRefresh={handleRefreshSource}
+              onDelete={() => setConfirmDeleteProject(true)}
+              refreshDisabled={
+                busy ||
+                refreshMutation.isPending ||
+                (projectQuery.data?.migrationIssues ?? targetsQuery.data?.issues ?? []).some(
+                  (issue) => issue.severity === "blocking",
+                )
+              }
+              deleteDisabled={busy || refreshMutation.isPending}
+            />
+            <WorkspaceNav
+              view={workspaceView}
+              onChange={(view) => {
+                if (selectedProjectId === null) return;
+                const form = projectQuery.data?.form as FormSnapshot | undefined;
+                const questionId =
+                  view === "survey"
+                    ? (selectedSurveyQuestionId ?? (String(form?.questions[0]?.id ?? "") || null))
+                    : null;
+                if (view === "survey" && questionId === null) return;
+                if (view === "results" && route.runId === null) return;
+                navigate({
+                  projectId: selectedProjectId,
+                  view,
+                  questionId,
+                  runId: view === "results" ? route.runId : null,
+                });
+              }}
+            />
+          </SidebarHeader>
+          <SidebarSeparator />
+          <SidebarContent>
+            <SurveyTree
+              form={(projectQuery.data?.form as FormSnapshot | undefined) ?? null}
+              selectedQuestionId={selectedSurveyQuestionId}
+              onQuestionSelect={(questionId) => {
+                navigate({
+                  projectId: selectedProjectId,
+                  view: "survey",
+                  questionId,
+                  runId: null,
+                });
+              }}
+            />
+          </SidebarContent>
+          <SidebarFooter>
+            <AccountNavUser
+              session={session}
+              accounts={accounts}
+              busy={busy || deleteAccountDataMutation.isPending || aiGenerateMutation.isPending}
+              onSwitchAccount={handleSwitchAccount}
+              onAddAccount={handleAddAccount}
+              onLogout={handleLogout}
+              onRevoke={() => setConfirmRevoke(true)}
+              onClearAiCredentials={() => setConfirmAiCredentialClear(true)}
+              showAiClear={aiStatusQuery.data?.configured ?? false}
+              onDeleteData={setConfirmDeleteAccountId}
+            />
+          </SidebarFooter>
+          <SidebarRail />
+        </Sidebar>
+        <SidebarInset>
+          <header className="workspace-toolbar">
+            <SidebarTrigger />
+            <Separator orientation="vertical" className="h-5" />
+            <div className="workspace-toolbar-copy">
+              <h1 className="workspace-title">{projectQuery.data?.name ?? "프로젝트"}</h1>
+            </div>
+          </header>
+          <div className="workspace-content">
+            {availableUpdate !== null && (
+              <Alert>
+                <AlertTitle>새 버전 {availableUpdate.version}</AlertTitle>
+                <AlertDescription className="flex flex-wrap items-center gap-2">
+                  {updateBlocked && "진행 중인 작업이 끝나면 설치할 수 있습니다."}
+                  {updateInstallMutation.error && "업데이트를 설치할 수 없습니다."}
+                </AlertDescription>
+                <Button
+                  size="sm"
+                  className="mt-2 w-fit"
+                  onClick={handleInstallUpdate}
+                  disabled={updateBlocked || updateInstallMutation.isPending}
                 >
-                  {account.email}
-                </button>
-                {confirmDeleteAccountId !== account.id ? (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDeleteAccountId(account.id)}
-                    disabled={busy || deleteAccountDataMutation.isPending}
-                  >
-                    기기 데이터 삭제
-                  </button>
-                ) : (
-                  <div
-                    role="alertdialog"
-                    aria-labelledby={`delete-account-desc-${account.id}`}
-                    className="confirm-delete"
-                  >
-                    <span id={`delete-account-desc-${account.id}`}>
-                      이 기기에 저장된 계정 정보와 연결된 모든 프로젝트가 영구 삭제됩니다.
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => deleteAccountDataMutation.mutate(account.id)}
-                      disabled={deleteAccountDataMutation.isPending}
-                    >
-                      {deleteAccountDataMutation.isPending ? "삭제 중…" : "영구 삭제"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteAccountId(null)}
-                      disabled={deleteAccountDataMutation.isPending}
-                    >
-                      취소
-                    </button>
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-          <button type="button" onClick={handleAddAccount} disabled={busy}>
-            {addAccountMutation.isPending ? "Google 계정 추가 중…" : "Google 계정 추가"}
-          </button>
-          <button type="button" onClick={handleLogout} disabled={busy}>
-            로그아웃
-          </button>
-          <button type="button" onClick={handleRevoke} disabled={busy}>
-            Google 접근 권한 해제
-          </button>
-        </div>
-      </details>
-      {(accountsQuery.error ?? actionError) !== null &&
-        (accountsQuery.error ?? actionError) !== undefined && (
-          <p role="alert">{errorMessage(accountsQuery.error ?? actionError)}</p>
-        )}
+                  업데이트
+                </Button>
+              </Alert>
+            )}
+            {(accountsQuery.error ?? actionError) !== null &&
+              (accountsQuery.error ?? actionError) !== undefined && (
+                <FieldError>{errorMessage(accountsQuery.error ?? actionError)}</FieldError>
+              )}
+            {transitionError !== undefined && <FieldError>{transitionError}</FieldError>}
+            {projectsQuery.error !== null && projectsQuery.error !== undefined && (
+              <FieldError>{errorMessage(projectsQuery.error)}</FieldError>
+            )}
 
-      <section className="new-project" aria-labelledby="new-project-title">
-        <h2 id="new-project-title">새 프로젝트</h2>
-        <label className="visually-hidden" htmlFor="form-search">
-          Google Form 검색
-        </label>
-        <input
-          id="form-search"
-          type="search"
-          placeholder="Google Form 검색..."
-          value={formQuery}
-          onChange={(event) => setFormQuery(event.target.value)}
-          disabled={importBusy}
-        />
-        {formsError !== null && formsError !== undefined && (
-          <p role="alert">{errorMessage(formsError)}</p>
-        )}
-        {importError !== null && importError !== undefined && (
-          <p role="alert">{errorMessage(importError)}</p>
-        )}
-        {cancelMutation.error !== null && cancelMutation.error !== undefined && (
-          <p role="alert">{errorMessage(cancelMutation.error)}</p>
-        )}
-        {importBusy && (
-          <button type="button" onClick={handleCancelImport} disabled={cancelMutation.isPending}>
-            {cancelMutation.isPending ? "가져오기 취소 중…" : "가져오기 취소"}
-          </button>
-        )}
-        {formsLoading && <p>불러오는 중…</p>}
-        {!formsLoading && forms.length === 0 && formsError === null && formsError === undefined && (
-          <p>Google Form이 없습니다.</p>
-        )}
-        <ul className="form-list">
-          {forms.map((form) => {
-            const modifiedAt = formatModifiedAt(form.modifiedAt);
-            return (
-              <li key={form.formId}>
-                <button
-                  className="form-item"
-                  type="button"
-                  onClick={() => handleImport(form.formId)}
-                  disabled={busy}
-                >
-                  <span>{form.title}</span>
-                  {modifiedAt !== undefined && <time dateTime={form.modifiedAt}>{modifiedAt}</time>}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        {formsQuery.hasNextPage && (
-          <button
-            type="button"
-            onClick={() => void formsQuery.fetchNextPage()}
-            disabled={busy || formsQuery.isFetchingNextPage}
-          >
-            더 보기
-          </button>
-        )}
-        {importStatus !== undefined && <p role="status">{importStatus}</p>}
-      </section>
-      <section aria-labelledby="projects-title">
-        <h2 id="projects-title">프로젝트</h2>
-        {projectsQuery.error !== null && projectsQuery.error !== undefined && (
-          <p role="alert">{errorMessage(projectsQuery.error)}</p>
-        )}
-        {!projectsQuery.isPending && projectsQuery.data?.length === 0 && (
-          <p>저장된 프로젝트가 없습니다.</p>
-        )}
-        <ul className="form-list">
-          {projectsQuery.data?.map((project) => (
-            <li key={project.id} className="form-item">
-              <button
-                type="button"
-                className="project-item"
-                onClick={() => handleProjectSelect(project.id)}
-              >
-                <span>{project.name}</span>
-                <span>{project.responseCount}개 응답</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-        {projectQuery.data !== undefined &&
-          projectQuery.data !== null &&
-          (() => {
-            const project = projectQuery.data;
-            const migrationIssues = project.migrationIssues ?? targetsQuery.data?.issues ?? [];
-            const hasBlockingIssues = migrationIssues.some(
-              (issue) => issue.severity === "blocking",
-            );
+            <NewProjectDialog
+              open={newProjectDialogOpen}
+              onOpenChange={setNewProjectDialogOpen}
+              formQuery={formQuery}
+              onFormQueryChange={setFormQuery}
+              forms={forms}
+              formsLoading={formsLoading}
+              formsError={formsError ? errorMessage(formsError) : undefined}
+              importBusy={importBusy}
+              importError={importError ? errorMessage(importError) : undefined}
+              cancelError={cancelMutation.error ? errorMessage(cancelMutation.error) : undefined}
+              cancelPending={cancelMutation.isPending}
+              hasNextPage={Boolean(formsQuery.hasNextPage)}
+              isFetchingNextPage={formsQuery.isFetchingNextPage}
+              onFetchNextPage={() => void formsQuery.fetchNextPage()}
+              importStatus={importStatus}
+              onImport={handleImport}
+              onCancelImport={handleCancelImport}
+              busy={busy}
+            />
 
-            return (
-              <div aria-live="polite">
-                <div className="project-header">
-                  <p className="project-title">{project.name}</p>
-                  <button
-                    type="button"
-                    onClick={handleRefreshSource}
-                    disabled={busy || refreshMutation.isPending || hasBlockingIssues}
-                  >
-                    새 응답 가져오기
-                  </button>
-                  {!confirmDeleteProject ? (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteProject(true)}
-                      disabled={busy || refreshMutation.isPending}
-                    >
-                      프로젝트 삭제
-                    </button>
-                  ) : (
-                    <div
-                      role="alertdialog"
-                      aria-labelledby="delete-project-desc"
-                      className="confirm-delete"
-                    >
-                      <span id="delete-project-desc">
-                        이 프로젝트와 관련된 모든 데이터가 영구 삭제됩니다.
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => deleteProjectMutation.mutate(project.id)}
-                        disabled={deleteProjectMutation.isPending}
-                      >
-                        {deleteProjectMutation.isPending ? "삭제 중…" : "영구 삭제"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteProject(false)}
-                        disabled={deleteProjectMutation.isPending}
-                      >
-                        취소
-                      </button>
+            <section
+              className="workspace-projects"
+              data-selected={selectedProjectId !== null}
+              aria-label="선택한 프로젝트"
+            >
+              {selectedProjectId !== null &&
+                projectQuery.isPending &&
+                projectQuery.data === undefined && (
+                  <div className="workspace-loading" role="status" aria-live="polite">
+                    <span className="sr-only">프로젝트 불러오는 중…</span>
+                    <Skeleton className="h-8 w-2/5" />
+                    <Skeleton className="h-32 w-full" />
+                    <div className="flex w-full flex-col gap-3">
+                      <Skeleton className="h-5 w-4/5" />
+                      <Skeleton className="h-5 w-3/5" />
                     </div>
-                  )}
-                </div>
-                {refreshMutation.isPending && (
-                  <div role="status">
-                    <p>설문지 구조 및 응답을 가져오는 중…</p>
-                    <button
-                      type="button"
-                      onClick={handleCancelRefresh}
-                      disabled={cancelRefreshMutation.isPending}
-                    >
-                      가져오기 취소
-                    </button>
                   </div>
                 )}
-                {refreshStatusMessage && <p role="status">{refreshStatusMessage}</p>}
-                {migrationIssues.length > 0 && (
-                  <div role="alert" className="migration-issues-banner">
-                    <h3>목표 확인이 필요합니다</h3>
-                    <ul>
-                      {migrationIssues.map((issue) => (
-                        <li key={issue.id}>
-                          <span>{issue.message}</span>
-                          {issue.severity === "blocking" ? (
-                            <>
-                              <strong> (해결 필요)</strong>
-                              <button
-                                type="button"
-                                onClick={() => handleResolveIssue(issue.id, "remove_target")}
-                                disabled={resolveIssueMutation.isPending}
-                              >
-                                목표 제거
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <span> (참고)</span>
-                              <button
-                                type="button"
-                                onClick={() => handleResolveIssue(issue.id, "acknowledge")}
-                                disabled={resolveIssueMutation.isPending}
-                              >
-                                확인
-                              </button>
-                            </>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {targetsQuery.isPending && <p>불러오는 중…</p>}
-                {targetsQuery.error !== null && targetsQuery.error !== undefined && (
-                  <p role="alert">{errorMessage(targetsQuery.error)}</p>
-                )}
-                {targetsQuery.data !== undefined && (
-                  <TargetEditor
-                    form={projectQuery.data.form as unknown as FormSnapshot}
-                    sourceCount={projectQuery.data.responseCount}
-                    targets={draftTargets as unknown as ProjectTargets}
-                    profiles={projectQuery.data.profiles}
-                    onChange={(targets) => targetForm.reset(targets, { keepDirty: true })}
-                    onGenerate={handleGenerate}
-                    disabled={
-                      synthesisMutation.isPending ||
-                      targetUpdateMutation.isPending ||
-                      feasibilityMutation.data?.status === "infeasible" ||
-                      hasBlockingIssues
-                    }
-                    error={
-                      targetUpdateMutation.error !== null &&
-                      targetUpdateMutation.error !== undefined
-                        ? errorMessage(targetUpdateMutation.error)
-                        : hasBlockingIssues
-                          ? "해결되지 않은 목표 변경사항이 있어 생성을 진행할 수 없습니다."
-                          : feasibilityMutation.data?.issues.length
-                            ? feasibilityMutation.data.issues
-                                .map((issue) => issue.message)
-                                .join(" ")
-                            : undefined
-                    }
-                  />
-                )}
-                {completedRun !== null && (
-                  <section className="result-summary" aria-labelledby="result-title">
-                    <h3 id="result-title">{projectQuery.data.name}</h3>
-                    <p>
-                      {completedRun.syntheticCount}명 증강 (최종 {completedRun.count}명)
-                    </p>
-                    {runQuery.data !== undefined && (
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>목표</th>
-                            <th>결과</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(
-                            (runQuery.data.validation.metrics as
-                              | Array<{
-                                  requested: { kind: string; value?: number };
-                                  actual: number | null;
-                                }>
-                              | undefined) ?? []
-                          ).map((metric, index) => (
-                            <tr key={index}>
-                              <td>{metric.requested.value ?? "-"}</td>
-                              <td>{metric.actual ?? "-"}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                    <div className="ai-actions">
-                      {aiStatusQuery.data?.enabled &&
-                        ((runQuery.data as unknown as { aiMetadata?: { generatedCount: number } })
-                          ?.aiMetadata ? (
-                          <span>
-                            AI 텍스트 채움 완료 (
-                            {
-                              (
-                                runQuery.data as unknown as {
-                                  aiMetadata: { generatedCount: number };
-                                }
-                              ).aiMetadata.generatedCount
+              {projectQuery.data !== undefined &&
+                projectQuery.data !== null &&
+                (() => {
+                  const project = projectQuery.data;
+                  const migrationIssues =
+                    project.migrationIssues ?? targetsQuery.data?.issues ?? [];
+                  const hasBlockingIssues = migrationIssues.some(
+                    (issue) => issue.severity === "blocking",
+                  );
+
+                  return (
+                    <div aria-live="polite">
+                      {refreshMutation.isPending && (
+                        <div
+                          className="flex items-center gap-2 text-sm text-muted-foreground"
+                          role="status"
+                        >
+                          <Spinner aria-hidden="true" />
+                          <span>설문지 구조 및 응답을 가져오는 중…</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleCancelRefresh}
+                            disabled={cancelRefreshMutation.isPending}
+                          >
+                            가져오기 취소
+                          </Button>
+                        </div>
+                      )}
+                      {refreshStatusMessage && (
+                        <p role="status" className="text-sm text-muted-foreground">
+                          {refreshStatusMessage}
+                        </p>
+                      )}
+                      {migrationIssues.length > 0 && (
+                        <Alert variant="destructive">
+                          <AlertTitle>목표 확인이 필요합니다</AlertTitle>
+                          <AlertDescription>
+                            <ul>
+                              {migrationIssues.map((issue) => (
+                                <li key={issue.id} className="flex flex-wrap items-center gap-2">
+                                  <span>{issue.message}</span>
+                                  {issue.severity === "blocking" ? (
+                                    <>
+                                      <strong>해결 필요</strong>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() =>
+                                          handleResolveIssue(issue.id, "remove_target")
+                                        }
+                                        disabled={resolveIssueMutation.isPending}
+                                      >
+                                        목표 제거
+                                      </Button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span>참고</span>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleResolveIssue(issue.id, "acknowledge")}
+                                        disabled={resolveIssueMutation.isPending}
+                                      >
+                                        확인
+                                      </Button>
+                                    </>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                      {targetsQuery.isPending && (
+                        <div className="workspace-target-loading" role="status" aria-live="polite">
+                          <span className="sr-only">목표 불러오는 중…</span>
+                          <Skeleton className="h-7 w-1/3" />
+                          <Skeleton className="h-24 w-full" />
+                        </div>
+                      )}
+                      {targetsQuery.error !== null && targetsQuery.error !== undefined && (
+                        <FieldError>{errorMessage(targetsQuery.error)}</FieldError>
+                      )}
+                      {workspaceView !== "results" && targetsQuery.data !== undefined && (
+                        <WorkspaceScreen
+                          view={workspaceView}
+                          project={project}
+                          sourceCount={rangeCountQuery.data?.totalOriginalCount ?? project.responseCount}
+                          selectedQuestionId={selectedSurveyQuestionId}
+                          targets={draftTargets as unknown as ProjectTargets}
+                          migrationIssues={migrationIssues}
+                          targetsInfeasible={feasibilityMutation.data?.status === "infeasible"}
+                          targetUpdatePending={targetUpdateMutation.isPending}
+                          synthesisPending={synthesisMutation.isPending}
+                          targetError={
+                            targetUpdateMutation.error !== null &&
+                            targetUpdateMutation.error !== undefined
+                              ? errorMessage(targetUpdateMutation.error)
+                              : hasBlockingIssues
+                                ? "해결되지 않은 목표 변경사항이 있어 생성을 진행할 수 없습니다."
+                                : feasibilityMutation.data?.issues.length
+                                  ? feasibilityMutation.data.issues
+                                      .map((issue) => issue.message)
+                                      .join(" ")
+                                  : undefined
+                          }
+                          onTargetsChange={handleTargetDraftChange}
+                          onGenerate={handleGenerate}
+                          onTimestampRangeChange={setTimestampRange}
+                        />
+                      )}
+                      {workspaceView === "results" &&
+                        activeRunId !== null &&
+                        (completedRunForRoute !== null || runQuery.data !== undefined) && (
+                          <WorkspaceResultsScreen
+                            completedRun={
+                              completedRunForRoute ?? {
+                                runId: activeRunId,
+                                count: runQuery.data?.finalResponseCount ?? 0,
+                                syntheticCount: Math.max(
+                                  0,
+                                  (runQuery.data?.finalResponseCount ?? 0) -
+                                    (rangeCountQuery.data?.totalOriginalCount ?? project.responseCount),
+                                ),
+                              }
                             }
-                            개 항목)
-                          </span>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={handleStartAi}
-                              disabled={aiGenerateMutation.isPending || exportMutation.isPending}
-                            >
-                              텍스트도 자연스럽게 채우기
-                            </button>
-                            {aiGenerateMutation.isPending && (
-                              <span>
-                                텍스트 채우는 중…{" "}
-                                <button
-                                  type="button"
-                                  onClick={handleCancelAi}
-                                  disabled={aiCancelMutation.isPending}
-                                >
-                                  취소
-                                </button>
-                              </span>
-                            )}
-                            {aiFeedback && <p role="status">{aiFeedback}</p>}
-                            {aiGenerateMutation.error && (
-                              <p role="alert">{errorMessage(aiGenerateMutation.error)}</p>
-                            )}
-                          </>
-                        ))}
-                    </div>
-                    <div className="export-actions">
-                      <button
-                        type="button"
-                        onClick={() => handleExport("xlsx")}
-                        disabled={exportMutation.isPending}
-                      >
-                        Excel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleExport("csv")}
-                        disabled={exportMutation.isPending}
-                      >
-                        CSV
-                      </button>
-                      {exportMutation.isPending && <span>저장 중…</span>}
-                      {exportFeedback && <p role="status">{exportFeedback}</p>}
-                      {exportMutation.error && (
-                        <p role="alert">{errorMessage(exportMutation.error)}</p>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleGenerate}
-                      disabled={synthesisMutation.isPending}
-                    >
-                      결과 다시 만들기
-                    </button>
-                  </section>
-                )}
-                {showApiKeyDialog && (
-                  <div className="ai-dialog-backdrop">
-                    <div
-                      className="ai-dialog"
-                      role="dialog"
-                      aria-modal="true"
-                      aria-labelledby="api-key-dialog-title"
-                    >
-                      <h3 id="api-key-dialog-title">OpenAI API 키 설정</h3>
-                      <p>
-                        자연스러운 텍스트 생성을 위해 OpenAI API 키가 필요합니다. 입력된 키는 안전한
-                        저장소에만 보관됩니다.
-                      </p>
-                      <input
-                        type="password"
-                        placeholder="sk-..."
-                        value={apiKeyInput}
-                        onChange={(e) => setApiKeyInput(e.target.value)}
-                        disabled={aiConfigureMutation.isPending}
-                        style={{ width: "100%", padding: "0.5rem", boxSizing: "border-box" }}
+                            form={project.form as unknown as FormSnapshot}
+                            runData={runQuery.data as unknown as RunDetailView | undefined}
+                            aiEnabled={Boolean(aiStatusQuery.data?.enabled)}
+                            aiPending={aiGenerateMutation.isPending}
+                            aiFeedback={aiFeedback}
+                            aiError={
+                              aiGenerateMutation.error
+                                ? errorMessage(aiGenerateMutation.error)
+                                : undefined
+                            }
+                            onStartAi={handleStartAi}
+                            onCancelAi={handleCancelAi}
+                            onExport={handleExport}
+                            exportPending={exportMutation.isPending}
+                            exportFeedback={exportFeedback}
+                            exportError={
+                              exportMutation.error ? errorMessage(exportMutation.error) : undefined
+                            }
+                            onRegenerate={handleGenerate}
+                            regeneratePending={synthesisMutation.isPending}
+                          />
+                        )}
+                      <ApiKeyDialog
+                        open={showApiKeyDialog}
+                        onOpenChange={setShowApiKeyDialog}
+                        onSave={(key) => aiConfigureMutation.mutate(key)}
+                        pending={aiConfigureMutation.isPending}
+                        error={
+                          aiConfigureMutation.error
+                            ? errorMessage(aiConfigureMutation.error)
+                            : undefined
+                        }
                       />
-                      {aiConfigureMutation.error && (
-                        <p role="alert">{errorMessage(aiConfigureMutation.error)}</p>
+                      <AiDisclosureDialog
+                        open={showDisclosureDialog}
+                        onOpenChange={setShowDisclosureDialog}
+                        onAgree={() => aiDisclosureMutation.mutate()}
+                        pending={aiDisclosureMutation.isPending}
+                        error={
+                          aiDisclosureMutation.error
+                            ? errorMessage(aiDisclosureMutation.error)
+                            : undefined
+                        }
+                      />
+                      {synthesisMutation.isPending && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleCancelSynthesis}
+                          disabled={cancelSynthesisMutation.isPending}
+                        >
+                          생성 취소
+                        </Button>
                       )}
-                      <div className="ai-dialog-actions">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowApiKeyDialog(false);
-                            setApiKeyInput("");
-                          }}
-                          disabled={aiConfigureMutation.isPending}
-                        >
-                          취소
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => aiConfigureMutation.mutate(apiKeyInput)}
-                          disabled={aiConfigureMutation.isPending || apiKeyInput.trim() === ""}
-                        >
-                          저장
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {showDisclosureDialog && (
-                  <div className="ai-dialog-backdrop">
-                    <div
-                      className="ai-dialog"
-                      role="dialog"
-                      aria-modal="true"
-                      aria-labelledby="disclosure-dialog-title"
-                    >
-                      <h3 id="disclosure-dialog-title">AI 텍스트 생성 안내</h3>
-                      <p>
-                        설문 응답 생성에 필요한 문항 내용과 비식별화된 일부 예시가 AI
-                        서비스(OpenAI)로 전송됩니다. 개인식별정보(이름, 연락처 등)는 전송에서
-                        제외됩니다.
-                      </p>
-                      {aiDisclosureMutation.error && (
-                        <p role="alert">{errorMessage(aiDisclosureMutation.error)}</p>
+                      {synthesisMutation.data?.status === "success" && (
+                        <p role="status" className="text-sm text-muted-foreground">
+                          {synthesisMutation.data.syntheticResponseCount}명 증강 (최종{" "}
+                          {synthesisMutation.data.finalResponseCount}명)
+                        </p>
                       )}
-                      <div className="ai-dialog-actions">
-                        <button
-                          type="button"
-                          onClick={() => setShowDisclosureDialog(false)}
-                          disabled={aiDisclosureMutation.isPending}
-                        >
-                          취소
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => aiDisclosureMutation.mutate()}
-                          disabled={aiDisclosureMutation.isPending}
-                        >
-                          동의 및 계속
-                        </button>
-                      </div>
+                      {synthesisMutation.data !== undefined &&
+                        synthesisMutation.data.status !== "success" && (
+                          <FieldError>
+                            {synthesisMutation.data.issues.map((issue) => issue.message).join(" ")}
+                          </FieldError>
+                        )}
+                      {synthesisMutation.error !== null && (
+                        <FieldError>{errorMessage(synthesisMutation.error)}</FieldError>
+                      )}
                     </div>
-                  </div>
-                )}
-                {synthesisMutation.isPending && (
-                  <button
-                    type="button"
-                    onClick={handleCancelSynthesis}
-                    disabled={cancelSynthesisMutation.isPending}
-                  >
-                    생성 취소
-                  </button>
-                )}
-                {synthesisMutation.data?.status === "success" && (
-                  <p role="status">
-                    {synthesisMutation.data.syntheticResponseCount}명 증강 (최종{" "}
-                    {synthesisMutation.data.finalResponseCount}명)
-                  </p>
-                )}
-                {synthesisMutation.data !== undefined &&
-                  synthesisMutation.data.status !== "success" && (
-                    <p role="alert">
-                      {synthesisMutation.data.issues.map((issue) => issue.message).join(" ")}
-                    </p>
-                  )}
-                {synthesisMutation.error !== null && (
-                  <p role="alert">{errorMessage(synthesisMutation.error)}</p>
-                )}
-              </div>
-            );
-          })()}
-      </section>
-    </main>
+                  );
+                })()}
+            </section>
+            {selectedProjectId === null && !projectsQuery.isPending && (
+              <Empty className="min-h-72 border">
+                <EmptyHeader>
+                  <EmptyTitle>프로젝트 없음</EmptyTitle>
+                </EmptyHeader>
+                <EmptyContent>
+                  <Button type="button" onClick={() => setNewProjectDialogOpen(true)}>
+                    새 프로젝트
+                  </Button>
+                </EmptyContent>
+              </Empty>
+            )}
+          </div>
+          <ConfirmDeleteProjectDialog
+            open={confirmDeleteProject}
+            onOpenChange={setConfirmDeleteProject}
+            onConfirm={() => {
+              if (projectQuery.data !== undefined && projectQuery.data !== null) {
+                deleteProjectMutation.mutate(projectQuery.data.id);
+              }
+            }}
+            pending={deleteProjectMutation.isPending || projectQuery.data === undefined}
+          />
+          <ConfirmDeleteAccountDataDialog
+            open={confirmDeleteAccountId !== null}
+            onOpenChange={(open) => {
+              if (!open) setConfirmDeleteAccountId(null);
+            }}
+            onConfirm={() => {
+              if (confirmDeleteAccountId !== null) {
+                deleteAccountDataMutation.mutate(confirmDeleteAccountId);
+              }
+            }}
+            pending={deleteAccountDataMutation.isPending}
+          />
+          <ConfirmRevokeDialog
+            open={confirmRevoke}
+            onOpenChange={setConfirmRevoke}
+            onConfirm={() => {
+              setConfirmRevoke(false);
+              handleRevoke();
+            }}
+            pending={revokeMutation.isPending}
+          />
+          <ConfirmAiClearDialog
+            open={confirmAiCredentialClear}
+            onOpenChange={setConfirmAiCredentialClear}
+            onConfirm={() => aiClearCredentialsMutation.mutate()}
+            pending={aiClearCredentialsMutation.isPending}
+          />
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }

@@ -306,23 +306,27 @@ export const compileAdvancedFeatures = (
       continue;
     }
     if (relationship.family === "checkbox_option_option") {
-      const used = pairCounts.get(String(qa.id)) ?? 0;
-      if (used >= ADVANCED_LIMITS.checkboxPairsPerQuestion) continue;
-      const encoded = relationship.preservationFeatures.find((item) =>
-        item.startsWith("cooccurrence:"),
-      );
-      const [, optionA, optionB] = encoded?.split(":") ?? [];
-      if (optionA === undefined || optionB === undefined) continue;
-      add({
-        id: `checkbox:${qa.id}:pair:${optionA}:${optionB}`,
-        kind: "checkbox_cooccurrence",
-        questionA: qa.id,
-        optionA: optionA as OptionKey,
-        optionB: optionB as OptionKey,
-        reliability: relationship.reliability,
-        priority: relationshipPriority,
-      });
-      pairCounts.set(String(qa.id), used + 1);
+      const encodedPairs = relationship.preservationFeatures
+        .filter((item) => item.startsWith("cooccurrence:"))
+        .map((item) => item.split(":"))
+        .filter(
+          (parts): parts is [string, string, string] =>
+            parts.length === 3 && parts[1] !== undefined && parts[2] !== undefined,
+        );
+      for (const [, optionA, optionB] of encodedPairs) {
+        const used = pairCounts.get(String(qa.id)) ?? 0;
+        if (used >= ADVANCED_LIMITS.checkboxPairsPerQuestion) break;
+        add({
+          id: `checkbox:${qa.id}:pair:${optionA}:${optionB}`,
+          kind: "checkbox_cooccurrence",
+          questionA: qa.id,
+          optionA: optionA as OptionKey,
+          optionB: optionB as OptionKey,
+          reliability: relationship.reliability,
+          priority: relationshipPriority,
+        });
+        pairCounts.set(String(qa.id), used + 1);
+      }
       continue;
     }
     if (relationship.family === "categorical_categorical") {
@@ -691,6 +695,12 @@ const candidateForOption = (
         labels: optionKeys.map(
           (key) => question.options.find((item) => item.key === key)?.label ?? "",
         ),
+        ...(answer.value.otherValue !== undefined &&
+        optionKeys.some((key) =>
+          question.options.some((item) => item.key === key && item.isOther === true),
+        )
+          ? { otherValue: answer.value.otherValue }
+          : {}),
       },
     }),
     cost: 1 + Math.abs(optionKeys.length - answer.value.optionKeys.length),
@@ -1004,6 +1014,14 @@ export const compileGlobalRepair = (
                   labels: optionKeys.map(
                     (key) => question.options.find((option) => option.key === key)?.label ?? "",
                   ),
+                  ...(answer.value.otherValue !== undefined &&
+                  optionKeys.some((key) =>
+                    question.options.some(
+                      (option) => option.key === key && option.isOther === true,
+                    ),
+                  )
+                    ? { otherValue: answer.value.otherValue }
+                    : {}),
                 },
               },
               `set_${count}`,

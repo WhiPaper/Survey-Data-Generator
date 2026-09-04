@@ -73,9 +73,19 @@ describe("shared RPC contracts", () => {
     expect(() => parseRpcResult("system.ping", { ok: true, message: "not-pong" })).toThrow();
     expect(
       parseRpcResult("session.get", {
-        account: { id: "account-1", email: "user@example.com" },
+        account: {
+          id: "account-1",
+          email: "user@example.com",
+          avatarUrl: "https://lh3.googleusercontent.com/avatar",
+        },
       }),
-    ).toEqual({ account: { id: "account-1", email: "user@example.com" } });
+    ).toEqual({
+      account: {
+        id: "account-1",
+        email: "user@example.com",
+        avatarUrl: "https://lh3.googleusercontent.com/avatar",
+      },
+    });
     expect(() =>
       parseRpcResult("session.get", {
         account: { id: "account-1", email: "user@example.com", accessToken: "secret" },

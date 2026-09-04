@@ -373,6 +373,54 @@ describe("Google Form normalization", () => {
 });
 
 describe("Google response normalization and conservative paths", () => {
+  it("preserves a custom Other value for radio and checkbox answers", () => {
+    const form = new GoogleFormNormalizer().normalize({
+      formId: "other-answers",
+      info: { title: "Other answers" },
+      items: [
+        {
+          itemId: "radio-item",
+          title: "Radio",
+          questionItem: {
+            question: {
+              questionId: "radio-question",
+              choiceQuestion: { type: "RADIO", options: [{ value: "Known" }, { isOther: true }] },
+            },
+          },
+        },
+        {
+          itemId: "checkbox-item",
+          title: "Checkbox",
+          questionItem: {
+            question: {
+              questionId: "checkbox-question",
+              choiceQuestion: {
+                type: "CHECKBOX",
+                options: [{ value: "Known" }, { isOther: true }],
+              },
+            },
+          },
+        },
+      ],
+    });
+    const [normalized] = new GoogleResponseNormalizer().normalizeAll(form, [
+      response("other", {
+        "radio-question": { textAnswers: { answers: [{ value: "Radio custom" }] } },
+        "checkbox-question": {
+          textAnswers: { answers: [{ value: "Known" }, { value: "Checkbox custom" }] },
+        },
+      }),
+    ]);
+    expect(normalized?.answers["radio-question"]).toMatchObject({
+      state: "answered",
+      value: { otherValue: "Radio custom" },
+    });
+    expect(normalized?.answers["checkbox-question"]).toMatchObject({
+      state: "answered",
+      value: { otherValue: "Checkbox custom" },
+    });
+  });
+
   it("preserves values and distinguishes skipped, not-reached, and indeterminate", () => {
     const form = new GoogleFormNormalizer().normalize(fixtureForm(), "2026-09-02T00:00:00Z");
     const normalizer = new GoogleResponseNormalizer();

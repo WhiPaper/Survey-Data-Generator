@@ -40,10 +40,16 @@ const tokenSet = (
   grantedScopes,
 });
 
-const identity = (subject: string, email: string, displayName = "Test User"): GoogleIdentity => ({
+const identity = (
+  subject: string,
+  email: string,
+  displayName = "Test User",
+  avatarUrl?: string,
+): GoogleIdentity => ({
   subject,
   email,
   displayName,
+  ...(avatarUrl === undefined ? {} : { avatarUrl }),
 });
 
 class FakeSecretStore implements SecureSecretStore {
@@ -163,6 +169,26 @@ describe("Google account identity and lifecycle", () => {
     first.google.identities.push(identity("subject-2", "updated@example.com"));
     await first.service.addAccount();
     expect(await first.accounts.list()).toHaveLength(2);
+  });
+
+  it("persists and exposes the Google profile photo URL as display metadata", async () => {
+    const setup = makeService();
+    setup.google.exchanges.push(tokenSet("access-1", "refresh-1"));
+    setup.google.identities.push(
+      identity(
+        "subject-1",
+        "user@example.com",
+        "Test User",
+        "https://lh3.googleusercontent.com/avatar",
+      ),
+    );
+
+    const session = await setup.service.login();
+
+    expect(session.account.avatarUrl).toBe("https://lh3.googleusercontent.com/avatar");
+    expect((await setup.accounts.findById(session.account.id))?.avatarUrl).toBe(
+      "https://lh3.googleusercontent.com/avatar",
+    );
   });
 
   it("accepts Google's canonical OIDC scope aliases", async () => {

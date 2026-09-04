@@ -15,16 +15,23 @@ import type {
   TargetMigrationIssue,
 } from "@survey-synth/domain";
 import { resolveResponsePath, type SynthesisRun } from "@survey-synth/domain";
-import type { ValidationResult } from "@survey-synth/synthesis-core";
+import {
+  detectTemporalWindow,
+  generateSyntheticTimestamps,
+  type ValidationResult,
+} from "@survey-synth/synthesis-core";
 import {
   LegacyCompatibilityOutcomeSchema,
   VERSIONS,
   type AiMetadata,
   type LegacyCompatibilityOutcome,
   type LegacyCompatibilityReason,
+  type ProjectTimeline,
+  type TimestampRange,
 } from "@survey-synth/contracts";
 import {
   analyzeRelationships,
+  clusterTextResponses,
   profileForm,
   type QuestionProfile,
   type RelationshipProfile,
@@ -32,6 +39,32 @@ import {
 } from "@survey-synth/statistics";
 import { ProjectDatabase } from "./database.js";
 import { sidecarError } from "../errors.js";
+
+const runPersistenceStatement = <T>(
+  table: string,
+  operation: string,
+  action: () => T,
+  context: { responseIndex?: number; questionIndex?: number } = {},
+): T => {
+  try {
+    return action();
+  } catch (error: unknown) {
+    const diagnostic = Object.assign(
+      new Error(`Persistence statement failed: ${table}.${operation}`),
+      {
+        code:
+          error instanceof Error && "code" in error
+            ? (error as { code?: unknown }).code
+            : undefined,
+        kind: error instanceof Error ? error.name : undefined,
+        persistenceTable: table,
+        persistenceOperation: operation,
+        ...context,
+      },
+    );
+    throw diagnostic;
+  }
+};
 
 export interface CreatedProject {
   readonly project: SynthesisProject;
@@ -41,6 +74,7 @@ export interface CreatedProject {
 
 export interface ProjectDetail extends ProjectSummary {
   readonly form: FormSnapshot;
+  readonly responseTimestampRange?: { readonly start: string; readonly end: string } | null;
   readonly targets: ProjectTargets;
   readonly targetRevision: number;
   readonly profiles: readonly QuestionProfile[];
@@ -106,9 +140,17 @@ const isAnswerValue = (value: unknown): boolean => {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
   switch (value.kind) {
     case "single_choice":
-      return typeof value.optionKey === "string" && typeof value.label === "string";
+      return (
+        typeof value.optionKey === "string" &&
+        typeof value.label === "string" &&
+        (value.otherValue === undefined || typeof value.otherValue === "string")
+      );
     case "multi_choice":
-      return isStringArray(value.optionKeys) && isStringArray(value.labels);
+      return (
+        isStringArray(value.optionKeys) &&
+        isStringArray(value.labels) &&
+        (value.otherValue === undefined || typeof value.otherValue === "string")
+      );
     case "ordinal":
       return typeof value.value === "number" && Number.isFinite(value.value);
     case "text":
@@ -287,6 +329,14 @@ const responseContentHash = (response: NormalizedResponse): string =>
     path: response.path,
   });
 
+const formatTimelineLabel = (epochMs: number, spanMs: number, timeZone: string): string => {
+  const options: Intl.DateTimeFormatOptions =
+    spanMs <= 2 * 86400_000
+      ? { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZone }
+      : { month: "2-digit", day: "2-digit", timeZone };
+  return new Intl.DateTimeFormat("ko-KR", options).format(new Date(epochMs));
+};
+
 export class ProjectRepository {
   public constructor(private readonly database: ProjectDatabase) {}
 
@@ -358,10 +408,12 @@ export class ProjectRepository {
           importedAt,
         });
       const responseInsert = this.database.prepare(
-        `INSERT INTO responses (id,created_at,last_submitted_at,content_hash,origin,path_json) VALUES (@id,@createdAt,@lastSubmittedAt,@contentHash,'original',@path)`,
+        `INSERT OR IGNORE INTO responses (id,created_at,last_submitted_at,content_hash,origin,path_json) VALUES (@id,@createdAt,@lastSubmittedAt,@contentHash,'original',@path)`,
       );
-      const membershipInsert = this.database.prepare(`INSERT INTO revision_responses VALUES (?,?)`);
-      const answerInsert = this.database.prepare(`INSERT INTO answers VALUES (?,?,?)`);
+      const membershipInsert = this.database.prepare(
+        `INSERT OR IGNORE INTO revision_responses VALUES (?,?)`,
+      );
+      const answerInsert = this.database.prepare(`INSERT OR IGNORE INTO answers VALUES (?,?,?)`);
 
       const versionInsert = this.database.prepare(
         `INSERT OR IGNORE INTO response_versions (id,response_id,created_at,last_submitted_at,content_hash,origin,path_json) VALUES (@id,@responseId,@createdAt,@lastSubmittedAt,@contentHash,'original',@path)`,
@@ -373,51 +425,99 @@ export class ProjectRepository {
         `INSERT OR IGNORE INTO response_version_answers VALUES (?,?,?)`,
       );
 
-      for (const response of responses) {
+      for (const [responseIndex, response] of responses.entries()) {
         const contentHash = responseContentHash(response);
         const versionId = `${response.responseId}:${contentHash}`;
 
-        responseInsert.run({
-          id: response.responseId,
-          createdAt: response.createdAt ?? null,
-          lastSubmittedAt: response.lastSubmittedAt ?? null,
-          contentHash,
-          path: JSON.stringify(response.path),
-        });
-        membershipInsert.run(revisionId, response.responseId);
-        for (const [questionId, slot] of Object.entries(response.answers))
-          answerInsert.run(response.responseId, questionId, JSON.stringify(slot));
+        runPersistenceStatement(
+          "responses",
+          "insert_or_ignore",
+          () =>
+            responseInsert.run({
+              id: response.responseId,
+              createdAt: response.createdAt ?? null,
+              lastSubmittedAt: response.lastSubmittedAt ?? null,
+              contentHash,
+              path: JSON.stringify(response.path),
+            }),
+          { responseIndex },
+        );
+        runPersistenceStatement(
+          "revision_responses",
+          "insert_or_ignore",
+          () => membershipInsert.run(revisionId, response.responseId),
+          { responseIndex },
+        );
+        for (const [questionIndex, [questionId, slot]] of Object.entries(
+          response.answers,
+        ).entries())
+          runPersistenceStatement(
+            "answers",
+            "insert_or_ignore",
+            () => answerInsert.run(response.responseId, questionId, JSON.stringify(slot)),
+            { responseIndex, questionIndex },
+          );
 
-        versionInsert.run({
-          id: versionId,
-          responseId: response.responseId,
-          createdAt: response.createdAt ?? null,
-          lastSubmittedAt: response.lastSubmittedAt ?? null,
-          contentHash,
-          path: JSON.stringify(response.path),
-        });
-        versionMembershipInsert.run(revisionId, versionId);
-        for (const [questionId, slot] of Object.entries(response.answers))
-          versionAnswerInsert.run(versionId, questionId, JSON.stringify(slot));
+        runPersistenceStatement(
+          "response_versions",
+          "insert_or_ignore",
+          () =>
+            versionInsert.run({
+              id: versionId,
+              responseId: response.responseId,
+              createdAt: response.createdAt ?? null,
+              lastSubmittedAt: response.lastSubmittedAt ?? null,
+              contentHash,
+              path: JSON.stringify(response.path),
+            }),
+          { responseIndex },
+        );
+        runPersistenceStatement(
+          "revision_response_versions",
+          "insert_or_ignore",
+          () => versionMembershipInsert.run(revisionId, versionId),
+          { responseIndex },
+        );
+        for (const [questionIndex, [questionId, slot]] of Object.entries(
+          response.answers,
+        ).entries())
+          runPersistenceStatement(
+            "response_version_answers",
+            "insert_or_ignore",
+            () => versionAnswerInsert.run(versionId, questionId, JSON.stringify(slot)),
+            { responseIndex, questionIndex },
+          );
       }
       const profileInsert = this.database.prepare(`INSERT INTO question_profiles VALUES (?,?,?,?)`);
-      for (const profile of profiles)
-        profileInsert.run(
-          revisionId,
-          profile.questionId,
-          VERSIONS.profilerVersion,
-          JSON.stringify(profile),
+      for (const [questionIndex, profile] of profiles.entries())
+        runPersistenceStatement(
+          "question_profiles",
+          "insert",
+          () =>
+            profileInsert.run(
+              revisionId,
+              profile.questionId,
+              VERSIONS.profilerVersion,
+              JSON.stringify(profile),
+            ),
+          { questionIndex },
         );
       const relationshipInsert = this.database.prepare(
         `INSERT INTO relationship_profiles VALUES (?,?,?,?,?)`,
       );
-      for (const relationship of relationships)
-        relationshipInsert.run(
-          revisionId,
-          relationship.questionA,
-          relationship.questionB,
-          VERSIONS.profilerVersion,
-          JSON.stringify(relationship),
+      for (const [questionIndex, relationship] of relationships.entries())
+        runPersistenceStatement(
+          "relationship_profiles",
+          "insert",
+          () =>
+            relationshipInsert.run(
+              revisionId,
+              relationship.questionA,
+              relationship.questionB,
+              VERSIONS.profilerVersion,
+              JSON.stringify(relationship),
+            ),
+          { questionIndex },
         );
     });
     return { project, profiles, relationships };
@@ -433,13 +533,61 @@ export class ProjectRepository {
       )
       .get(revisionId);
     if (formRow === undefined) return null;
+    const formSnapshot = JSON.parse(formRow.payload_json) as FormSnapshot;
+    const timestampRows = this.loadRevisionTimestampRows(revisionId);
+    const timestampValues = timestampRows
+      .map((row) => row.timestamp)
+      .filter((timestamp): timestamp is string => timestamp !== null);
     const targetState = this.getTargets(id);
-    const profiles = this.database
+    let profiles = this.database
       .prepare<{ payload_json: string }>(
         "SELECT payload_json FROM question_profiles WHERE revision_id=?",
       )
       .all(revisionId)
       .map((row) => JSON.parse(row.payload_json) as QuestionProfile);
+
+    const needsClusterBackfill = formSnapshot.questions.some((q) => {
+      if (q.kind !== "text") return false;
+      const p = profiles.find((item) => item.questionId === q.id);
+      return (
+        p !== undefined &&
+        p.semanticInference?.inferred !== "numeric" &&
+        p.textClusters === undefined
+      );
+    });
+
+    if (needsClusterBackfill) {
+      try {
+        const responses = this.loadRevisionResponses(revisionId, formSnapshot, id);
+        const updateStmt = this.database.prepare(
+          "UPDATE question_profiles SET payload_json=? WHERE revision_id=? AND question_id=?",
+        );
+        profiles = profiles.map((p) => {
+          const q = formSnapshot.questions.find((item) => item.id === p.questionId);
+          if (
+            q?.kind === "text" &&
+            p.semanticInference?.inferred !== "numeric" &&
+            p.textClusters === undefined
+          ) {
+            const values: string[] = [];
+            for (const r of responses) {
+              const slot = r.answers[q.id];
+              if (slot?.state === "answered" && slot.value.kind === "text") {
+                values.push(slot.value.value);
+              }
+            }
+            const textClusters = clusterTextResponses(values);
+            const updated = { ...p, textClusters };
+            updateStmt.run(JSON.stringify(updated), revisionId, p.questionId);
+            return updated;
+          }
+          return p;
+        });
+      } catch {
+        // Safe fallback
+      }
+    }
+
     const relationships = this.database
       .prepare<{ payload_json: string }>(
         "SELECT payload_json FROM relationship_profiles WHERE revision_id=?",
@@ -449,13 +597,135 @@ export class ProjectRepository {
     const migrationIssues = this.getMigrationIssues(id, revisionId);
     return {
       ...summary,
-      form: JSON.parse(formRow.payload_json) as FormSnapshot,
+      form: formSnapshot,
+      responseTimestampRange:
+        timestampValues.length > 0
+          ? {
+              start: timestampValues.reduce((a, b) =>
+                Date.parse(a) <= Date.parse(b) ? a : b,
+              ),
+              end: timestampValues.reduce((a, b) =>
+                Date.parse(a) >= Date.parse(b) ? a : b,
+              ),
+            }
+          : null,
       targets: targetState.targets,
       targetRevision: targetState.revision,
       profiles,
       relationships,
       ...(migrationIssues.length === 0 ? {} : { migrationIssues }),
     };
+  }
+
+  public getTimeline(
+    id: ProjectId,
+    start: string,
+    end: string,
+    bucketCount: number,
+    targetCount = 0,
+    seed = 1,
+  ): ProjectTimeline {
+    const summary = this.list().find((project) => project.id === id);
+    if (summary === undefined) throw sidecarError("NOT_FOUND", "Project was not found", true);
+
+    const startMs = Date.parse(start);
+    const endMs = Date.parse(end);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      throw sidecarError("VALIDATION_FAILED", "Timeline range is invalid", true);
+    }
+
+    const buckets = Array.from({ length: bucketCount }, (_, index) => {
+      const bucketStartMs = startMs + ((endMs - startMs) * index) / bucketCount;
+      const bucketEndMs = startMs + ((endMs - startMs) * (index + 1)) / bucketCount;
+      return {
+        start: new Date(bucketStartMs).toISOString(),
+        end: new Date(bucketEndMs).toISOString(),
+        label: formatTimelineLabel(bucketStartMs, endMs - startMs, summary.timeZone ?? "UTC"),
+        originalCount: 0,
+        syntheticCount: 0,
+      };
+    });
+
+    const rows = this.loadRevisionTimestampRows(summary.currentSourceRevisionId);
+
+    let totalOriginalCount = 0;
+    const observedRows: NormalizedResponse[] = [];
+    for (const row of rows) {
+      if (row.timestamp === null) continue;
+      const timestampMs = Date.parse(row.timestamp);
+      if (!Number.isFinite(timestampMs) || timestampMs < startMs || timestampMs > endMs) continue;
+      const rawIndex = Math.floor(((timestampMs - startMs) / (endMs - startMs)) * bucketCount);
+      const index = Math.min(bucketCount - 1, Math.max(0, rawIndex));
+      const bucket = buckets[index];
+      if (bucket === undefined) continue;
+      bucket.originalCount += 1;
+      totalOriginalCount += 1;
+      observedRows.push({
+        responseId: `timeline:${totalOriginalCount}` as never,
+        origin: "original",
+        createdAt: row.timestamp,
+        lastSubmittedAt: row.timestamp,
+        answers: {},
+        path: { questions: {}, confidence: "certain" },
+      });
+    }
+
+    const syntheticCount = Math.max(0, targetCount - totalOriginalCount);
+    const syntheticTimestamps = generateSyntheticTimestamps(
+      syntheticCount,
+      detectTemporalWindow(observedRows),
+      seed,
+    );
+    for (const timestamp of syntheticTimestamps) {
+      const timestampMs = Date.parse(timestamp.lastSubmittedAt);
+      if (!Number.isFinite(timestampMs) || timestampMs < startMs || timestampMs > endMs) continue;
+      const rawIndex = Math.floor(((timestampMs - startMs) / (endMs - startMs)) * bucketCount);
+      const index = Math.min(bucketCount - 1, Math.max(0, rawIndex));
+      const bucket = buckets[index];
+      if (bucket !== undefined) bucket.syntheticCount = (bucket.syntheticCount ?? 0) + 1;
+    }
+
+    return {
+      start,
+      end,
+      timeZone: summary.timeZone ?? "UTC",
+      buckets,
+      totalOriginalCount,
+      sourceTotalCount: totalOriginalCount,
+    };
+  }
+
+  private loadRevisionTimestampRows(
+    revisionId: SourceRevisionId,
+  ): Array<{ timestamp: string | null }> {
+    const tableNames = this.database
+      .prepare<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('response_versions','response_version_answers','revision_response_versions')",
+      )
+      .all()
+      .map((row) => row.name);
+    const canonicalTableCount = tableNames.filter((name) =>
+      ["response_versions", "response_version_answers", "revision_response_versions"].includes(
+        name,
+      ),
+    ).length;
+    if (canonicalTableCount > 0 && canonicalTableCount < 3) {
+      throw sidecarError("BACKEND_UNAVAILABLE", "Versioned response storage is incomplete", false);
+    }
+
+    if (canonicalTableCount === 3) {
+      return this.database
+        .prepare<{ timestamp: string | null }>(
+          "SELECT COALESCE(rv.last_submitted_at, rv.created_at) AS timestamp FROM revision_response_versions rrv JOIN response_versions rv ON rv.id=rrv.response_version_id WHERE rrv.revision_id=?",
+        )
+        .all(revisionId);
+    }
+
+    return this.database
+      .prepare<{ timestamp: string | null }>(
+        "SELECT COALESCE(r.last_submitted_at, r.created_at) AS timestamp FROM revision_responses rr JOIN responses r ON r.id=rr.response_id WHERE rr.revision_id=?",
+      )
+      .all(revisionId);
   }
 
   public getTargets(id: ProjectId): {
@@ -660,6 +930,7 @@ export class ProjectRepository {
   public loadSynthesisSource(
     id: ProjectId,
     targetRevisionId?: SourceRevisionId,
+    timestampRange?: TimestampRange,
   ): SynthesisSource | null {
     const summary = this.list().find((project) => project.id === id);
     if (summary === undefined) return null;
@@ -671,7 +942,26 @@ export class ProjectRepository {
       .get(revisionId);
     if (snapshot === undefined) return null;
     const form = parseStoredJson<FormSnapshot>(snapshot.payload_json, "Form snapshot is corrupt");
-    const responses = this.loadRevisionResponses(revisionId, form, id);
+    if (timestampRange !== undefined) {
+      const startMs = Date.parse(timestampRange.start);
+      const endMs = Date.parse(timestampRange.end);
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+        throw sidecarError("VALIDATION_FAILED", "Synthesis timestamp range is invalid", true);
+      }
+    }
+    const responses = this.loadRevisionResponses(revisionId, form, id).filter((response) => {
+      if (timestampRange === undefined) return true;
+      const timestamp = response.lastSubmittedAt ?? response.createdAt;
+      if (timestamp === undefined) return false;
+      const timestampMs = Date.parse(timestamp);
+      const startMs = Date.parse(timestampRange.start);
+      const endMs = Date.parse(timestampRange.end);
+      return (
+        Number.isFinite(timestampMs) &&
+        timestampMs >= startMs &&
+        timestampMs <= endMs
+      );
+    });
 
     const relationships = this.database
       .prepare<{ payload_json: string }>(

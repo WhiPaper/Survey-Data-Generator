@@ -75,6 +75,7 @@ describe("relationships", () => {
           options: [
             { key: "x" as never, label: "X" },
             { key: "y" as never, label: "Y" },
+            { key: "z" as never, label: "Z" },
           ],
           shuffle: false,
         },
@@ -87,8 +88,8 @@ describe("relationships", () => {
           state: "answered" as const,
           value: {
             kind: "multi_choice" as const,
-            optionKeys: ["x", "y"] as never[],
-            labels: ["X", "Y"],
+            optionKeys: ["x", "y", "z"] as never[],
+            labels: ["X", "Y", "Z"],
           },
         },
       },
@@ -99,6 +100,10 @@ describe("relationships", () => {
       method: "phi_joint",
       supportCount: 10,
     });
+    expect(result).toHaveLength(1);
+    expect(
+      result[0]?.preservationFeatures.filter((item) => item.startsWith("cooccurrence:")),
+    ).toHaveLength(3);
   });
 
   it("uses inferred categorical text and preserves ordinal family semantics", () => {

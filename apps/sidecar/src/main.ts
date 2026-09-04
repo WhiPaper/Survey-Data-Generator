@@ -16,6 +16,7 @@ import {
   FormsListParamsSchema,
   ProjectsDeleteParamsSchema,
   ProjectsGetParamsSchema,
+  ProjectsTimelineParamsSchema,
   ProjectsRefreshSourceCancelParamsSchema,
   ProjectsRefreshSourceParamsSchema,
   ProjectsResolveMigrationIssueParamsSchema,
@@ -47,7 +48,7 @@ import {
   RemoteGoogleTokenStore,
   RemoteSecureSecretStore,
 } from "./host.js";
-import { stderrLogger } from "./rpc/logger.js";
+import { safeErrorContext, stderrLogger } from "./rpc/logger.js";
 import { createSidecarServer } from "./rpc/server.js";
 import { ProjectDatabase, ProjectRepository, defaultDatabasePath } from "./persistence/index.js";
 import { SynthesisJobs } from "./application/synthesis-jobs.js";
@@ -117,6 +118,19 @@ const server = createSidecarServer({
     "projects.list": async () => (await projects)?.list() ?? [],
     "projects.get": async (params) =>
       (await projects)?.get(ProjectsGetParamsSchema.parse(params).projectId as never) ?? null,
+    "projects.timeline": async (params) => {
+      const input = ProjectsTimelineParamsSchema.parse(params);
+      const repository = await projects;
+      if (repository === null) throw sidecarError("BACKEND_UNAVAILABLE", "Project database unavailable", true);
+      return repository.getTimeline(
+        input.projectId as never,
+        input.start,
+        input.end,
+        input.bucketCount,
+        input.targetCount,
+        input.seed,
+      );
+    },
     "projects.delete": async (params) => {
       (await projects)?.delete(ProjectsDeleteParamsSchema.parse(params).projectId as never);
       return authActionResult();
@@ -211,7 +225,9 @@ const server = createSidecarServer({
           "Target revision changed before synthesis started",
           true,
         );
-      const source = repository?.loadSynthesisSource(input.projectId as never) ?? null;
+      const source =
+        repository?.loadSynthesisSource(input.projectId as never, undefined, input.timestampRange) ??
+        null;
       if (source === null)
         return {
           status: "infeasible" as const,
@@ -307,16 +323,37 @@ const server = createSidecarServer({
       const controller = new AbortController();
       activeImportControllers.set(operationId, controller);
       try {
-        const summary = await forms.importForm(parsed.formId, controller.signal);
+        const summary = await forms.importForm(parsed.formId, controller.signal, operationId);
         const session = forms.getImport(summary.importId);
         try {
           const repository = await projects;
           if (session !== null && repository !== null) {
+            const persistenceStartedAt = Date.now();
+            stderrLogger.info("project_import_persistence_started", {
+              phase: "persistence",
+              operationId,
+              responses: session.responses.length,
+              questions: session.form.questions.length,
+            });
             try {
               repository.createFromImport(session.accountId, session.form, session.responses);
-            } catch {
+              stderrLogger.info("project_import_persistence_completed", {
+                phase: "persistence",
+                operationId,
+                responses: session.responses.length,
+                questions: session.form.questions.length,
+                durationMs: Date.now() - persistenceStartedAt,
+                status: "success",
+              });
+            } catch (error: unknown) {
               stderrLogger.error("project_import_persistence_failed", {
                 errorCode: "PROJECT_PERSISTENCE_FAILED",
+                phase: "persistence",
+                operationId,
+                responses: session.responses.length,
+                questions: session.form.questions.length,
+                durationMs: Date.now() - persistenceStartedAt,
+                ...safeErrorContext(error),
               });
               throw sidecarError(
                 "BACKEND_UNAVAILABLE",
@@ -395,7 +432,7 @@ database =
     : ProjectDatabase.open(databasePath, new RemoteSecureSecretStore(hostClient));
 projects = database.then((db) => (db === null ? null : new ProjectRepository(db)));
 synthesisJobs = projects.then((repository) =>
-  repository === null ? null : new SynthesisJobs(repository),
+  repository === null ? null : new SynthesisJobs(repository, undefined, stderrLogger),
 );
 refreshService = projects.then((repository) =>
   repository === null
@@ -420,8 +457,12 @@ aiService = projects.then((repository) =>
         logger: stderrLogger,
       }),
 );
-void database.catch(() => {
-  stderrLogger.error("sidecar_startup_failed", { errorCode: "BACKEND_UNAVAILABLE" });
+void database.catch((error: unknown) => {
+  stderrLogger.error("sidecar_startup_failed", {
+    errorCode: "BACKEND_UNAVAILABLE",
+    phase: "database_open",
+    ...safeErrorContext(error),
+  });
   server.shutdown();
 });
 

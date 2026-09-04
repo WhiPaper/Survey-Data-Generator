@@ -613,23 +613,65 @@ const normalizeAnswer = (
       const value = textValues[0];
       if (value === undefined) throw invalidImport("Google choice answer is invalid");
       const matches = matchingOptions(question.options, value);
-      if (matches.length === 0) throw invalidImport("Google choice answer is not in Form options");
+      if (matches.length === 0) {
+        const otherOptions = question.options.filter((option) => option.isOther === true);
+        if (otherOptions.length !== 1) {
+          throw invalidImport("Google choice answer is not in Form options");
+        }
+        const other = otherOptions[0];
+        if (other === undefined) throw invalidImport("Google choice answer is invalid");
+        return {
+          kind: "single_choice",
+          optionKey: other.key,
+          label: value,
+          otherValue: value,
+        };
+      }
       if (matches.length > 1) throw invalidImport("Google choice answer is ambiguous");
       const selected = matches[0];
       if (selected === undefined) throw invalidImport("Google choice answer is invalid");
-      return { kind: "single_choice", optionKey: selected.key, label: value };
+      return {
+        kind: "single_choice",
+        optionKey: selected.key,
+        label: value,
+        ...(selected.isOther === true && value !== selected.label ? { otherValue: value } : {}),
+      };
     }
     case "multi_choice": {
+      let otherValue: string | undefined;
       const optionKeys = textValues.map((value) => {
         const matches = matchingOptions(question.options, value);
-        if (matches.length === 0)
-          throw invalidImport("Google checkbox answer is not in Form options");
+        if (matches.length === 0) {
+          const otherOptions = question.options.filter((option) => option.isOther === true);
+          if (otherOptions.length !== 1) {
+            throw invalidImport("Google checkbox answer is not in Form options");
+          }
+          const other = otherOptions[0];
+          if (other === undefined) throw invalidImport("Google checkbox answer is invalid");
+          if (otherValue !== undefined)
+            throw invalidImport("Google checkbox Other answer is ambiguous");
+          otherValue = value;
+          return other.key;
+        }
         if (matches.length > 1) throw invalidImport("Google checkbox answer is ambiguous");
         const selected = matches[0];
         if (selected === undefined) throw invalidImport("Google checkbox answer is invalid");
+        if (selected.isOther === true && value !== selected.label) {
+          if (otherValue !== undefined)
+            throw invalidImport("Google checkbox Other answer is ambiguous");
+          otherValue = value;
+        }
         return selected.key;
       });
-      return { kind: "multi_choice", optionKeys, labels: textValues };
+      if (new Set(optionKeys).size !== optionKeys.length) {
+        throw invalidImport("Google checkbox answer contains a duplicate option");
+      }
+      return {
+        kind: "multi_choice",
+        optionKeys,
+        labels: textValues,
+        ...(otherValue === undefined ? {} : { otherValue }),
+      };
     }
     case "ordinal": {
       const value = textValues[0];

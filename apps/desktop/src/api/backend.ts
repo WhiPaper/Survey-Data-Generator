@@ -11,6 +11,7 @@ import {
   type BackendError,
   type ProjectSummaryView,
   type ProjectDetailView,
+  type ProjectTimeline,
   type ProjectsRefreshSourceResult,
   type BackendRpc,
   createRequest,
@@ -19,6 +20,7 @@ import {
   type SynthesisStartResult,
   type RunExportFormat,
   type RunsExportResult,
+  type TimestampRange,
 } from "@survey-synth/contracts";
 import type { ProjectTargets } from "@survey-synth/domain";
 
@@ -156,6 +158,27 @@ export const getProject = (
   projectId: string,
   backend?: BackendInvoker,
 ): Promise<ProjectDetailView | null> => callBackend("projects.get", { projectId }, backend);
+export const getProjectTimeline = (
+  projectId: string,
+  start: string,
+  end: string,
+  bucketCount: number,
+  targetCount?: number,
+  seed?: number,
+  backend?: BackendInvoker,
+): Promise<ProjectTimeline> =>
+  callBackend(
+    "projects.timeline",
+    {
+      projectId,
+      start,
+      end,
+      bucketCount,
+      ...(targetCount === undefined ? {} : { targetCount }),
+      ...(seed === undefined ? {} : { seed }),
+    },
+    backend,
+  );
 export const deleteProject = (projectId: string, backend?: BackendInvoker): Promise<{ ok: true }> =>
   callBackend("projects.delete", { projectId }, backend);
 
@@ -242,6 +265,7 @@ export const startSynthesis = (
   operationId: string,
   backend?: BackendInvoker,
   targetRevision?: number,
+  timestampRange?: TimestampRange,
 ): Promise<SynthesisStartResult> =>
   callBackend(
     "synthesis.start",
@@ -255,6 +279,7 @@ export const startSynthesis = (
           : { detailedGoals: [...targets.detailedGoals] }),
       },
       ...(targetRevision === undefined ? {} : { targetRevision }),
+      ...(timestampRange === undefined ? {} : { timestampRange }),
       seed,
       operationId,
     },

@@ -60,6 +60,11 @@ export const GoogleAccountViewSchema = z
     id: GoogleAccountIdSchema,
     email: z.string().email(),
     displayName: z.string().min(1).optional(),
+    avatarUrl: z
+      .string()
+      .url()
+      .refine((value) => value.startsWith("https://"))
+      .optional(),
   })
   .strict();
 
@@ -311,6 +316,16 @@ const ConditionalOutcomeSchema = z.discriminatedUnion("kind", [
       target: z.object({ kind: z.literal("mean"), value: z.number().finite() }).strict(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("text_cluster"),
+      questionId: z.string().min(1),
+      clusterId: z.string().min(1),
+      label: z.string().min(1),
+      memberTexts: z.array(z.string()).readonly(),
+      target: TargetValueSchema,
+    })
+    .strict(),
 ]);
 export const ProjectTargetsSchema = z
   .object({
@@ -337,6 +352,16 @@ export const ProjectTargetsSchema = z
             kind: z.literal("selection_count_mean"),
             questionId: z.string().min(1),
             target: z.object({ kind: z.literal("mean"), value: z.number().finite() }).strict(),
+          })
+          .strict(),
+        z
+          .object({
+            kind: z.literal("text_cluster"),
+            questionId: z.string().min(1),
+            clusterId: z.string().min(1),
+            label: z.string().min(1),
+            memberTexts: z.array(z.string()).readonly(),
+            target: TargetValueSchema,
           })
           .strict(),
       ]),
@@ -515,6 +540,10 @@ export type AiCancelParams = z.infer<typeof AiCancelParamsSchema>;
 
 export const ProjectDetailSchema = ProjectSummarySchema.extend({
   form: z.record(z.string(), z.unknown()),
+  responseTimestampRange: z
+    .object({ start: z.string().min(1), end: z.string().min(1) })
+    .nullable()
+    .optional(),
   targets: ProjectTargetsSchema,
   targetRevision: z.number().int().nonnegative(),
   profiles: z.array(z.record(z.string(), z.unknown())),
@@ -522,9 +551,45 @@ export const ProjectDetailSchema = ProjectSummarySchema.extend({
   migrationIssues: z.array(TargetMigrationIssueSchema).optional(),
 }).strict();
 export type ProjectDetailView = z.infer<typeof ProjectDetailSchema>;
+export const TimestampRangeSchema = z
+  .object({ start: z.string().min(1), end: z.string().min(1) })
+  .strict();
+export type TimestampRange = z.infer<typeof TimestampRangeSchema>;
 export const ProjectsListParamsSchema = z.object({}).strict();
 export const ProjectsGetParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
 export const ProjectsDeleteParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
+export const ProjectsTimelineParamsSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    start: z.string().min(1),
+    end: z.string().min(1),
+    bucketCount: z.number().int().min(8).max(240),
+    targetCount: z.number().int().nonnegative().optional(),
+    seed: z.number().int().optional(),
+  })
+  .strict();
+export const ProjectTimelineSchema = z
+  .object({
+    start: z.string().min(1),
+    end: z.string().min(1),
+    timeZone: z.string().min(1),
+    buckets: z.array(
+      z
+        .object({
+          start: z.string().min(1),
+          end: z.string().min(1),
+          label: z.string().min(1),
+          originalCount: z.number().int().nonnegative(),
+          syntheticCount: z.number().int().nonnegative().optional(),
+        })
+        .strict(),
+    ),
+    totalOriginalCount: z.number().int().nonnegative(),
+    sourceTotalCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ProjectsTimelineParams = z.infer<typeof ProjectsTimelineParamsSchema>;
+export type ProjectTimeline = z.infer<typeof ProjectTimelineSchema>;
 
 export const ProjectsRefreshSourceParamsSchema = z
   .object({
@@ -583,6 +648,7 @@ export const SynthesisStartParamsSchema = z
   .object({
     projectId: ProjectIdSchema,
     targets: ProjectTargetsSchema,
+    timestampRange: TimestampRangeSchema.optional(),
     targetRevision: z.number().int().nonnegative().optional(),
     seed: z.number().int(),
     operationId: z.string().min(1).max(200).optional(),
@@ -737,6 +803,10 @@ export interface BackendRpc {
     input: z.infer<typeof ProjectsGetParamsSchema>;
     output: ProjectDetailView | null;
   };
+  "projects.timeline": {
+    input: ProjectsTimelineParams;
+    output: ProjectTimeline;
+  };
   "projects.delete": {
     input: z.infer<typeof ProjectsDeleteParamsSchema>;
     output: AuthActionResult;
@@ -817,6 +887,7 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "forms.import.cancel": AuthActionResultSchema,
   "projects.list": z.array(ProjectSummarySchema),
   "projects.get": ProjectDetailSchema.nullable(),
+  "projects.timeline": ProjectTimelineSchema,
   "projects.delete": AuthActionResultSchema,
   "projects.refreshSource": ProjectsRefreshSourceResultSchema,
   "projects.refreshSource.cancel": AuthActionResultSchema,
@@ -869,6 +940,8 @@ const parseKnownParams = (method: string, params: unknown): void => {
     ProjectsListParamsSchema.parse(params);
   } else if (method === "projects.get") {
     ProjectsGetParamsSchema.parse(params);
+  } else if (method === "projects.timeline") {
+    ProjectsTimelineParamsSchema.parse(params);
   } else if (method === "projects.delete") {
     ProjectsDeleteParamsSchema.parse(params);
   } else if (method === "projects.refreshSource") {

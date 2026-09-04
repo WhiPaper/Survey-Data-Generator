@@ -462,9 +462,16 @@ describe("ExportService", () => {
     expect(xlsxResult.columnCount).toBe(2);
 
     // Verify safe logger: only safe diagnostics logged
-    expect(loggedEvents).toHaveLength(2);
-    expect(loggedEvents[0]?.event).toBe("run_export_completed");
-    const payload = loggedEvents[0]?.payload as Record<string, unknown>;
+    expect(loggedEvents.map((entry) => entry.event)).toEqual([
+      "run_export_started",
+      "run_export_completed",
+      "run_export_phase_completed",
+      "run_export_started",
+      "run_export_completed",
+      "run_export_phase_completed",
+    ]);
+    const payload = loggedEvents.find((entry) => entry.event === "run_export_completed")
+      ?.payload as Record<string, unknown>;
     expect(payload.format).toBe("csv");
     expect(payload.rowCount).toBe(10);
     expect(payload.columnCount).toBe(2);

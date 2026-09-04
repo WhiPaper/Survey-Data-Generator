@@ -7,7 +7,7 @@ import {
 import type { RunId } from "@survey-synth/domain";
 import type { ProjectRepository } from "../persistence/projects.js";
 import type { HostCapabilityClient } from "../host.js";
-import type { SafeLogger } from "../rpc/logger.js";
+import { safeErrorContext, type SafeLogger } from "../rpc/logger.js";
 import { sidecarError } from "../errors.js";
 import { sanitizeFilename } from "./safety.js";
 import { compileExportSchema } from "./schema.js";
@@ -41,34 +41,58 @@ export class ExportService {
   public constructor(private readonly options: ExportServiceOptions) {}
 
   public async export(params: RunsExportParams): Promise<RunsExportResult> {
-    const historicalData = this.options.projects.loadHistoricalRunExportData(params.runId as RunId);
+    const startedAt = Date.now();
+    this.options.logger.info("run_export_started", { format: params.format, phase: "load_run" });
+    try {
+      const historicalData = this.options.projects.loadHistoricalRunExportData(
+        params.runId as RunId,
+      );
 
-    const ext = extensionFor(params.format);
-    const filterName =
-      params.format === "csv" ? "CSV (쉼표로 분리) (*.csv)" : "Excel 통합 문서 (*.xlsx)";
-    const defaultName = suggestedFilename(historicalData.form.title, params.format);
+      const ext = extensionFor(params.format);
+      const filterName =
+        params.format === "csv" ? "CSV (쉼표로 분리) (*.csv)" : "Excel 통합 문서 (*.xlsx)";
+      const defaultName = suggestedFilename(historicalData.form.title, params.format);
 
-    if (!this.options.hostClient) {
-      throw sidecarError("BACKEND_UNAVAILABLE", "Save dialog host capability is unavailable", true);
+      if (!this.options.hostClient) {
+        throw sidecarError(
+          "BACKEND_UNAVAILABLE",
+          "Save dialog host capability is unavailable",
+          true,
+        );
+      }
+
+      const hostResponse = HostDialogSaveResultSchema.parse(
+        await this.options.hostClient.call("host.dialog.save", {
+          defaultName,
+          filterName,
+          filterExtension: ext,
+        }),
+      );
+
+      if (hostResponse.path === null) {
+        return { ok: true, cancelled: true };
+      }
+
+      const result = await this.writeHistoricalData(
+        historicalData,
+        params.format,
+        ensureExportExtension(hostResponse.path, params.format),
+      );
+      this.options.logger.info("run_export_phase_completed", {
+        format: params.format,
+        phase: "complete",
+        durationMs: Date.now() - startedAt,
+      });
+      return result;
+    } catch (error: unknown) {
+      this.options.logger.error("run_export_failed", {
+        format: params.format,
+        phase: "load_dialog_or_write",
+        durationMs: Date.now() - startedAt,
+        ...safeErrorContext(error),
+      });
+      throw error;
     }
-
-    const hostResponse = HostDialogSaveResultSchema.parse(
-      await this.options.hostClient.call("host.dialog.save", {
-        defaultName,
-        filterName,
-        filterExtension: ext,
-      }),
-    );
-
-    if (hostResponse.path === null) {
-      return { ok: true, cancelled: true };
-    }
-
-    return this.writeHistoricalData(
-      historicalData,
-      params.format,
-      ensureExportExtension(hostResponse.path, params.format),
-    );
   }
 
   public async exportToFile(options: {
@@ -76,14 +100,32 @@ export class ExportService {
     readonly format: RunExportFormat;
     readonly destination: string;
   }): Promise<RunsExportResult> {
-    const historicalData = this.options.projects.loadHistoricalRunExportData(
-      options.runId as RunId,
-    );
-    return this.writeHistoricalData(
-      historicalData,
-      options.format,
-      ensureExportExtension(options.destination, options.format),
-    );
+    const startedAt = Date.now();
+    this.options.logger.info("run_export_started", { format: options.format, phase: "load_run" });
+    try {
+      const historicalData = this.options.projects.loadHistoricalRunExportData(
+        options.runId as RunId,
+      );
+      const result = await this.writeHistoricalData(
+        historicalData,
+        options.format,
+        ensureExportExtension(options.destination, options.format),
+      );
+      this.options.logger.info("run_export_phase_completed", {
+        format: options.format,
+        phase: "complete",
+        durationMs: Date.now() - startedAt,
+      });
+      return result;
+    } catch (error: unknown) {
+      this.options.logger.error("run_export_failed", {
+        format: options.format,
+        phase: "load_or_write_file",
+        durationMs: Date.now() - startedAt,
+        ...safeErrorContext(error),
+      });
+      throw error;
+    }
   }
 
   private async writeHistoricalData(

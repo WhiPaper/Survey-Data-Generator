@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { NdjsonDecoder } from "../src/rpc/ndjson.js";
 import {
+  safeErrorContext,
   stderrLogger,
   type SafeLogFields,
   type SafeLogger,
@@ -17,6 +18,28 @@ const silentLogger: SafeLogger = {
 };
 
 describe("sidecar NDJSON boundary", () => {
+  it("exposes safe persistence failure coordinates without raw payloads", () => {
+    const error = Object.assign(new Error("Persistence statement failed"), {
+      code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+      kind: "SqliteError",
+      persistenceTable: "responses",
+      persistenceOperation: "insert_or_ignore",
+      responseIndex: 836,
+      questionIndex: 4,
+      responseId: "raw-response-id",
+      answer: "raw-answer",
+    });
+    expect(safeErrorContext(error)).toEqual({
+      errorKind: "Error",
+      causeCode: "SQLITE_CONSTRAINT_PRIMARYKEY",
+      causeKind: "SqliteError",
+      persistenceTable: "responses",
+      persistenceOperation: "insert_or_ignore",
+      responseIndex: 836,
+      questionIndex: 4,
+    });
+  });
+
   it("keeps log fields allowlisted", () => {
     const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
@@ -155,6 +178,61 @@ describe("sidecar NDJSON boundary", () => {
       ok: false,
       error: { code: "NOT_FOUND" },
     });
+  });
+
+  it("logs request failures with safe correlation fields", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const logger: SafeLogger = { info: vi.fn(), error: vi.fn() };
+    createSidecarServer({
+      input,
+      output,
+      logger,
+      handlers: {
+        "test.failure": () => {
+          throw new Error("internal detail must not be logged");
+        },
+      },
+    });
+    output.read();
+
+    input.write(
+      `${JSON.stringify({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "r_failure",
+        method: "test.failure",
+        params: {},
+      })}\n`,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(logger.error).toHaveBeenCalledWith("request_failed", {
+      errorCode: "INTERNAL",
+      method: "test.failure",
+      requestId: "r_failure",
+      phase: "rpc",
+      errorKind: "Error",
+    });
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain("internal detail");
+  });
+
+  it("logs parse failures without logging the malformed payload", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const logger: SafeLogger = { info: vi.fn(), error: vi.fn() };
+    createSidecarServer({ input, output, logger });
+    output.read();
+
+    input.write("secret survey payload that is not json\n");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(logger.error).toHaveBeenCalledWith("request_parse_failed", {
+      errorCode: "VALIDATION_FAILED",
+      phase: "parse_json",
+      requestId: "invalid_1",
+    });
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain("secret survey payload");
   });
 
   it("routes compact Form discovery results through the generic RPC boundary", async () => {

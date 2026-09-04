@@ -21,8 +21,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 base64 = "0.22.1"
 keyring = "4.2.0"
+log = "0.4"
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2.11.0"
+tauri-plugin-log = "2.7.0"

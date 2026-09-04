@@ -84,7 +84,7 @@ Projects
 user@company.com ▾
 ```
 
-The account footer does not need an avatar by default.
+The account footer may show the Google profile photo when `SessionView.account.avatarUrl` is present; otherwise it shows an initials fallback.
 
 Account menu may include:
 

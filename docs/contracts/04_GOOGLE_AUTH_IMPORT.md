@@ -6,12 +6,13 @@ Google is the only identity provider. Do not create a generic provider abstracti
 
 ```ts
 interface GoogleAccount {
-  id: GoogleAccountId
-  subject: string       // Google OAuth `sub`, stable identity
-  email: string
-  displayName?: string
-  createdAt: string
-  lastUsedAt: string
+  id: GoogleAccountId;
+  subject: string; // Google OAuth `sub`, stable identity
+  email: string;
+  displayName?: string;
+  avatarUrl?: string; // HTTPS URL from Google userinfo `picture`
+  createdAt: string;
+  lastUsedAt: string;
 }
 ```
 
@@ -46,12 +47,14 @@ Likely scope set:
   "https://www.googleapis.com/auth/drive.metadata.readonly",
   "https://www.googleapis.com/auth/forms.body.readonly",
   "https://www.googleapis.com/auth/forms.responses.readonly",
-]
+];
 ```
 
 Scope policy must be rechecked against current Google Cloud verification requirements before public release.
 
 `drive.metadata.readonly` is intentionally accepted because the product requirement is an in-app browser of accessible Forms. A narrower Picker/`drive.file` design would conflict with that requirement.
+
+The `profile` scope also permits reading the standard Google OpenID Connect `picture` claim. When present and HTTPS, it is stored as account metadata and exposed as `avatarUrl` in `GoogleAccountView`/`SessionView`. It is not a credential and is never used for account identity; Google `sub` remains authoritative. Missing or invalid picture values are omitted and the UI uses an initials fallback.
 
 ## Tokens
 
@@ -65,15 +68,15 @@ React never receives tokens.
 
 ```ts
 interface GoogleTokenStore {
-  getRefreshToken(subject: string): Promise<string | null>
-  setRefreshToken(subject: string, token: string): Promise<void>
-  deleteRefreshToken(subject: string): Promise<void>
+  getRefreshToken(subject: string): Promise<string | null>;
+  setRefreshToken(subject: string, token: string): Promise<void>;
+  deleteRefreshToken(subject: string): Promise<void>;
 }
 ```
 
 ```ts
 interface GoogleAccessTokenProvider {
-  getAccessToken(accountId: GoogleAccountId): Promise<string>
+  getAccessToken(accountId: GoogleAccountId): Promise<string>;
 }
 ```
 
@@ -96,13 +99,13 @@ Refresh failure such as `invalid_grant`:
 
 ```ts
 interface GoogleAuthService {
-  getSession(): Promise<SessionView | null>
-  login(): Promise<SessionView>
-  addAccount(): Promise<SessionView>
-  switchAccount(id: GoogleAccountId): Promise<SessionView>
-  logout(): Promise<void>
-  revokeAccess(id: GoogleAccountId): Promise<void>
-  getAccounts(): Promise<GoogleAccountView[]>
+  getSession(): Promise<SessionView | null>;
+  login(): Promise<SessionView>;
+  addAccount(): Promise<SessionView>;
+  switchAccount(id: GoogleAccountId): Promise<SessionView>;
+  logout(): Promise<void>;
+  revokeAccess(id: GoogleAccountId): Promise<void>;
+  getAccounts(): Promise<GoogleAccountView[]>;
 }
 ```
 

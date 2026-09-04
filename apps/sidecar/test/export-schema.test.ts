@@ -468,6 +468,51 @@ describe("ExportSchema compiler", () => {
     ]);
   });
 
+  it("exports a custom checkbox Other value without losing the selected option", () => {
+    const form = makeMockForm({
+      questions: [
+        {
+          id: "q_channels" as never,
+          title: "방문 경로",
+          kind: "multi_choice",
+          options: [
+            { key: "opt_search" as never, label: "포털 검색" },
+            { key: "opt_other" as never, label: "Other", isOther: true },
+          ],
+        },
+      ],
+    });
+    const original: NormalizedResponse = {
+      responseId: "resp_other" as never,
+      createdAt: "2026-09-02T10:00:00Z",
+      origin: "original",
+      answers: {
+        q_channels: {
+          state: "answered",
+          value: {
+            kind: "multi_choice",
+            optionKeys: ["opt_other" as never],
+            labels: ["직접 입력"],
+            otherValue: "직접 입력",
+          },
+        },
+      },
+      path: { visitedQuestionIds: [], status: "complete" },
+    };
+
+    const schema = compileExportSchema({
+      form,
+      originalResponses: [original],
+      syntheticResponses: [],
+      timeZone: "Asia/Seoul",
+    });
+
+    expect(Array.from(schema.getRows())[0]?.[1]).toEqual({
+      kind: "text",
+      value: "직접 입력",
+    });
+  });
+
   it("formats timestamp in project timezone consistently", () => {
     const formatted = formatTimestampInTimezone("2026-09-02T10:00:00Z", "Asia/Seoul");
     expect(formatted.isoWithOffset).toBe("2026-09-02T19:00:00+09:00");

@@ -231,4 +231,83 @@ describe("M4 basic synthesis", () => {
     });
     expect(validation).toMatchObject({ valid: false, errors: ["REQUIRED_QUESTION_VIOLATION"] });
   });
+
+  it("synthesizes text_cluster targets to nearest representable ratio", () => {
+    const textForm: FormSnapshot = {
+      ...form,
+      questions: [
+        {
+          id: "city" as never,
+          title: "City",
+          sectionId: "section" as never,
+          required: false,
+          affectsNavigation: false,
+          kind: "text",
+          presentation: "short",
+        },
+      ],
+    };
+    const textRows: NormalizedResponse[] = [
+      {
+        responseId: "r1" as never,
+        origin: "original",
+        path: { questions: {}, confidence: "certain" },
+        answers: {
+          city: { state: "answered", value: { kind: "text", value: "대구" } },
+        },
+      },
+      {
+        responseId: "r2" as never,
+        origin: "original",
+        path: { questions: {}, confidence: "certain" },
+        answers: {
+          city: { state: "answered", value: { kind: "text", value: "대구광역시" } },
+        },
+      },
+      {
+        responseId: "r3" as never,
+        origin: "original",
+        path: { questions: {}, confidence: "certain" },
+        answers: {
+          city: { state: "answered", value: { kind: "text", value: "서울" } },
+        },
+      },
+      {
+        responseId: "r4" as never,
+        origin: "original",
+        path: { questions: {}, confidence: "certain" },
+        answers: {
+          city: { state: "answered", value: { kind: "text", value: "서울시" } },
+        },
+      },
+    ];
+
+    const textTargets: ProjectTargets = {
+      targetResponseCount: 20,
+      questionTargets: [
+        {
+          kind: "text_cluster",
+          questionId: "city" as never,
+          clusterId: "tc_daegu",
+          label: "대구",
+          memberTexts: ["대구", "대구광역시"],
+          target: { kind: "ratio", value: 0.7 }, // 70% of 20 = 14 rows
+        },
+      ],
+    };
+
+    const result = synthesize(textForm, textRows, textTargets, 42);
+    expect(result.kind).toBe("success");
+    if (result.kind === "success") {
+      expect(result.synthetic).toHaveLength(16);
+      const totalRows = [...textRows, ...result.synthetic];
+      const daeguCount = totalRows.filter(
+        (r) =>
+          r.answers.city?.state === "answered" &&
+          r.answers.city.value.kind === "text" &&
+          ["대구", "대구광역시"].includes(r.answers.city.value.value),
+      ).length;
+      expect(daeguCount).toBe(14); // 70% of 20
+    }
+  });
 });

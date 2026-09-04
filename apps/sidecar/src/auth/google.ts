@@ -14,6 +14,7 @@ export interface GoogleIdentity {
   readonly subject: string;
   readonly email: string;
   readonly displayName?: string;
+  readonly avatarUrl?: string;
 }
 
 export interface GoogleTokenClient {
@@ -133,6 +134,9 @@ const formBody = (values: Record<string, string | undefined>): string => {
   return params.toString();
 };
 
+const optionalHttpsUrl = (value: unknown): string | undefined =>
+  typeof value === "string" && value.startsWith("https://") ? value : undefined;
+
 export class GoogleHttpClient implements GoogleTokenClient {
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
@@ -187,10 +191,12 @@ export class GoogleHttpClient implements GoogleTokenClient {
       throw new GoogleProviderError("api", response.status);
     }
     const displayName = optionalString(body.name);
+    const avatarUrl = optionalHttpsUrl(body.picture);
     return {
       subject: body.sub,
       email: body.email,
       ...(displayName === undefined ? {} : { displayName }),
+      ...(avatarUrl === undefined ? {} : { avatarUrl }),
     };
   }
 

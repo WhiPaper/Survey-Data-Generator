@@ -146,3 +146,9 @@ Use optimization abstraction; initial candidate HiGHS.
 **Decision:** exclude macOS DMG/app bundles from release targets and CI packaging matrix, focusing release installers on Windows (x64 NSIS) and Linux (x64 AppImage).
 
 **Why:** macOS desktop distribution outside the Mac App Store mandates an active paid Apple Developer Program membership ($99/year), Developer ID Application signing certificates, and Apple Notarization (`notarytool`); without these, Gatekeeper blocks downloaded apps as damaged/untrusted.
+
+## ADR-028 — Google profile photo is display metadata
+
+**Decision:** Read the optional HTTPS `picture` claim from Google userinfo, persist it as `avatarUrl`, and expose it through account/session views for the account footer. Never use it as identity; Google `sub` remains the stable account key.
+
+**Why:** The desktop account switcher can represent the signed-in Google account without introducing another provider or credential flow. Missing, invalid, or stale image URLs fall back to initials.

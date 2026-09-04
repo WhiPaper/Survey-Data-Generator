@@ -5,7 +5,9 @@ import type {
   ProfileBase,
   Question,
   QuestionId,
+  TextClusterGroup,
 } from "@survey-synth/domain";
+import { clusterTextResponses } from "./text-cluster.js";
 
 export type ShortTextSemanticType =
   | "numeric"
@@ -47,6 +49,7 @@ export interface QuestionProfile extends ProfileBase {
   readonly lengths?: { min: number; max: number; mean: number; median: number };
   readonly temporal?: { count: number; distinctCount: number; min?: string; max?: string };
   readonly fileMetadata?: { answeredFiles: number; fileCount: number };
+  readonly textClusters?: readonly TextClusterGroup[];
 }
 
 const slotFor = (response: NormalizedResponse, id: QuestionId): AnswerSlot =>
@@ -245,9 +248,14 @@ export const profileQuestion = (
       .map(Number)
       .filter(Number.isFinite);
     const inference = inferShortTextSemantic(question, responses);
+    const textClusters =
+      inference.inferred !== "numeric" && values.length > 0
+        ? clusterTextResponses(values)
+        : undefined;
     return {
       ...profile,
       semanticInference: inference,
+      ...(textClusters && textClusters.length > 0 ? { textClusters } : {}),
       ...(inference.inferred === "numeric" && numbers.length
         ? {
             numeric: {

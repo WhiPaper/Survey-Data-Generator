@@ -59,6 +59,11 @@ const COMPILED_GOOGLE_CLIENT_SECRET: Option<&str> =
 
 pub fn run() {
     let app = match tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .max_file_size(5_000_000)
+                .build(),
+        )
         .setup(|app| {
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;

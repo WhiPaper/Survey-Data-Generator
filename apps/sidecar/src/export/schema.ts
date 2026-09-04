@@ -148,7 +148,7 @@ const mapAnswerCell = (
             return { kind: "text", value: value.label };
           }
           if (option.isOther && !value.label.startsWith("기타:")) {
-            return { kind: "text", value: `기타: ${value.label}` };
+            return { kind: "text", value: `기타: ${value.otherValue ?? value.label}` };
           }
           return { kind: "text", value: option.label };
         }
@@ -163,7 +163,7 @@ const mapAnswerCell = (
         for (const opt of question.options) {
           knownKeys.add(opt.key);
           if (selectedKeySet.has(opt.key)) {
-            orderedLabels.push(opt.label);
+            orderedLabels.push(opt.isOther === true ? (value.otherValue ?? opt.label) : opt.label);
           }
         }
         if (value.optionKeys.length === 0) {

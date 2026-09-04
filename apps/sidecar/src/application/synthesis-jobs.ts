@@ -5,6 +5,7 @@ import type { SynthesisResult } from "@survey-synth/synthesis-core";
 
 import { sidecarError } from "../errors.js";
 import type { ProjectRepository, SynthesisSource } from "../persistence/projects.js";
+import { safeErrorContext, type SafeLogger } from "../rpc/logger.js";
 
 export interface SynthesisWorker {
   once(event: "message" | "error" | "exit", listener: (value: unknown) => void): unknown;
@@ -22,6 +23,7 @@ export class SynthesisJobs {
     private readonly projects: ProjectRepository,
     private readonly createWorker: SynthesisWorkerFactory = () =>
       new Worker(new URL("../workers/synthesis-worker.js", import.meta.url)),
+    private readonly logger?: SafeLogger,
   ) {}
 
   public async run(
@@ -50,7 +52,13 @@ export class SynthesisJobs {
         this.active.set(operationId, worker);
         worker.once("message", (message) => {
           const result = message as SynthesisResult | { kind: "worker_error"; code?: string };
-          if ("kind" in result && result.kind === "worker_error")
+          if ("kind" in result && result.kind === "worker_error") {
+            this.logger?.error("synthesis_worker_failed", {
+              errorCode: "INTERNAL",
+              phase: "worker",
+              requestId: operationId,
+              workerCode: result.code ?? "unknown",
+            });
             reject(
               sidecarError(
                 "INTERNAL",
@@ -58,16 +66,30 @@ export class SynthesisJobs {
                 true,
               ),
             );
-          else resolve(result);
+          } else resolve(result);
         });
-        worker.once("error", () =>
-          reject(sidecarError("INTERNAL", "Synthesis worker failed", true)),
-        );
+        worker.once("error", (error) => {
+          this.logger?.error("synthesis_worker_failed", {
+            errorCode: "INTERNAL",
+            phase: "worker",
+            requestId: operationId,
+            ...safeErrorContext(error),
+          });
+          reject(sidecarError("INTERNAL", "Synthesis worker failed", true));
+        });
         worker.once("exit", (code) => {
           if (this.cancelled.has(operationId) && this.active.has(operationId))
             reject(sidecarError("JOB_CANCELLED", "Synthesis cancelled", true));
-          else if (code !== 0 && this.active.has(operationId))
+          else if (code !== 0 && this.active.has(operationId)) {
+            const exitCode = typeof code === "number" ? code : -1;
+            this.logger?.error("synthesis_worker_exited", {
+              errorCode: "INTERNAL",
+              phase: "worker",
+              requestId: operationId,
+              exitCode,
+            });
             reject(sidecarError("INTERNAL", "Synthesis worker exited unexpectedly", true));
+          }
         });
         worker.postMessage({
           form: source.form,
