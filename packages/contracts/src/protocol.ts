@@ -238,7 +238,8 @@ export type FormsImportCancelParams = z.infer<typeof FormsImportCancelParamsSche
 
 export const FormImportSummarySchema = z
   .object({
-    importId: z.string().min(1),
+    projectId: z.string().min(1),
+    sourceRevisionId: z.string().min(1),
     formId: FormIdSchema,
     title: z.string().min(1),
     responseCount: z.number().int().nonnegative(),
@@ -248,6 +249,7 @@ export const FormImportSummarySchema = z
   .strict();
 
 export type FormImportSummary = z.infer<typeof FormImportSummarySchema>;
+export type FormImportResult = FormImportSummary;
 
 export const ProjectIdSchema = z.string().min(1);
 export const ProjectSummarySchema = z
