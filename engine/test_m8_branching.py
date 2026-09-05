@@ -72,6 +72,62 @@ class BranchingEligibilityTest(unittest.TestCase):
         self.assertAlmostEqual(achieved.achieved_share, 0.5)
         self.assertAlmostEqual(achieved.absolute_error, 0.0)
 
+    def test_different_checkbox_questions_keep_independent_eligible_denominators(self) -> None:
+        selected_a = _slot("answered", ["A"])
+        selected_b = _slot("answered", ["B"])
+        skipped = _slot("skipped")
+        not_reached = _slot("not_reached")
+        source = pd.DataFrame(
+            {
+                "score": [3, 3],
+                "population": ["P", "P"],
+                "checkbox_a": [selected_a, selected_a],
+                "checkbox_b": [selected_b, not_reached],
+            }
+        )
+        candidates = pd.DataFrame(
+            {
+                "score": [3],
+                "population": ["P"],
+                "checkbox_a": [skipped],
+                "checkbox_b": [not_reached],
+            }
+        )
+        target_a = ConditionalShareTarget(
+            id="option-A",
+            population_column="population",
+            population_member_values=frozenset({"P"}),
+            option_column="checkbox_a",
+            option_values=frozenset({selected_a}),
+            value=2 / 3,
+        )
+        target_b = ConditionalShareTarget(
+            id="option-B",
+            population_column="population",
+            population_member_values=frozenset({"P"}),
+            option_column="checkbox_b",
+            option_values=frozenset({selected_b}),
+            value=1.0,
+        )
+
+        selection = select_for_targets(
+            source,
+            candidates,
+            target_column="score",
+            final_count=3,
+            target_mean=3.0,
+            target_min=1,
+            target_max=5,
+            conditional_share_targets=(target_a, target_b),
+        )
+        by_id = {target.id: target for target in selection.conditional_shares}
+        self.assertEqual(by_id["option-A"].denominator_count, 3)
+        self.assertEqual(by_id["option-A"].numerator_count, 2)
+        self.assertAlmostEqual(by_id["option-A"].absolute_error, 0.0)
+        self.assertEqual(by_id["option-B"].denominator_count, 1)
+        self.assertEqual(by_id["option-B"].numerator_count, 1)
+        self.assertAlmostEqual(by_id["option-B"].absolute_error, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
