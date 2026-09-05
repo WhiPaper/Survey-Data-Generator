@@ -47,12 +47,33 @@ class ShareAchievement:
 
 
 @dataclass(frozen=True)
+class ConditionalShareTarget:
+    id: str
+    population_column: str
+    population_member_values: frozenset[str]
+    option_column: str
+    option_values: frozenset[str]
+    value: float
+
+
+@dataclass(frozen=True)
+class ConditionalShareAchievement:
+    id: str
+    value: float
+    numerator_count: int
+    denominator_count: int
+    achieved_share: float
+    absolute_error: float
+
+
+@dataclass(frozen=True)
 class TargetSelection:
     selected_indices: np.ndarray
     achieved_mean: float
     mean_absolute_error: float
     mean_exact: bool
     shares: tuple[ShareAchievement, ...]
+    conditional_shares: tuple[ConditionalShareAchievement, ...]
 
 
 @dataclass(frozen=True)
@@ -129,13 +150,44 @@ def plan_mean_support(
     )
 
 
+def _categorical_membership(
+    data: pd.DataFrame,
+    *,
+    column: str,
+    values: frozenset[str],
+    missing_code: str,
+) -> np.ndarray:
+    if column not in data.columns:
+        raise TargetInfeasible(missing_code, f"Target column is missing: {column}")
+    return data[column].isin(values).to_numpy(dtype=float)
+
+
 def _membership(data: pd.DataFrame, target: ShareTarget) -> np.ndarray:
-    if target.column not in data.columns:
-        raise TargetInfeasible(
-            "share_column_missing",
-            f"Share target column is missing: {target.column}",
-        )
-    return data[target.column].isin(target.member_values).to_numpy(dtype=float)
+    return _categorical_membership(
+        data,
+        column=target.column,
+        values=target.member_values,
+        missing_code="share_column_missing",
+    )
+
+
+def _conditional_vectors(
+    data: pd.DataFrame,
+    target: ConditionalShareTarget,
+) -> tuple[np.ndarray, np.ndarray]:
+    population = _categorical_membership(
+        data,
+        column=target.population_column,
+        values=target.population_member_values,
+        missing_code="conditional_population_column_missing",
+    )
+    option = _categorical_membership(
+        data,
+        column=target.option_column,
+        values=target.option_values,
+        missing_code="conditional_option_column_missing",
+    )
+    return population, population * option
 
 
 def plan_share_support(
@@ -181,6 +233,24 @@ def plan_share_support(
     )
 
 
+def _validate_conditional_target(target: ConditionalShareTarget) -> None:
+    if not 0 <= target.value <= 1:
+        raise TargetInfeasible(
+            "conditional_share_out_of_range",
+            f"Requested conditional share {target.value} is outside [0, 1]",
+        )
+    if not target.population_member_values:
+        raise TargetInfeasible(
+            "conditional_population_support",
+            f"Conditional target {target.id} has no observed population member values",
+        )
+    if not target.option_values:
+        raise TargetInfeasible(
+            "conditional_option_support",
+            f"Conditional target {target.id} has no observed checkbox option values",
+        )
+
+
 def select_for_targets(
     source: pd.DataFrame,
     candidates: pd.DataFrame,
@@ -191,12 +261,20 @@ def select_for_targets(
     target_min: int,
     target_max: int,
     share_targets: tuple[ShareTarget, ...] = (),
+    conditional_share_targets: tuple[ConditionalShareTarget, ...] = (),
 ) -> TargetSelection:
     if len(share_targets) > 1:
         raise TargetInfeasible(
             "too_many_share_targets",
-            "M5 currently supports at most one share target per Run",
+            "M6 currently supports at most one overall ValueGroup share target per Run",
         )
+    if len({target.id for target in conditional_share_targets}) != len(conditional_share_targets):
+        raise TargetInfeasible(
+            "duplicate_conditional_share_target",
+            "Conditional share target ids must be unique",
+        )
+    for target in conditional_share_targets:
+        _validate_conditional_target(target)
 
     source_count = len(source)
     mean_support = plan_mean_support(
@@ -216,6 +294,9 @@ def select_for_targets(
     additions = final_count - source_count
     source_sum = float(source_scores.sum())
     source_memberships = [support.source_member_count for support in share_supports]
+    source_conditional = [
+        _conditional_vectors(source, target) for target in conditional_share_targets
+    ]
 
     if additions == 0:
         shares = tuple(
@@ -227,12 +308,35 @@ def select_for_targets(
             )
             for share, support in zip(share_targets, share_supports, strict=True)
         )
+        conditional_results: list[ConditionalShareAchievement] = []
+        for target, (population, numerator) in zip(
+            conditional_share_targets, source_conditional, strict=True
+        ):
+            denominator_count = int(population.sum())
+            if denominator_count == 0:
+                raise TargetInfeasible(
+                    "conditional_population_empty",
+                    f"Conditional target {target.id} has an empty population",
+                )
+            numerator_count = int(numerator.sum())
+            achieved_share = numerator_count / denominator_count
+            conditional_results.append(
+                ConditionalShareAchievement(
+                    id=target.id,
+                    value=target.value,
+                    numerator_count=numerator_count,
+                    denominator_count=denominator_count,
+                    achieved_share=achieved_share,
+                    absolute_error=abs(achieved_share - target.value),
+                )
+            )
         return TargetSelection(
             selected_indices=np.array([], dtype=int),
             achieved_mean=mean_support.achieved_mean,
             mean_absolute_error=mean_support.absolute_error,
             mean_exact=mean_support.absolute_error <= 1e-9,
             shares=shares,
+            conditional_shares=tuple(conditional_results),
         )
 
     if len(candidates) < additions:
@@ -250,10 +354,14 @@ def select_for_targets(
 
     scores = candidate_scores.to_numpy(dtype=float)
     candidate_memberships = [_membership(candidates, share) for share in share_targets]
+    candidate_conditional = [
+        _conditional_vectors(candidates, target) for target in conditional_share_targets
+    ]
     candidate_count = len(candidates)
-    slack_count = 1 + len(share_targets)
+    slack_count = 1 + len(share_targets) + len(conditional_share_targets)
     variable_count = candidate_count + slack_count
     mean_slack_index = candidate_count
+    conditional_slack_start = candidate_count + 1 + len(share_targets)
 
     objective = np.zeros(variable_count, dtype=float)
     objective[mean_slack_index:] = 1.0 / final_count
@@ -308,6 +416,43 @@ def select_for_targets(
         share_lower[slack_index] = 1.0
         rows.append(share_lower)
         lower.append(share_rhs)
+        upper.append(np.inf)
+
+    for index, (target, source_vectors, candidate_vectors) in enumerate(
+        zip(
+            conditional_share_targets,
+            source_conditional,
+            candidate_conditional,
+            strict=True,
+        )
+    ):
+        source_population, source_numerator = source_vectors
+        candidate_population, candidate_numerator = candidate_vectors
+        source_population_count = int(source_population.sum())
+        source_numerator_count = int(source_numerator.sum())
+        slack_index = conditional_slack_start + index
+
+        denominator_row = np.zeros(variable_count, dtype=float)
+        denominator_row[:candidate_count] = candidate_population
+        rows.append(denominator_row)
+        lower.append(float(max(0, 1 - source_population_count)))
+        upper.append(np.inf)
+
+        residual_coefficients = candidate_numerator - target.value * candidate_population
+        residual_rhs = -(source_numerator_count - target.value * source_population_count)
+
+        conditional_upper = np.zeros(variable_count, dtype=float)
+        conditional_upper[:candidate_count] = residual_coefficients
+        conditional_upper[slack_index] = -1.0
+        rows.append(conditional_upper)
+        lower.append(-np.inf)
+        upper.append(residual_rhs)
+
+        conditional_lower = np.zeros(variable_count, dtype=float)
+        conditional_lower[:candidate_count] = residual_coefficients
+        conditional_lower[slack_index] = 1.0
+        rows.append(conditional_lower)
+        lower.append(residual_rhs)
         upper.append(np.inf)
 
     result = milp(
@@ -366,12 +511,38 @@ def select_for_targets(
                 ),
             )
 
+    conditional_results: list[ConditionalShareAchievement] = []
+    for target, source_vectors, candidate_vectors in zip(
+        conditional_share_targets,
+        source_conditional,
+        candidate_conditional,
+        strict=True,
+    ):
+        source_population, source_numerator = source_vectors
+        candidate_population, candidate_numerator = candidate_vectors
+        denominator_count = int(source_population.sum() + candidate_population[selected].sum())
+        numerator_count = int(source_numerator.sum() + candidate_numerator[selected].sum())
+        if denominator_count <= 0:
+            raise RuntimeError(f"Conditional target {target.id} ended with an empty population")
+        achieved_share = numerator_count / denominator_count
+        conditional_results.append(
+            ConditionalShareAchievement(
+                id=target.id,
+                value=target.value,
+                numerator_count=numerator_count,
+                denominator_count=denominator_count,
+                achieved_share=achieved_share,
+                absolute_error=abs(achieved_share - target.value),
+            )
+        )
+
     return TargetSelection(
         selected_indices=selected,
         achieved_mean=achieved_mean,
         mean_absolute_error=mean_error,
         mean_exact=mean_error <= 1e-9,
         shares=share_results,
+        conditional_shares=tuple(conditional_results),
     )
 
 
