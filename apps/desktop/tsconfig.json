@@ -12,6 +12,12 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"],
-  "exclude": ["src/App.tsx"]
+  "include": [
+    "src/main.tsx",
+    "src/AppShell.tsx",
+    "src/SynthesisPanel.tsx",
+    "src/api/backend.ts",
+    "src/electron.d.ts",
+    "vite.config.ts"
+  ]
 }
