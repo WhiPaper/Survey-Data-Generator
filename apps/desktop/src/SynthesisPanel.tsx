@@ -25,6 +25,12 @@ type GroupableQuestionView = {
   title: string;
   kind: "single_choice" | "text";
 };
+type CheckboxQuestionView = {
+  id: string;
+  title: string;
+  options: Array<{ key: string; label: string }>;
+};
+type ConditionalDraft = { optionKey: string; percent: string };
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -39,6 +45,13 @@ const questions = (project: ProjectDetailView): Record<string, unknown>[] =>
       })
     : [];
 
+const questionTitle = (question: Record<string, unknown>): string =>
+  typeof question.title === "string" && question.title.length > 0
+    ? question.title
+    : typeof question.id === "string"
+      ? question.id
+      : "질문";
+
 const ordinalQuestions = (project: ProjectDetailView): OrdinalQuestionView[] =>
   questions(project).flatMap((question) => {
     if (
@@ -52,10 +65,7 @@ const ordinalQuestions = (project: ProjectDetailView): OrdinalQuestionView[] =>
     return [
       {
         id: question.id,
-        title:
-          typeof question.title === "string" && question.title.length > 0
-            ? question.title
-            : question.id,
+        title: questionTitle(question),
         min: question.min,
         max: question.max,
       },
@@ -70,20 +80,34 @@ const groupableQuestions = (project: ProjectDetailView): GroupableQuestionView[]
     ) {
       return [];
     }
-    return [
-      {
-        id: question.id,
-        title:
-          typeof question.title === "string" && question.title.length > 0
-            ? question.title
-            : question.id,
-        kind: question.kind,
-      },
-    ];
+    return [{ id: question.id, title: questionTitle(question), kind: question.kind }];
+  });
+
+const checkboxQuestions = (project: ProjectDetailView): CheckboxQuestionView[] =>
+  questions(project).flatMap((question) => {
+    if (
+      question.kind !== "multi_choice" ||
+      typeof question.id !== "string" ||
+      !Array.isArray(question.options)
+    ) {
+      return [];
+    }
+    const options = question.options.flatMap((value) => {
+      const option = asRecord(value);
+      if (!option || typeof option.key !== "string" || typeof option.label !== "string") return [];
+      return [{ key: option.key, label: option.label }];
+    });
+    return [{ id: question.id, title: questionTitle(question), options }];
   });
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
+
+const conditionalTargetId = (
+  valueGroupId: string,
+  questionId: string,
+  optionKey: string,
+): string => `conditional:${valueGroupId}:${questionId}:${optionKey}`;
 
 const achieved = (
   run: RunsGetResult | null,
@@ -92,6 +116,14 @@ const achieved = (
   absoluteError: number;
   exact: boolean;
   shares: Array<{ id: string; share: number; absoluteError: number; exact: boolean }>;
+  conditionalShares: Array<{
+    id: string;
+    share: number;
+    numeratorCount: number;
+    denominatorCount: number;
+    absoluteError: number;
+    exact: boolean;
+  }>;
   qualityScore?: number;
 } | null => {
   if (!run) return null;
@@ -123,6 +155,29 @@ const achieved = (
           : [];
       })
     : [];
+  const conditionalShares = Array.isArray(achievedRecord.conditionalShares)
+    ? achievedRecord.conditionalShares.flatMap((value) => {
+        const item = asRecord(value);
+        return item &&
+          typeof item.id === "string" &&
+          typeof item.share === "number" &&
+          typeof item.numeratorCount === "number" &&
+          typeof item.denominatorCount === "number" &&
+          typeof item.absoluteError === "number" &&
+          typeof item.exact === "boolean"
+          ? [
+              {
+                id: item.id,
+                share: item.share,
+                numeratorCount: item.numeratorCount,
+                denominatorCount: item.denominatorCount,
+                absoluteError: item.absoluteError,
+                exact: item.exact,
+              },
+            ]
+          : [];
+      })
+    : [];
   const quality = asRecord(run.validation.quality);
   const qualityScore = quality?.sdmetricsScore;
   return {
@@ -130,6 +185,7 @@ const achieved = (
     absoluteError: achievedRecord.absoluteError,
     exact: achievedRecord.exact,
     shares,
+    conditionalShares,
     ...(typeof qualityScore === "number" ? { qualityScore } : {}),
   };
 };
@@ -137,6 +193,7 @@ const achieved = (
 export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   const ordinal = useMemo(() => ordinalQuestions(project), [project]);
   const groupable = useMemo(() => groupableQuestions(project), [project]);
+  const checkbox = useMemo(() => checkboxQuestions(project), [project]);
   const [questionId, setQuestionId] = useState("");
   const [finalCount, setFinalCount] = useState(String(project.responseCount + 40));
   const [targetMean, setTargetMean] = useState("4.7");
@@ -152,6 +209,10 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   const [useShare, setUseShare] = useState(false);
   const [shareGroupId, setShareGroupId] = useState("");
   const [targetSharePercent, setTargetSharePercent] = useState("35");
+  const [useConditional, setUseConditional] = useState(false);
+  const [conditionalGroupId, setConditionalGroupId] = useState("");
+  const [conditionalQuestionId, setConditionalQuestionId] = useState("");
+  const [conditionalDrafts, setConditionalDrafts] = useState<ConditionalDraft[]>([]);
   const [groupBusy, setGroupBusy] = useState(false);
   const [operationId, setOperationId] = useState<string | null>(null);
   const [result, setResult] = useState<SynthesisStartResult | null>(null);
@@ -161,8 +222,12 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   const reloadGroups = async (): Promise<void> => {
     const next = await listValueGroups(project.id);
     setGroups(next);
+    const first = next[0]?.id ?? "";
     setShareGroupId((current) =>
-      current && next.some((group) => group.id === current) ? current : (next[0]?.id ?? ""),
+      current && next.some((group) => group.id === current) ? current : first,
+    );
+    setConditionalGroupId((current) =>
+      current && next.some((group) => group.id === current) ? current : first,
     );
   };
 
@@ -179,6 +244,9 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     setGroupMembers([]);
     setUseShare(false);
     setTargetSharePercent("35");
+    setUseConditional(false);
+    setConditionalQuestionId(checkbox[0]?.id ?? "");
+    setConditionalDrafts([]);
     setOperationId(null);
     setResult(null);
     setRun(null);
@@ -213,6 +281,8 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   }, [project.id, groupQuestionId]);
 
   const selectedQuestion = ordinal.find((question) => question.id === questionId) ?? null;
+  const selectedConditionalQuestion =
+    checkbox.find((question) => question.id === conditionalQuestionId) ?? null;
   const metrics = achieved(run);
   const filteredGroupValues = useMemo(() => {
     const query = groupValueQuery.trim().toLocaleLowerCase();
@@ -242,6 +312,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
       setGroupMembers([]);
       await reloadGroups();
       setShareGroupId(created.id);
+      setConditionalGroupId(created.id);
     } catch (cause: unknown) {
       setError(errorMessage(cause));
     } finally {
@@ -269,6 +340,23 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     }
   };
 
+  const toggleConditionalOption = (optionKey: string, checked: boolean): void => {
+    setConditionalDrafts((current) => {
+      if (checked) {
+        return current.some((draft) => draft.optionKey === optionKey)
+          ? current
+          : [...current, { optionKey, percent: "50" }];
+      }
+      return current.filter((draft) => draft.optionKey !== optionKey);
+    });
+  };
+
+  const updateConditionalPercent = (optionKey: string, percent: string): void => {
+    setConditionalDrafts((current) =>
+      current.map((draft) => (draft.optionKey === optionKey ? { ...draft, percent } : draft)),
+    );
+  };
+
   const handleStart = async (): Promise<void> => {
     if (!selectedQuestion) return;
     const parsedFinalCount = Number(finalCount);
@@ -293,6 +381,13 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     const targets: Array<
       | { kind: "mean"; questionId: string; value: number }
       | { kind: "share"; valueGroupId: string; value: number }
+      | {
+          kind: "conditional_share";
+          valueGroupId: string;
+          questionId: string;
+          optionKey: string;
+          value: number;
+        }
     > = [{ kind: "mean", questionId: selectedQuestion.id, value: parsedMean }];
     if (useShare) {
       const parsedShare = Number(targetSharePercent) / 100;
@@ -301,6 +396,27 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
         return;
       }
       targets.push({ kind: "share", valueGroupId: shareGroupId, value: parsedShare });
+    }
+
+    if (useConditional) {
+      if (!conditionalGroupId || !selectedConditionalQuestion || conditionalDrafts.length === 0) {
+        setError("조건부 share는 Population ValueGroup, checkbox 질문, 하나 이상의 옵션이 필요합니다.");
+        return;
+      }
+      for (const draft of conditionalDrafts) {
+        const value = Number(draft.percent) / 100;
+        if (!Number.isFinite(value) || value < 0 || value > 1) {
+          setError("조건부 share 비율은 0–100 사이여야 합니다.");
+          return;
+        }
+        targets.push({
+          kind: "conditional_share",
+          valueGroupId: conditionalGroupId,
+          questionId: selectedConditionalQuestion.id,
+          optionKey: draft.optionKey,
+          value,
+        });
+      }
     }
 
     const nextOperationId = `synthesis-${Date.now()}`;
@@ -342,7 +458,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
           <p style={{ margin: 0, fontWeight: 600 }}>M5 · ValueGroup</p>
           <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
             <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
-              그룹 질문 (single-choice / text)
+              그룹화할 질문 (single-choice / text)
               <select
                 value={groupQuestionId}
                 onChange={(event) => {
@@ -399,16 +515,9 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
               {groups.map((group) => (
                 <div
                   key={group.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 8,
-                    fontSize: 12,
-                  }}
+                  style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}
                 >
-                  <span>
-                    {group.name} · 멤버 {group.members.length}개
-                  </span>
+                  <span>{group.name} · 멤버 {group.members.length}개</span>
                   <button
                     type="button"
                     disabled={groupBusy}
@@ -431,10 +540,12 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
         </section>
       ) : (
         <section style={{ padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
-          <p style={{ margin: 0, fontWeight: 600 }}>M5 · 최종 N + mean + share</p>
+          <p style={{ margin: 0, fontWeight: 600 }}>
+            M6 · 최종 N + mean + share + conditional checkbox share
+          </p>
           <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
             <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
-              mean 질문
+              평균을 맞출 점수 질문
               <select
                 value={questionId}
                 onChange={(event) => setQuestionId(event.target.value)}
@@ -463,6 +574,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                 disabled={operationId !== null}
               />
             </label>
+
             {groups.length > 0 ? (
               <>
                 <label style={{ fontSize: 12 }}>
@@ -472,7 +584,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                     onChange={(event) => setUseShare(event.target.checked)}
                     disabled={operationId !== null}
                   />{" "}
-                  ValueGroup share target 사용
+                  ValueGroup 전체 비중 target 사용
                 </label>
                 {useShare ? (
                   <div style={{ display: "grid", gap: 6 }}>
@@ -482,9 +594,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                       disabled={operationId !== null}
                     >
                       {groups.map((group) => (
-                        <option key={group.id} value={group.id}>
-                          {group.name}
-                        </option>
+                        <option key={group.id} value={group.id}>{group.name}</option>
                       ))}
                     </select>
                     <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
@@ -499,6 +609,86 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                 ) : null}
               </>
             ) : null}
+
+            {groups.length > 0 && checkbox.length > 0 ? (
+              <>
+                <label style={{ fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={useConditional}
+                    onChange={(event) => setUseConditional(event.target.checked)}
+                    disabled={operationId !== null}
+                  />{" "}
+                  ValueGroup 내부 checkbox 조건부 share target 사용
+                </label>
+                {useConditional ? (
+                  <div style={{ display: "grid", gap: 8, paddingLeft: 12 }}>
+                    <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+                      Population ValueGroup (분모)
+                      <select
+                        value={conditionalGroupId}
+                        onChange={(event) => setConditionalGroupId(event.target.value)}
+                        disabled={operationId !== null}
+                      >
+                        {groups.map((group) => (
+                          <option key={group.id} value={group.id}>{group.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+                      checkbox 질문
+                      <select
+                        value={conditionalQuestionId}
+                        onChange={(event) => {
+                          setConditionalQuestionId(event.target.value);
+                          setConditionalDrafts([]);
+                        }}
+                        disabled={operationId !== null}
+                      >
+                        {checkbox.map((question) => (
+                          <option key={question.id} value={question.id}>{question.title}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {selectedConditionalQuestion?.options.map((option) => {
+                        const draft = conditionalDrafts.find(
+                          (candidate) => candidate.optionKey === option.key,
+                        );
+                        return (
+                          <div
+                            key={option.key}
+                            style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: 8 }}
+                          >
+                            <label style={{ fontSize: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={draft !== undefined}
+                                onChange={(event) =>
+                                  toggleConditionalOption(option.key, event.target.checked)
+                                }
+                                disabled={operationId !== null}
+                              />{" "}
+                              {option.label}
+                            </label>
+                            <input
+                              aria-label={`${option.label} 조건부 share`}
+                              value={draft?.percent ?? ""}
+                              placeholder="%"
+                              disabled={draft === undefined || operationId !== null}
+                              onChange={(event) =>
+                                updateConditionalPercent(option.key, event.target.value)
+                              }
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+
             <label style={{ fontSize: 12 }}>
               <input
                 type="checkbox"
@@ -529,9 +719,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
               {operationId ? "합성 중…" : "합성 실행"}
             </button>
             {operationId ? (
-              <button type="button" onClick={() => void handleCancel()}>
-                취소
-              </button>
+              <button type="button" onClick={() => void handleCancel()}>취소</button>
             ) : null}
           </div>
 
@@ -541,7 +729,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
               <p style={{ margin: "4px 0 0" }}>
                 합성 {result.syntheticResponseCount}개 · 최종 {result.finalResponseCount}개
               </p>
-              {metrics ? (
+              {metrics && run ? (
                 <>
                   <p style={{ margin: "4px 0 0" }}>
                     달성 평균 {metrics.mean.toFixed(6)} · 오차 {metrics.absoluteError.toFixed(6)} ·{" "}
@@ -551,10 +739,43 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                       : ` · SDMetrics ${metrics.qualityScore.toFixed(4)}`}
                   </p>
                   {metrics.shares.map((share) => {
-                    const group = groups.find((candidate) => candidate.id === share.id);
+                    const frozen = run.targetSnapshot.targets.find(
+                      (target) => target.kind === "share" && target.valueGroup.id === share.id,
+                    );
                     return (
                       <p key={share.id} style={{ margin: "4px 0 0" }}>
-                        {group?.name ?? share.id} share {(share.share * 100).toFixed(2)}% · 오차{" "}
+                        {frozen?.kind === "share" ? frozen.valueGroup.name : share.id} share{" "}
+                        {(share.share * 100).toFixed(2)}% · 오차{" "}
+                        {(share.absoluteError * 100).toFixed(2)}%p ·{" "}
+                        {share.exact ? "정확히 표현됨" : "가장 가까운 표현"}
+                      </p>
+                    );
+                  })}
+                  {metrics.conditionalShares.map((share) => {
+                    const frozen = run.targetSnapshot.targets.find(
+                      (target) =>
+                        target.kind === "conditional_share" &&
+                        conditionalTargetId(
+                          target.valueGroup.id,
+                          target.questionId,
+                          target.optionKey,
+                        ) === share.id,
+                    );
+                    const question =
+                      frozen?.kind === "conditional_share"
+                        ? checkbox.find((candidate) => candidate.id === frozen.questionId)
+                        : null;
+                    const option =
+                      frozen?.kind === "conditional_share"
+                        ? question?.options.find((candidate) => candidate.key === frozen.optionKey)
+                        : null;
+                    const population =
+                      frozen?.kind === "conditional_share" ? frozen.valueGroup.name : share.id;
+                    return (
+                      <p key={share.id} style={{ margin: "4px 0 0" }}>
+                        {population} 중 {option?.label ?? "checkbox option"} ·{" "}
+                        {share.numeratorCount}/{share.denominatorCount} ={" "}
+                        {(share.share * 100).toFixed(2)}% · 오차{" "}
                         {(share.absoluteError * 100).toFixed(2)}%p ·{" "}
                         {share.exact ? "정확히 표현됨" : "가장 가까운 표현"}
                       </p>
@@ -577,11 +798,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
         </section>
       )}
 
-      {error ? (
-        <p role="alert" style={{ margin: 0, fontSize: 12 }}>
-          {error}
-        </p>
-      ) : null}
+      {error ? <p role="alert" style={{ margin: 0, fontSize: 12 }}>{error}</p> : null}
     </div>
   );
 }
