@@ -19,6 +19,7 @@ import {
   logout,
   pingBackend,
 } from "./api/backend";
+import { SynthesisPanel } from "./SynthesisPanel";
 
 type RuntimeState = "checking" | "ready" | "error";
 
@@ -270,16 +271,19 @@ export function AppShell() {
               </div>
 
               {selectedProject ? (
-                <div style={{ marginTop: 12, padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
-                  <p style={{ margin: 0, fontWeight: 600 }}>열린 프로젝트: {selectedProject.name}</p>
-                  <p style={{ margin: "6px 0 0", fontSize: 13 }}>
-                    SourceRevision {selectedProject.currentSourceRevisionId} · 응답 {selectedProject.responseCount}개
-                  </p>
-                  {selectedProject.responseTimestampRange ? (
-                    <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
-                      {selectedProject.responseTimestampRange.start} → {selectedProject.responseTimestampRange.end}
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
+                    <p style={{ margin: 0, fontWeight: 600 }}>열린 프로젝트: {selectedProject.name}</p>
+                    <p style={{ margin: "6px 0 0", fontSize: 13 }}>
+                      SourceRevision {selectedProject.currentSourceRevisionId} · 응답 {selectedProject.responseCount}개
                     </p>
-                  ) : null}
+                    {selectedProject.responseTimestampRange ? (
+                      <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
+                        {selectedProject.responseTimestampRange.start} → {selectedProject.responseTimestampRange.end}
+                      </p>
+                    ) : null}
+                  </div>
+                  <SynthesisPanel project={selectedProject} />
                 </div>
               ) : null}
             </div>
