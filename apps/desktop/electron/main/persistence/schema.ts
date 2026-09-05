@@ -80,6 +80,22 @@ export const sourceResponses = sqliteTable(
   ],
 );
 
+export const valueGroups = sqliteTable(
+  "value_groups",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    questionId: text("question_id").notNull(),
+    name: text("name").notNull(),
+    membersJson: text("members_json").notNull(),
+    createdAtMs: integer("created_at_ms").notNull(),
+    updatedAtMs: integer("updated_at_ms").notNull(),
+  },
+  (table) => [index("value_groups_project_idx").on(table.projectId)],
+);
+
 export const runs = sqliteTable(
   "runs",
   {
@@ -137,6 +153,7 @@ export const persistenceSchema = {
   formSnapshots,
   sourceRevisions,
   sourceResponses,
+  valueGroups,
   runs,
   runRows,
   preferences,
