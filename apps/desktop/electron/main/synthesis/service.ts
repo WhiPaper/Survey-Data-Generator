@@ -40,7 +40,7 @@ export type CreateSynthesisServiceOptions = {
 export interface SynthesisService {
   start(params: SynthesisStartParams): Promise<SynthesisStartResult>;
   cancel(operationId: string): boolean;
-  getRun(runId: string): Promise<RunsGetResult | null>;
+  getRun(runId: string): Promise<RunsGetResult>;
 }
 
 type FrozenScope = {
@@ -132,7 +132,7 @@ const meanTarget = (params: SynthesisStartParams): {
   if (!target || target.kind !== "mean" || target.target.kind !== "mean") {
     throw backendFailure("VALIDATION_FAILED", "M4 supports ordinal mean targets only");
   }
-  return { questionId: target.questionId, value: target.target.value };
+  return { questionId: target.questionId as QuestionId, value: target.target.value };
 };
 
 const loadForm = (db: SurveyDatabase, formSnapshotId: string): FormSnapshot => {
@@ -275,7 +275,7 @@ export const createSynthesisService = ({
 
   getRun: async (runId) => {
     const run = getRunRecord(db, runId);
-    if (!run) return null;
+    if (!run) throw backendFailure("NOT_FOUND", "Run was not found");
     const targetSnapshot = JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"];
     const engineReport = JSON.parse(run.engineReportJson) as unknown;
     return {
