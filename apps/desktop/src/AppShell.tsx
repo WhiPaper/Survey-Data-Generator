@@ -10,6 +10,7 @@ import type {
 
 import {
   cancelFormImport,
+  deleteProject,
   getProject,
   getSession,
   importForm,
@@ -164,6 +165,25 @@ export function AppShell() {
     }
   };
 
+  const handleDeleteProject = async (project: ProjectSummaryView): Promise<void> => {
+    if (!window.confirm(`프로젝트 “${project.name}”을 삭제할까요? 저장된 Run도 함께 삭제됩니다.`)) {
+      return;
+    }
+
+    setProjectsBusy(true);
+    setProjectsError(null);
+    try {
+      await deleteProject(project.id);
+      if (selectedProject?.id === project.id) setSelectedProject(null);
+      if (importSummary?.projectId === project.id) setImportSummary(null);
+      setProjects(await listProjects());
+    } catch (error: unknown) {
+      setProjectsError(errorMessage(error));
+    } finally {
+      setProjectsBusy(false);
+    }
+  };
+
   const handleImport = async (form: FormListItem): Promise<void> => {
     const operationId = `form-import-${Date.now()}`;
     setImportOperationId(operationId);
@@ -263,9 +283,14 @@ export function AppShell() {
                         응답 {project.responseCount}개 · 질문 {project.questionCount}개
                       </p>
                     </div>
-                    <button type="button" disabled={projectsBusy} onClick={() => void openProject(project.id)}>
-                      열기
-                    </button>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button type="button" disabled={projectsBusy} onClick={() => void openProject(project.id)}>
+                        열기
+                      </button>
+                      <button type="button" disabled={projectsBusy} onClick={() => void handleDeleteProject(project)}>
+                        삭제
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
