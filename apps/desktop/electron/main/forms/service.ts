@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import type {
-  FormImportSummary,
+  FormImportResult,
   FormsImportParams,
   FormsListParams,
   FormsListResult,
@@ -18,7 +18,7 @@ import { GoogleFormNormalizer, GoogleResponseNormalizer } from "./normalizer";
 
 export interface FormsService {
   listForms(params: FormsListParams): Promise<FormsListResult>;
-  importForm(params: FormsImportParams): Promise<FormImportSummary>;
+  importForm(params: FormsImportParams): Promise<FormImportResult>;
   cancelImport(operationId: string): void;
 }
 
@@ -107,8 +107,8 @@ export const createFormsService = ({
         ).length;
 
         return {
-          // v2 persists immediately; the historical field now identifies the created project.
-          importId: imported.project.id,
+          projectId: imported.project.id,
+          sourceRevisionId: imported.revision.id,
           formId: form.formId,
           title: form.title,
           responseCount: responses.length,
