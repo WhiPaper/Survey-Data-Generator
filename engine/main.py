@@ -38,10 +38,12 @@ from generate import (  # noqa: E402
     generate_candidates,
 )
 from prepare import read_source, smoke_source, write_parquet  # noqa: E402
+from replacement import EditPlanSelection, plan_replacements  # noqa: E402
 from select import (  # noqa: E402
     ConditionalShareTarget,
     ShareTarget,
     TargetInfeasible,
+    TargetSelection,
     plan_mean_support,
     plan_share_support,
     select_for_targets,
@@ -266,6 +268,86 @@ def _write_infeasible(
     write_report(job.report_json, report)
     emit({"type": "complete", "report": str(job.report_json), "status": "infeasible"})
     return report
+
+
+def _target_outcome(selection: TargetSelection) -> dict[str, object]:
+    return {
+        "mean": selection.achieved_mean,
+        "absoluteError": selection.mean_absolute_error,
+        "exact": selection.mean_exact,
+        "shares": [
+            {
+                "id": target.id,
+                "value": target.value,
+                "share": target.achieved_share,
+                "absoluteError": target.absolute_error,
+                "exact": target.absolute_error <= 1e-9,
+            }
+            for target in selection.shares
+        ],
+        "conditionalShares": [
+            {
+                "id": target.id,
+                "value": target.value,
+                "share": target.achieved_share,
+                "numeratorCount": target.numerator_count,
+                "denominatorCount": target.denominator_count,
+                "absoluteError": target.absolute_error,
+                "exact": target.absolute_error <= 1e-9,
+            }
+            for target in selection.conditional_shares
+        ],
+    }
+
+
+def _materialize_replacement(
+    source: pandas.DataFrame,
+    candidates: pandas.DataFrame,
+    plan: EditPlanSelection,
+    *,
+    id_column: str,
+    seed: int,
+) -> tuple[pandas.DataFrame, pandas.DataFrame, list[dict[str, str]]]:
+    if plan.status != "available" or plan.replacement_outcome is None:
+        raise ValueError("replacement materialization requires an available EditPlan")
+
+    replacement_pairs = list(plan.proposed_replacements)
+    removed = {pair.source_index for pair in replacement_pairs}
+    kept_source = source.iloc[
+        [index for index in range(len(source)) if index not in removed]
+    ].copy()
+    kept_source["__origin"] = "original"
+
+    replacement_rows = candidates.iloc[
+        [pair.candidate_index for pair in replacement_pairs]
+    ].copy().reset_index(drop=True)
+    replacement_ids = [
+        f"replacement:{seed}:{index + 1}" for index in range(len(replacement_rows))
+    ]
+    replacement_rows.insert(0, id_column, replacement_ids)
+
+    addition_rows = candidates.iloc[plan.addition_candidate_indices].copy().reset_index(drop=True)
+    addition_rows.insert(
+        0,
+        id_column,
+        [f"synthetic:{seed}:{index + 1}" for index in range(len(addition_rows))],
+    )
+
+    generated = pandas.concat([replacement_rows, addition_rows], ignore_index=True)
+    generated["__origin"] = "synthetic"
+    final = pandas.concat([kept_source, generated], ignore_index=True)
+    proposed = [
+        {
+            "sourceResponseId": str(source.iloc[pair.source_index][id_column]),
+            "replacementResponseId": replacement_ids[index],
+        }
+        for index, pair in enumerate(replacement_pairs)
+    ]
+    return generated, final, proposed
+
+
+def _replacement_result_path(result_path: Path) -> Path:
+    return result_path.with_name(f"{result_path.stem}.replacement{result_path.suffix}")
 
 
 def run_synthesize(job_path: Path) -> dict[str, object]:
@@ -519,6 +601,78 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             }
         )
 
+    append_error = (
+        selection.mean_absolute_error
+        + sum(target.absolute_error for target in selection.shares)
+        + sum(target.absolute_error for target in selection.conditional_shares)
+    )
+    edit_plan_report: dict[str, object] = {
+        "status": "not_required",
+        "replacementCount": 0,
+        "proposedReplacements": [],
+        "appendOnlyOutcome": _target_outcome(selection),
+    }
+    if append_error > 1e-9:
+        emit({"type": "progress", "stage": "plan_replacements"})
+        replacement_plan = plan_replacements(
+            source,
+            pool.data,
+            target_column=job.mean_target.column,
+            final_count=job.final_count,
+            target_mean=job.mean_target.value,
+            target_min=job.mean_target.minimum,
+            target_max=job.mean_target.maximum,
+            share_targets=shares,
+            conditional_share_targets=conditionals,
+            append_only_outcome=selection,
+        )
+        edit_plan_report["status"] = replacement_plan.status
+        if replacement_plan.status == "available":
+            if replacement_plan.replacement_outcome is None:
+                raise RuntimeError("Available EditPlan is missing a replacement outcome")
+            replacement_generated, replacement_final, proposed = _materialize_replacement(
+                source,
+                pool.data,
+                replacement_plan,
+                id_column=job.id_column,
+                seed=job.seed,
+            )
+            replacement_evaluation = evaluate_result(
+                source,
+                replacement_generated,
+                replacement_final,
+                metadata=pool.metadata,
+                id_column=job.id_column,
+                target_column=job.mean_target.column,
+                target_mean=job.mean_target.value,
+                target_min=job.mean_target.minimum,
+                target_max=job.mean_target.maximum,
+                expected_final_count=job.final_count,
+            )
+            if (
+                abs(
+                    replacement_evaluation.achieved_mean
+                    - replacement_plan.replacement_outcome.achieved_mean
+                )
+                > 1e-9
+            ):
+                raise RuntimeError("Replacement preview disagreed with MILP mean outcome")
+            replacement_path = _replacement_result_path(job.result_parquet)
+            write_parquet(replacement_final, replacement_path)
+            replacement_outcome = _target_outcome(replacement_plan.replacement_outcome)
+            replacement_outcome["quality"] = {
+                "sdmetricsScore": replacement_evaluation.quality_score,
+                "warning": replacement_evaluation.quality_warning,
+            }
+            replacement_outcome["duplicateRowCount"] = replacement_evaluation.duplicate_row_count
+            edit_plan_report.update(
+                {
+                    "replacementCount": replacement_plan.replacement_count,
+                    "proposedReplacements": proposed,
+                    "replacementOutcome": replacement_outcome,
+                }
+            )
+
     emit({"type": "progress", "stage": "write_result", "rows": len(final)})
     write_parquet(final, job.result_parquet)
 
@@ -558,6 +712,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             "shares": share_achieved,
             "conditionalShares": conditional_achieved,
         },
+        "editPlan": edit_plan_report,
         "validation": {
             "finalCount": True,
             "targetDomain": True,
@@ -565,6 +720,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             "categoricalSupport": True,
             "shareTargets": True,
             "conditionalShareTargets": True,
+            "replacementApplied": False,
             "duplicateRowCount": evaluation.duplicate_row_count,
         },
         "quality": {

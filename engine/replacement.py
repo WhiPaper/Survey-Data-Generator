@@ -307,18 +307,21 @@ def plan_replacements(
     target_max: int,
     share_targets: tuple[ShareTarget, ...] = (),
     conditional_share_targets: tuple[ConditionalShareTarget, ...] = (),
+    append_only_outcome: TargetSelection | None = None,
 ) -> EditPlanSelection:
-    append_only = select_for_targets(
-        source,
-        candidates,
-        target_column=target_column,
-        final_count=final_count,
-        target_mean=target_mean,
-        target_min=target_min,
-        target_max=target_max,
-        share_targets=share_targets,
-        conditional_share_targets=conditional_share_targets,
-    )
+    append_only = append_only_outcome
+    if append_only is None:
+        append_only = select_for_targets(
+            source,
+            candidates,
+            target_column=target_column,
+            final_count=final_count,
+            target_mean=target_mean,
+            target_min=target_min,
+            target_max=target_max,
+            share_targets=share_targets,
+            conditional_share_targets=conditional_share_targets,
+        )
     append_error = _selection_error(append_only)
 
     best = _solve_replacement_selection(
