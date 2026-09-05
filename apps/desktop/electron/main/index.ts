@@ -2,12 +2,15 @@ import { join } from "node:path";
 
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 
-import { handleBackendCall, type BackendServices } from "./backend";
 import { loadGoogleOAuthConfig } from "./auth/config";
 import { createElectronRefreshTokenStore } from "./auth/electron-credentials";
 import { createGoogleProvider } from "./auth/google-provider";
 import { createGoogleAuthService } from "./auth/service";
+import { handleBackendCall, type BackendServices } from "./backend";
 import { normalizeBackendError } from "./errors";
+import { createGoogleFormsClient } from "./forms/google-client";
+import { createFormsService } from "./forms/service";
+import { createJobRegistry } from "./jobs";
 import { openAppDatabase, type AppDatabase } from "./persistence/database";
 
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
@@ -67,15 +70,25 @@ void app
     const refreshTokens = createElectronRefreshTokenStore(
       join(userDataPath, "credentials", "google-refresh-tokens.json"),
     );
-    const google = createGoogleProvider({
+    const googleProvider = createGoogleProvider({
       getConfig: () => loadGoogleOAuthConfig({ appPath: app.getAppPath() }),
       openExternal: (url) => shell.openExternal(url),
     });
+    const auth = createGoogleAuthService({
+      db: appDatabase.db,
+      refreshTokens,
+      google: googleProvider,
+    });
+    const jobs = createJobRegistry();
+    const googleForms = createGoogleFormsClient({ auth });
+
     backendServices = {
-      auth: createGoogleAuthService({
+      auth,
+      forms: createFormsService({
+        auth,
+        google: googleForms,
         db: appDatabase.db,
-        refreshTokens,
-        google,
+        jobs,
       }),
     };
 
