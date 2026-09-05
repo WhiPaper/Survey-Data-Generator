@@ -112,19 +112,22 @@ conditional_share(option | group)
 
 The denominator is not the whole final dataset and is not the number of rows that selected any checkbox option. In M6, ValueGroup population membership defines the denominator directly. Branching/not-reached denominator semantics remain an M8 edge case rather than being inferred implicitly here.
 
+If an overall ValueGroup share target is enabled for the same population, that target fixes the best-representable final population size. If it is not enabled, the final population size is itself a solver decision. In that case the solver must minimize actual conditional percentage error `abs(numerator / denominator - target)`, not a residual normalized by the whole final dataset. M6 represents the possible integer population denominators explicitly inside the MILP and rejects candidate-limited results that are worse than the append-only theoretical support.
+
 Deliver:
 
 - conditional population indicator derived from the frozen ValueGroup
 - checkbox option indicators derived from exact observed multi-choice AnswerSlot support
-- one linear residual constraint per conditional target:
-  `numerator - p * denominator ≈ 0`
+- integer denominator selection for each conditional ValueGroup population
+- actual conditional percentage-error objective for each target
 - overlapping option contribution: one selected row may contribute to multiple option numerators
 - target-directed SDV candidate support for population + option-present/option-absent states
 - simultaneous SciPy MILP solve with final N, mean, optional overall ValueGroup share, and multiple conditional checkbox shares
+- append-only theoretical-support guard for conditional targets
 - final Parquet revalidation of numerator, denominator, and achieved conditional share
 - frozen ValueGroup + checkbox questionId + optionKey in the Run target snapshot
 
-Acceptance: one row that selected both checkbox A and checkbox B contributes to both conditional targets correctly, while each target uses the same frozen ValueGroup population denominator.
+Acceptance: one row that selected both checkbox A and checkbox B contributes to both conditional targets correctly, while each target uses the same frozen ValueGroup population denominator. When an initial small population has a large percentage error, the solver may add population rows to reduce the actual conditional percentage error rather than preserving the small denominator merely because its raw count residual is cheaper.
 
 ## M7 — Original replacement planning
 
