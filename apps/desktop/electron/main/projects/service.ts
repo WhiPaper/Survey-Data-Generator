@@ -1,9 +1,11 @@
+import { eq } from "drizzle-orm";
+
 import type { ProjectDetailView, ProjectSummaryView } from "@survey-synth/contracts";
 
 import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
+import { formSnapshots } from "../persistence/schema";
 import {
-  getFormSnapshot,
   getProject,
   getSourceRevision,
   listProjects,
@@ -45,7 +47,11 @@ const loadProject = (db: SurveyDatabase, project: ProjectRecord): LoadedProject 
   if (!revision) {
     throw backendFailure("INTERNAL", "Project source revision is missing");
   }
-  const snapshot = getFormSnapshot(db, revision.formSnapshotId);
+  const snapshot = db
+    .select()
+    .from(formSnapshots)
+    .where(eq(formSnapshots.id, revision.formSnapshotId))
+    .get();
   if (!snapshot) {
     throw backendFailure("INTERNAL", "Project Form snapshot is missing");
   }
