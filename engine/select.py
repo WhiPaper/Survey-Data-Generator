@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from answer_slots import answer_cell_eligible
 from selection_solver import ConditionalMetric, solve_binary_selection
 
 
@@ -191,13 +192,20 @@ def _conditional_vectors(
         values=target.population_member_values,
         missing_code="conditional_population_column_missing",
     )
+    if target.option_column not in data.columns:
+        raise TargetInfeasible(
+            "conditional_option_column_missing",
+            f"Target column is missing: {target.option_column}",
+        )
+    eligible = data[target.option_column].map(answer_cell_eligible).to_numpy(dtype=float)
     option = _categorical_membership(
         data,
         column=target.option_column,
         values=target.option_values,
         missing_code="conditional_option_column_missing",
     )
-    return population, population * option
+    eligible_population = population * eligible
+    return eligible_population, eligible_population * option
 
 
 def plan_share_support(
@@ -300,7 +308,7 @@ def plan_conditional_support(
     *,
     targets: tuple[ConditionalShareTarget, ...],
     final_count: int,
-    fixed_denominator: int | None = None,
+    population_additions: int | None = None,
 ) -> ConditionalSupportPlan:
     if not targets:
         raise ValueError("conditional support requires at least one target")
@@ -308,30 +316,23 @@ def plan_conditional_support(
     if any(_population_key(target) != (population_column, population_values) for target in targets):
         raise ValueError("conditional support targets must share one population")
 
-    population = _categorical_membership(
-        source,
-        column=population_column,
-        values=population_values,
-        missing_code="conditional_population_column_missing",
-    )
-    source_population_count = int(population.sum())
+    source_population_count = int(_conditional_vectors(source, targets[0])[0].sum())
     if source_population_count <= 0:
         raise TargetInfeasible(
             "conditional_population_empty",
-            "Conditional target population is empty in the immutable source",
+            "Conditional target eligible population is empty in the immutable source",
         )
     additions = final_count - len(source)
-    minimum_denominator = source_population_count
-    maximum_denominator = source_population_count + additions
-    if fixed_denominator is not None:
-        if not minimum_denominator <= fixed_denominator <= maximum_denominator:
-            raise TargetInfeasible(
-                "conditional_population_conflict",
-                "Conditional population denominator conflicts with the overall share target",
-            )
-        denominators = [fixed_denominator]
-    else:
-        denominators = range(minimum_denominator, maximum_denominator + 1)
+    available_population_additions = additions if population_additions is None else population_additions
+    if not 0 <= available_population_additions <= additions:
+        raise TargetInfeasible(
+            "conditional_population_conflict",
+            "Conditional eligible population conflicts with the overall share target",
+        )
+    denominators = range(
+        source_population_count,
+        source_population_count + available_population_additions + 1,
+    )
 
     source_numerators = {
         target.id: int(_conditional_vectors(source, target)[1].sum()) for target in targets
@@ -421,9 +422,8 @@ def select_for_targets(
             source,
             targets=targets,
             final_count=final_count,
-            fixed_denominator=(
-                share_support_by_population[key].source_member_count
-                + share_support_by_population[key].synthetic_member_count
+            population_additions=(
+                share_support_by_population[key].synthetic_member_count
                 if key in share_support_by_population
                 else None
             ),
@@ -449,7 +449,7 @@ def select_for_targets(
             if denominator_count == 0:
                 raise TargetInfeasible(
                     "conditional_population_empty",
-                    f"Conditional target {target.id} has an empty population",
+                    f"Conditional target {target.id} has an empty eligible population",
                 )
             numerator_count = int(numerator.sum())
             achieved_share = numerator_count / denominator_count
@@ -494,11 +494,14 @@ def select_for_targets(
     group_denominators: dict[tuple[str, frozenset[str]], list[int]] = {}
     for key, targets in conditional_groups:
         source_population = int(_conditional_vectors(source, targets[0])[0].sum())
-        if key in share_support_by_population:
-            support = share_support_by_population[key]
-            group_denominators[key] = [support.source_member_count + support.synthetic_member_count]
-        else:
-            group_denominators[key] = list(range(source_population, source_population + additions + 1))
+        population_additions = (
+            share_support_by_population[key].synthetic_member_count
+            if key in share_support_by_population
+            else additions
+        )
+        group_denominators[key] = list(
+            range(source_population, source_population + population_additions + 1)
+        )
 
     solution = solve_binary_selection(
         scores=np.concatenate([source_scores.to_numpy(dtype=float), candidate_score_values]),
@@ -589,7 +592,7 @@ def select_for_targets(
         denominator_count = int(source_population.sum() + candidate_population[selected].sum())
         numerator_count = int(source_numerator.sum() + candidate_numerator[selected].sum())
         if denominator_count <= 0:
-            raise RuntimeError(f"Conditional target {target.id} ended with an empty population")
+            raise RuntimeError(f"Conditional target {target.id} ended with an empty eligible population")
         achieved_share = numerator_count / denominator_count
         conditional_results.append(
             ConditionalShareAchievement(
@@ -615,7 +618,7 @@ def select_for_targets(
                 (
                     "Candidate pool can only reach total conditional share error "
                     f"{actual_total_error:.6f}, but immutable source counts can reach "
-                    f"{support.total_absolute_error:.6f} with population denominator "
+                    f"{support.total_absolute_error:.6f} with eligible population denominator "
                     f"{support.denominator_count}"
                 ),
             )
