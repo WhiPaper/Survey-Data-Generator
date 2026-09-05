@@ -6,16 +6,16 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from selection_solver import ConditionalMetric, solve_binary_selection
+from selection_solver import ConditionalMetric, PopulationKey, solve_binary_selection
 from select import (
     ConditionalShareAchievement,
     ConditionalShareTarget,
     ShareAchievement,
     ShareTarget,
     TargetSelection,
+    _conditional_group_key,
     _conditional_vectors,
     _membership,
-    _population_key,
     select_for_targets,
 )
 
@@ -85,12 +85,11 @@ def _evaluate_selection(
 
     conditional_results: list[ConditionalShareAchievement] = []
     for target in conditional_share_targets:
-        population = final[target.population_column].isin(target.population_member_values)
-        option = final[target.option_column].isin(target.option_values)
+        population, numerator = _conditional_vectors(final, target)
         denominator_count = int(population.sum())
         if denominator_count <= 0:
-            raise RuntimeError(f"Conditional target {target.id} ended with an empty population")
-        numerator_count = int((population & option).sum())
+            raise RuntimeError(f"Conditional target {target.id} ended with an empty eligible population")
+        numerator_count = int(numerator.sum())
         achieved_share = numerator_count / denominator_count
         conditional_results.append(
             ConditionalShareAchievement(
@@ -140,9 +139,9 @@ def _solve_replacement_selection(
         _conditional_vectors(candidates, target) for target in conditional_share_targets
     ]
 
-    conditional_groups: dict[tuple[str, frozenset[str]], list[ConditionalShareTarget]] = {}
+    conditional_groups: dict[PopulationKey, list[ConditionalShareTarget]] = {}
     for target in conditional_share_targets:
-        conditional_groups.setdefault(_population_key(target), []).append(target)
+        conditional_groups.setdefault(_conditional_group_key(target), []).append(target)
 
     solution = solve_binary_selection(
         scores=np.concatenate([source_scores, candidate_scores]),
@@ -159,7 +158,7 @@ def _solve_replacement_selection(
         share_values=tuple(target.value for target in share_targets),
         conditionals=tuple(
             ConditionalMetric(
-                population_key=_population_key(target),
+                population_key=_conditional_group_key(target),
                 value=target.value,
                 population=np.concatenate([source_vectors[0], candidate_vectors[0]]),
                 numerator=np.concatenate([source_vectors[1], candidate_vectors[1]]),
