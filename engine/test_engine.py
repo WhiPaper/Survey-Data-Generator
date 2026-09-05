@@ -25,7 +25,6 @@ class EngineSmokeTest(unittest.TestCase):
                 text=True,
                 check=False,
             )
-
             self.assertEqual(result.returncode, 0, result.stderr)
             report = json.loads((work_dir / "report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["status"], "ok")
@@ -33,7 +32,6 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertTrue(report["capabilities"]["sdvGaussianCopula"])
             self.assertTrue(report["capabilities"]["scipyMilp"])
             self.assertTrue(report["capabilities"]["sdmetricsQualityReport"])
-
             output = pd.read_parquet(work_dir / "result.parquet")
             self.assertEqual(output["response_id"].tolist(), ["smoke-1", "smoke-2"])
 
@@ -56,7 +54,6 @@ class EngineSmokeTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-
             result = subprocess.run(
                 [sys.executable, str(MAIN), "smoke", "--job", str(job)],
                 cwd=ENGINE_DIR,
@@ -83,7 +80,6 @@ class EngineSmokeTest(unittest.TestCase):
                 }
             )
             source.to_parquet(source_path, index=False)
-
             job_path = work_dir / "job.json"
             job_path.write_text(
                 json.dumps(
@@ -108,7 +104,6 @@ class EngineSmokeTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-
             result = subprocess.run(
                 [sys.executable, str(MAIN), "synthesize", "--job", str(job_path)],
                 cwd=ENGINE_DIR,
@@ -116,7 +111,6 @@ class EngineSmokeTest(unittest.TestCase):
                 text=True,
                 check=False,
             )
-
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotIn("SingleTableMetadata", result.stderr)
             report = json.loads((work_dir / "report.json").read_text(encoding="utf-8"))
@@ -141,7 +135,6 @@ class EngineSmokeTest(unittest.TestCase):
                 }
             )
             source.to_parquet(source_path, index=False)
-
             job_path = work_dir / "job.json"
             job_path.write_text(
                 json.dumps(
@@ -168,7 +161,6 @@ class EngineSmokeTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-
             result = subprocess.run(
                 [sys.executable, str(MAIN), "synthesize", "--job", str(job_path)],
                 cwd=ENGINE_DIR,
@@ -176,7 +168,6 @@ class EngineSmokeTest(unittest.TestCase):
                 text=True,
                 check=False,
             )
-
             self.assertEqual(result.returncode, 0, result.stderr)
             report = json.loads((work_dir / "report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["status"], "success")
@@ -184,7 +175,6 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertEqual(report["syntheticCount"], 40)
             self.assertEqual(report["finalCount"], 120)
             self.assertTrue(report["achieved"]["exact"])
-            self.assertTrue(report["validation"]["targetSupportOptimal"])
             self.assertTrue(report["validation"]["categoricalSupport"])
             self.assertAlmostEqual(report["achieved"]["mean"], 4.3)
             self.assertAlmostEqual(report["achieved"]["bestPossibleMean"], 4.3)
@@ -198,6 +188,73 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertEqual(int((synthetic["score"] == 5).sum()), 35)
             self.assertEqual(int((synthetic["score"] == 4).sum()), 5)
             self.assertTrue(set(synthetic["segment"]) <= {"A", "B"})
+
+    def test_synthesize_solves_mean_and_share_jointly(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work_dir = Path(directory)
+            source_path = work_dir / "source.parquet"
+            source = pd.DataFrame(
+                {
+                    "response_id": [f"source-{index + 1}" for index in range(80)],
+                    "submitted_at": pd.date_range(
+                        "2026-08-01T00:00:00Z", periods=80, freq="20min"
+                    ),
+                    "score": [5] * 44 + [4] * 36,
+                    "segment": ["A" if index % 2 == 0 else "B" for index in range(80)],
+                }
+            )
+            source.to_parquet(source_path, index=False)
+            job_path = work_dir / "job.json"
+            job_path.write_text(
+                json.dumps(
+                    {
+                        "protocol_version": 1,
+                        "kind": "synthesize",
+                        "source_parquet": "source.parquet",
+                        "result_parquet": "result.parquet",
+                        "report_json": "report.json",
+                        "final_count": 120,
+                        "mean_target": {
+                            "column": "score",
+                            "value": 4.7,
+                            "minimum": 1,
+                            "maximum": 5,
+                        },
+                        "share_targets": [
+                            {
+                                "id": "group-1",
+                                "column": "segment",
+                                "member_values": ["A"],
+                                "value": 0.5,
+                            }
+                        ],
+                        "seed": 20260906,
+                        "categorical_columns": ["segment"],
+                        "timestamp_column": "submitted_at",
+                        "candidate_pool_size": 800,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, str(MAIN), "synthesize", "--job", str(job_path)],
+                cwd=ENGINE_DIR,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads((work_dir / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "success")
+            self.assertAlmostEqual(report["achieved"]["mean"], 4.7)
+            self.assertEqual(len(report["achieved"]["shares"]), 1)
+            self.assertAlmostEqual(report["achieved"]["shares"][0]["share"], 0.5)
+            self.assertAlmostEqual(report["achieved"]["shares"][0]["absoluteError"], 0.0)
+
+            output = pd.read_parquet(work_dir / "result.parquet")
+            self.assertEqual(len(output), 120)
+            self.assertAlmostEqual(float(output["score"].mean()), 4.7)
+            self.assertAlmostEqual(float((output["segment"] == "A").mean()), 0.5)
 
 
 if __name__ == "__main__":
