@@ -6,11 +6,16 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
-const bundledWorkspacePackages = ["@survey-synth/contracts", "@survey-synth/domain"];
+const bundledPackages = [
+  "@survey-synth/contracts",
+  "@survey-synth/domain",
+  "hyparquet",
+  "hyparquet-writer",
+];
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: bundledWorkspacePackages })],
+    plugins: [externalizeDepsPlugin({ exclude: bundledPackages })],
     build: {
       rollupOptions: {
         input: resolve(root, "electron/main/index.ts"),
@@ -18,7 +23,7 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin({ exclude: bundledWorkspacePackages })],
+    plugins: [externalizeDepsPlugin({ exclude: bundledPackages })],
     build: {
       rollupOptions: {
         input: resolve(root, "electron/preload/index.ts"),
