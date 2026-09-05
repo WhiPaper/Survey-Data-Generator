@@ -191,9 +191,21 @@ export const ShareTargetSchema = z
   .strict();
 export type ShareTarget = z.infer<typeof ShareTargetSchema>;
 
+export const ConditionalShareTargetSchema = z
+  .object({
+    kind: z.literal("conditional_share"),
+    valueGroupId: z.string().min(1),
+    questionId: z.string().min(1),
+    optionKey: z.string().min(1),
+    value: z.number().min(0).max(1),
+  })
+  .strict();
+export type ConditionalShareTarget = z.infer<typeof ConditionalShareTargetSchema>;
+
 export const SynthesisTargetSchema = z.discriminatedUnion("kind", [
   MeanTargetSchema,
   ShareTargetSchema,
+  ConditionalShareTargetSchema,
 ]);
 export type SynthesisTarget = z.infer<typeof SynthesisTargetSchema>;
 
@@ -244,6 +256,15 @@ export const FrozenRunTargetSchema = z.discriminatedUnion("kind", [
       kind: z.literal("share"),
       value: z.number().min(0).max(1),
       valueGroup: FrozenValueGroupSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("conditional_share"),
+      value: z.number().min(0).max(1),
+      valueGroup: FrozenValueGroupSchema,
+      questionId: z.string().min(1),
+      optionKey: z.string().min(1),
     })
     .strict(),
 ]);
