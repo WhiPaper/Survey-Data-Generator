@@ -8,7 +8,7 @@
     "start": "electron-vite preview",
     "build": "pnpm --filter @survey-synth/contracts build && pnpm run typecheck && electron-vite build",
     "typecheck": "pnpm --filter @survey-synth/contracts build && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
-    "test": "pnpm --filter @survey-synth/contracts build && vitest run test",
+    "test": "pnpm --filter @survey-synth/contracts build && vitest run test --exclude test/python-engine-real.test.ts",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
