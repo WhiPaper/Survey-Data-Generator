@@ -49,6 +49,11 @@ const setup = (): AppDatabase => {
               { key: "family", label: "가족 나들이" },
             ],
           },
+          {
+            id: "q-text",
+            kind: "text",
+            presentation: "short",
+          },
         ],
       },
     },
@@ -63,9 +68,16 @@ const setup = (): AppDatabase => {
               state: "answered",
               value: { kind: "single_choice", optionKey: "festival", label: "축제" },
             },
+            "q-text": {
+              state: "answered",
+              value: { kind: "text", value: "야간축제" },
+            },
           },
           origin: "original",
-          path: { questions: { "q-choice": "reached" }, confidence: "certain" },
+          path: {
+            questions: { "q-choice": "reached", "q-text": "reached" },
+            confidence: "certain",
+          },
         },
       },
       {
@@ -78,9 +90,38 @@ const setup = (): AppDatabase => {
               state: "answered",
               value: { kind: "single_choice", optionKey: "family", label: "가족 나들이" },
             },
+            "q-text": {
+              state: "answered",
+              value: { kind: "text", value: "불꽃놀이" },
+            },
           },
           origin: "original",
-          path: { questions: { "q-choice": "reached" }, confidence: "certain" },
+          path: {
+            questions: { "q-choice": "reached", "q-text": "reached" },
+            confidence: "certain",
+          },
+        },
+      },
+      {
+        responseId: "r3",
+        submittedAtMs: 5000,
+        response: {
+          responseId: "r3",
+          answers: {
+            "q-choice": {
+              state: "answered",
+              value: { kind: "single_choice", optionKey: "festival", label: "축제" },
+            },
+            "q-text": {
+              state: "answered",
+              value: { kind: "text", value: "야간축제" },
+            },
+          },
+          origin: "original",
+          path: {
+            questions: { "q-choice": "reached", "q-text": "reached" },
+            confidence: "certain",
+          },
         },
       },
     ],
@@ -100,13 +141,21 @@ describe("ValueGroup service", () => {
   it("lists Form options with observed counts including zero-observed options", async () => {
     const service = createValueGroupService(setup().db);
     await expect(service.values("project-1", "q-choice")).resolves.toEqual([
-      { value: "festival", label: "축제", count: 1 },
+      { value: "festival", label: "축제", count: 2 },
       { value: "performance", label: "공연", count: 0 },
       { value: "family", label: "가족 나들이", count: 1 },
     ]);
   });
 
-  it("stores exactly the user-selected membership and deletes the group", async () => {
+  it("lists exact observed text values by frequency without semantic classification", async () => {
+    const service = createValueGroupService(setup().db);
+    await expect(service.values("project-1", "q-text")).resolves.toEqual([
+      { value: "야간축제", label: "야간축제", count: 2 },
+      { value: "불꽃놀이", label: "불꽃놀이", count: 1 },
+    ]);
+  });
+
+  it("stores exactly the user-selected choice membership and deletes the group", async () => {
     const service = createValueGroupService(setup().db);
     const created = await service.create({
       projectId: "project-1",
@@ -124,5 +173,21 @@ describe("ValueGroup service", () => {
     await expect(service.list("project-1")).resolves.toEqual([created]);
     await expect(service.delete(created.id)).resolves.toBeUndefined();
     await expect(service.list("project-1")).resolves.toEqual([]);
+  });
+
+  it("stores exact observed text values as user-defined membership", async () => {
+    const service = createValueGroupService(setup().db);
+    const created = await service.create({
+      projectId: "project-1",
+      questionId: "q-text",
+      name: "야간 행사 언급",
+      members: ["야간축제", "불꽃놀이"],
+    });
+
+    expect(created).toMatchObject({
+      questionId: "q-text",
+      name: "야간 행사 언급",
+      members: ["야간축제", "불꽃놀이"],
+    });
   });
 });
