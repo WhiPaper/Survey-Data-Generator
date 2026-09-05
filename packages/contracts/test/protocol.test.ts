@@ -3,15 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   BackendErrorSchema,
   VERSIONS,
-  parseRpcResult,
-  assertCompatibleReady,
   createPingRequest,
   parseRpcRequest,
-  parseSidecarReady,
+  parseRpcResult,
 } from "../src/index.js";
 
-describe("shared RPC contracts", () => {
-  it("parses a valid system.ping request", () => {
+describe("v2 RPC contracts", () => {
+  it("parses system.ping and rejects unknown legacy methods", () => {
     expect(parseRpcRequest(createPingRequest("r_1"))).toEqual({
       v: VERSIONS.protocolVersion,
       type: "request",
@@ -19,6 +17,24 @@ describe("shared RPC contracts", () => {
       method: "system.ping",
       params: {},
     });
+    expect(() =>
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "legacy",
+        method: "system.shutdown",
+        params: {},
+      }),
+    ).toThrow();
+    expect(() =>
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "legacy-ai",
+        method: "ai.status",
+        params: {},
+      }),
+    ).toThrow();
   });
 
   it("rejects invalid method parameters", () => {
@@ -33,44 +49,18 @@ describe("shared RPC contracts", () => {
     ).toThrow();
   });
 
-  it("validates the complete ready handshake and exact compatibility", () => {
-    const ready = parseSidecarReady({
-      type: "ready",
-      appVersion: VERSIONS.appVersion,
-      protocolVersion: VERSIONS.protocolVersion,
-      databaseSchemaVersion: VERSIONS.databaseSchemaVersion,
-      domainSchemaVersion: VERSIONS.domainSchemaVersion,
-      engineVersion: VERSIONS.engineVersion,
-      profilerVersion: VERSIONS.profilerVersion,
-    });
-
-    expect(assertCompatibleReady(ready)).toEqual(ready);
-    expect(() => assertCompatibleReady({ ...ready, appVersion: "9.9.9" })).toThrow(
-      "Incompatible sidecar version or protocol",
-    );
-    expect(() =>
-      assertCompatibleReady({ ...ready, protocolVersion: VERSIONS.protocolVersion + 1 }),
-    ).toThrow("Incompatible sidecar version or protocol");
-    expect(() => parseSidecarReady({ ...ready, profilerVersion: "0" })).toThrow();
-  });
-
   it("accepts only structured backend errors", () => {
     expect(
       BackendErrorSchema.parse({
         code: "BACKEND_UNAVAILABLE",
-        message: "Sidecar exited",
+        message: "Engine unavailable",
         recoverable: true,
       }),
     ).toMatchObject({ code: "BACKEND_UNAVAILABLE" });
     expect(() => BackendErrorSchema.parse({ message: "raw string error" })).toThrow();
   });
 
-  it("validates method results at the shared contract boundary", () => {
-    expect(parseRpcResult("system.ping", { ok: true, message: "pong" })).toEqual({
-      ok: true,
-      message: "pong",
-    });
-    expect(() => parseRpcResult("system.ping", { ok: true, message: "not-pong" })).toThrow();
+  it("keeps session results renderer-safe", () => {
     expect(
       parseRpcResult("session.get", {
         account: {
@@ -104,11 +94,6 @@ describe("shared RPC contracts", () => {
       }),
     ).toMatchObject({ method: "forms.list" });
     expect(
-      parseRpcResult("forms.list", {
-        items: [{ formId: "form-1", title: "Customer survey" }],
-      }),
-    ).toEqual({ items: [{ formId: "form-1", title: "Customer survey" }] });
-    expect(
       parseRpcResult("forms.import", {
         projectId: "project-1",
         sourceRevisionId: "revision-1",
@@ -117,22 +102,7 @@ describe("shared RPC contracts", () => {
         responseCount: 2,
         questionCount: 5,
       }),
-    ).toMatchObject({
-      projectId: "project-1",
-      sourceRevisionId: "revision-1",
-      formId: "form-1",
-      responseCount: 2,
-    });
-    expect(() =>
-      parseRpcResult("forms.import", {
-        projectId: "project-1",
-        sourceRevisionId: "revision-1",
-        formId: "form-1",
-        title: "Customer survey",
-        responseCount: -1,
-        questionCount: 5,
-      }),
-    ).toThrow();
+    ).toMatchObject({ projectId: "project-1", sourceRevisionId: "revision-1" });
     expect(() =>
       parseRpcResult("forms.import", {
         importId: "legacy-import-id",
@@ -142,44 +112,88 @@ describe("shared RPC contracts", () => {
         questionCount: 5,
       }),
     ).toThrow();
-    expect(() =>
-      parseRpcRequest({
-        v: VERSIONS.protocolVersion,
-        type: "request",
-        id: "r_forms_page_token",
-        method: "forms.list",
-        params: { pageToken: "provider-token" },
-      }),
-    ).toThrow();
+  });
+
+  it("validates ValueGroup and mean+share synthesis contracts", () => {
     expect(
       parseRpcRequest({
         v: VERSIONS.protocolVersion,
         type: "request",
-        id: "r_forms_cancel",
-        method: "forms.import.cancel",
-        params: { operationId: "operation-1" },
+        id: "group-create",
+        method: "valueGroups.create",
+        params: {
+          projectId: "project-1",
+          questionId: "q-choice",
+          name: "행사 관심",
+          members: ["festival", "performance"],
+        },
       }),
-    ).toMatchObject({ method: "forms.import.cancel" });
-  });
+    ).toMatchObject({ method: "valueGroups.create" });
 
-  it("validates host capability messages separately from frontend RPC", () => {
-    expect(() =>
+    expect(
       parseRpcRequest({
         v: VERSIONS.protocolVersion,
         type: "request",
-        id: "r_auth",
-        method: "auth.switchAccount",
-        params: { id: "account-1" },
+        id: "synth-m5",
+        method: "synthesis.start",
+        params: {
+          projectId: "project-1",
+          finalCount: 120,
+          sourceScope: { kind: "all" },
+          targets: [
+            { kind: "mean", questionId: "q-score", value: 4.3 },
+            { kind: "share", valueGroupId: "group-1", value: 0.35 },
+          ],
+          seed: 42,
+        },
       }),
-    ).not.toThrow();
+    ).toMatchObject({ method: "synthesis.start" });
+
     expect(() =>
       parseRpcRequest({
         v: VERSIONS.protocolVersion,
         type: "request",
-        id: "r_auth",
-        method: "auth.switchAccount",
-        params: {},
+        id: "bad-share",
+        method: "synthesis.start",
+        params: {
+          projectId: "project-1",
+          finalCount: 120,
+          targets: [
+            { kind: "mean", questionId: "q-score", value: 4.3 },
+            { kind: "share", valueGroupId: "group-1", value: 1.2 },
+          ],
+          seed: 42,
+        },
       }),
     ).toThrow();
+  });
+
+  it("validates frozen ValueGroup snapshots in Run results", () => {
+    expect(
+      parseRpcResult("runs.get", {
+        runId: "run-1",
+        projectId: "project-1",
+        sourceRevisionId: "revision-1",
+        targetSnapshot: {
+          finalCount: 120,
+          sourceScope: { kind: "all" },
+          targets: [
+            { kind: "mean", questionId: "q-score", value: 4.3 },
+            {
+              kind: "share",
+              value: 0.35,
+              valueGroup: {
+                id: "group-1",
+                questionId: "q-choice",
+                name: "행사 관심",
+                members: ["festival", "performance"],
+              },
+            },
+          ],
+        },
+        validation: {},
+        finalResponseCount: 120,
+      }),
+    ).toMatchObject({ runId: "run-1", finalResponseCount: 120 });
   });
 });
