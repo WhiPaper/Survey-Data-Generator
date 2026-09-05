@@ -51,7 +51,7 @@ const targetScore = (response: NormalizedResponse, questionId: QuestionId): numb
   if (slot?.state !== "answered" || slot.value.kind !== "ordinal") {
     throw backendFailure(
       "VALIDATION_FAILED",
-      "M4/M5 mean synthesis currently requires the target ordinal question to be answered in every source row",
+      "Mean synthesis currently requires the target ordinal question to be answered in every source row",
     );
   }
   return slot.value.value;
@@ -89,6 +89,25 @@ export const valueGroupMemberCells = (
     const slot = asNormalizedResponse(stored.response).answers[questionId];
     const key = valueGroupMemberKey(slot);
     if (key !== null && memberSet.has(key) && slot) cells.add(JSON.stringify(slot));
+  }
+  return [...cells];
+};
+
+export const multiChoiceOptionCells = (
+  responses: readonly StoredSourceResponse[],
+  questionId: QuestionId,
+  optionKey: string,
+): string[] => {
+  const cells = new Set<string>();
+  for (const stored of responses) {
+    const slot = asNormalizedResponse(stored.response).answers[questionId];
+    if (
+      slot?.state === "answered" &&
+      slot.value.kind === "multi_choice" &&
+      slot.value.optionKeys.some((key) => String(key) === optionKey)
+    ) {
+      cells.add(JSON.stringify(slot));
+    }
   }
   return [...cells];
 };
