@@ -51,6 +51,16 @@ def _valid_timestamp_rows(
     return valid
 
 
+def _valid_categorical_rows(
+    data: pd.DataFrame,
+    allowed_values: dict[str, frozenset[str]],
+) -> pd.Series:
+    valid = pd.Series(True, index=data.index)
+    for column, allowed in allowed_values.items():
+        valid &= data[column].isin(allowed)
+    return valid
+
+
 def generate_candidates(
     source: pd.DataFrame,
     *,
@@ -60,6 +70,7 @@ def generate_candidates(
     target_max: int,
     pool_size: int,
     seed: int,
+    categorical_columns: list[str] | None = None,
     timestamp_column: str | None = None,
     timestamp_start: pd.Timestamp | None = None,
     timestamp_end: pd.Timestamp | None = None,
@@ -71,13 +82,32 @@ def generate_candidates(
     if timestamp_column is not None and timestamp_column not in source.columns:
         raise ValueError(f"source is missing timestamp column: {timestamp_column}")
 
+    categorical_columns = categorical_columns or []
+    missing_categorical = [column for column in categorical_columns if column not in source.columns]
+    if missing_categorical:
+        raise ValueError(
+            f"source is missing categorical columns: {', '.join(missing_categorical)}"
+        )
+
     model_data = _model_frame(source, id_column)
     if timestamp_column is not None:
         timestamps = pd.to_datetime(model_data[timestamp_column], utc=True, errors="raise")
         model_data[timestamp_column] = timestamps.dt.tz_convert(None)
 
+    allowed_values: dict[str, frozenset[str]] = {}
+    for column in categorical_columns:
+        values = model_data[column]
+        if values.isna().any() or not values.map(lambda value: isinstance(value, str)).all():
+            raise ValueError(f"categorical source column must contain strings only: {column}")
+        allowed_values[column] = frozenset(values.tolist())
+
     metadata = SingleTableMetadata()
     metadata.detect_from_dataframe(model_data)
+    metadata.update_column(target_column, sdtype="numerical")
+    if timestamp_column is not None:
+        metadata.update_column(timestamp_column, sdtype="datetime")
+    if categorical_columns:
+        metadata.update_columns(categorical_columns, sdtype="categorical")
 
     random.seed(seed)
     np.random.seed(seed)
@@ -97,6 +127,7 @@ def generate_candidates(
             timestamp_start,
             timestamp_end,
         )
+        valid &= _valid_categorical_rows(sampled, allowed_values)
         sampled = sampled.loc[valid].copy()
         if sampled.empty:
             continue
