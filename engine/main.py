@@ -32,9 +32,14 @@ from sdmetrics.reports import QualityReport  # noqa: E402,F401
 from sdv.single_table import GaussianCopulaSynthesizer  # noqa: E402,F401
 
 from evaluate import evaluate_result  # noqa: E402
-from generate import ShareCandidateSupport, generate_candidates  # noqa: E402
+from generate import (  # noqa: E402
+    ConditionalCandidateSupport,
+    ShareCandidateSupport,
+    generate_candidates,
+)
 from prepare import read_source, smoke_source, write_parquet  # noqa: E402
 from select import (  # noqa: E402
+    ConditionalShareTarget,
     ShareTarget,
     TargetInfeasible,
     plan_mean_support,
@@ -70,7 +75,18 @@ class ShareTargetSpec(BaseModel):
 
     id: str
     column: str
-    member_values: list[str]
+    member_values: list[str] = Field(min_length=1)
+    value: float
+
+
+class ConditionalShareTargetSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    population_column: str
+    population_member_values: list[str] = Field(min_length=1)
+    option_column: str
+    option_values: list[str] = Field(min_length=1)
     value: float
 
 
@@ -79,6 +95,7 @@ class SynthesizeJob(JobPaths):
     final_count: int
     mean_target: MeanTargetSpec
     share_targets: list[ShareTargetSpec] = Field(default_factory=list)
+    conditional_share_targets: list[ConditionalShareTargetSpec] = Field(default_factory=list)
     seed: int
     id_column: str = "response_id"
     categorical_columns: list[str] = Field(default_factory=list)
@@ -200,6 +217,15 @@ def _infeasible_report(job: SynthesizeJob, issue: TargetInfeasible) -> dict[str,
             {"id": target.id, "column": target.column, "value": target.value}
             for target in job.share_targets
         ],
+        "conditionalShareTargets": [
+            {
+                "id": target.id,
+                "populationColumn": target.population_column,
+                "optionColumn": target.option_column,
+                "value": target.value,
+            }
+            for target in job.conditional_share_targets
+        ],
         "issues": [{"code": issue.code, "message": issue.message}],
     }
 
@@ -214,6 +240,32 @@ def _share_targets(job: SynthesizeJob) -> tuple[ShareTarget, ...]:
         )
         for target in job.share_targets
     )
+
+
+def _conditional_share_targets(job: SynthesizeJob) -> tuple[ConditionalShareTarget, ...]:
+    return tuple(
+        ConditionalShareTarget(
+            id=target.id,
+            population_column=target.population_column,
+            population_member_values=frozenset(target.population_member_values),
+            option_column=target.option_column,
+            option_values=frozenset(target.option_values),
+            value=target.value,
+        )
+        for target in job.conditional_share_targets
+    )
+
+
+def _write_infeasible(
+    job: SynthesizeJob,
+    source_count: int,
+    issue: TargetInfeasible,
+) -> dict[str, object]:
+    report = _infeasible_report(job, issue)
+    report["sourceCount"] = source_count
+    write_report(job.report_json, report)
+    emit({"type": "complete", "report": str(job.report_json), "status": "infeasible"})
+    return report
 
 
 def run_synthesize(job_path: Path) -> dict[str, object]:
@@ -231,7 +283,11 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
     if len({target.id for target in job.share_targets}) != len(job.share_targets):
         raise ValueError("share target ids must be unique")
     if len(job.share_targets) > 1:
-        raise ValueError("M5 currently supports at most one share target per Run")
+        raise ValueError("M6 currently supports at most one overall share target per Run")
+    if len({target.id for target in job.conditional_share_targets}) != len(
+        job.conditional_share_targets
+    ):
+        raise ValueError("conditional share target ids must be unique")
 
     reserved_columns = {job.id_column, job.mean_target.column}
     if job.timestamp_column is not None:
@@ -249,6 +305,8 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         job.mean_target.column,
         *job.categorical_columns,
         *(target.column for target in job.share_targets),
+        *(target.population_column for target in job.conditional_share_targets),
+        *(target.option_column for target in job.conditional_share_targets),
     }
     if job.timestamp_column is not None:
         required_columns.add(job.timestamp_column)
@@ -281,6 +339,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
     source_count = len(source)
     additions = job.final_count - source_count
     shares = _share_targets(job)
+    conditionals = _conditional_share_targets(job)
 
     try:
         mean_support = plan_mean_support(
@@ -295,30 +354,49 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             plan_share_support(source, target=share, final_count=job.final_count)
             for share in shares
         )
-        generator_share_support = None
-        if shares:
-            share = shares[0]
-            support = share_supports[0]
-            generator_share_support = ShareCandidateSupport(
-                column=share.column,
-                member_values=share.member_values,
-                synthetic_member_count=support.synthetic_member_count,
-                synthetic_nonmember_count=additions - support.synthetic_member_count,
-            )
+    except TargetInfeasible as issue:
+        return _write_infeasible(job, source_count, issue)
 
-        emit(
-            {
-                "type": "progress",
-                "stage": "generate_candidates",
-                "rows": additions,
-                "targetScores": mean_support.score_counts,
-                "targetShareMembers": (
-                    share_supports[0].synthetic_member_count if share_supports else None
-                ),
-            }
+    generator_share_support = None
+    if shares:
+        share = shares[0]
+        support = share_supports[0]
+        generator_share_support = ShareCandidateSupport(
+            column=share.column,
+            member_values=share.member_values,
+            synthetic_member_count=support.synthetic_member_count,
+            synthetic_nonmember_count=additions - support.synthetic_member_count,
         )
-        default_pool_size = max(additions * 20, 500 if shares else 200)
-        pool_size = job.candidate_pool_size or default_pool_size
+    generator_conditional_supports = tuple(
+        ConditionalCandidateSupport(
+            id=target.id,
+            population_column=target.population_column,
+            population_member_values=target.population_member_values,
+            option_column=target.option_column,
+            option_values=target.option_values,
+            target_value=target.value,
+        )
+        for target in conditionals
+    )
+
+    emit(
+        {
+            "type": "progress",
+            "stage": "generate_candidates",
+            "rows": additions,
+            "targetScores": mean_support.score_counts,
+            "targetShareMembers": (
+                share_supports[0].synthetic_member_count if share_supports else None
+            ),
+            "conditionalTargets": len(conditionals),
+        }
+    )
+    default_pool_size = max(
+        additions * 20,
+        800 if conditionals else (500 if shares else 200),
+    )
+    pool_size = job.candidate_pool_size or default_pool_size
+    try:
         pool = generate_candidates(
             source,
             id_column=job.id_column,
@@ -333,9 +411,17 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
             share_support=generator_share_support,
+            conditional_supports=generator_conditional_supports,
+        )
+    except RuntimeError as error:
+        return _write_infeasible(
+            job,
+            source_count,
+            TargetInfeasible("candidate_support", str(error)),
         )
 
-        emit({"type": "progress", "stage": "select", "candidateRows": len(pool.data)})
+    emit({"type": "progress", "stage": "select", "candidateRows": len(pool.data)})
+    try:
         selection = select_for_targets(
             source,
             pool.data,
@@ -345,20 +431,10 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             target_min=job.mean_target.minimum,
             target_max=job.mean_target.maximum,
             share_targets=shares,
+            conditional_share_targets=conditionals,
         )
     except TargetInfeasible as issue:
-        report = _infeasible_report(job, issue)
-        report["sourceCount"] = source_count
-        write_report(job.report_json, report)
-        emit({"type": "complete", "report": str(job.report_json), "status": "infeasible"})
-        return report
-    except RuntimeError as error:
-        issue = TargetInfeasible("candidate_support", str(error))
-        report = _infeasible_report(job, issue)
-        report["sourceCount"] = source_count
-        write_report(job.report_json, report)
-        emit({"type": "complete", "report": str(job.report_json), "status": "infeasible"})
-        return report
+        return _write_infeasible(job, source_count, issue)
 
     synthetic = pool.data.iloc[selection.selected_indices].copy().reset_index(drop=True)
     synthetic.insert(
@@ -410,6 +486,39 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             }
         )
 
+    conditional_selection_by_id = {
+        target.id: target for target in selection.conditional_shares
+    }
+    conditional_achieved: list[dict[str, object]] = []
+    for target in job.conditional_share_targets:
+        population = final[target.population_column].isin(target.population_member_values)
+        option = final[target.option_column].isin(target.option_values)
+        denominator_count = int(population.sum())
+        if denominator_count <= 0:
+            raise RuntimeError(f"Conditional target {target.id} has an empty final population")
+        numerator_count = int((population & option).sum())
+        actual = numerator_count / denominator_count
+        selected = conditional_selection_by_id[target.id]
+        if (
+            numerator_count != selected.numerator_count
+            or denominator_count != selected.denominator_count
+            or abs(actual - selected.achieved_share) > 1e-9
+        ):
+            raise RuntimeError(
+                f"Conditional share validation disagreed with MILP for target {target.id}"
+            )
+        conditional_achieved.append(
+            {
+                "id": target.id,
+                "value": target.value,
+                "share": actual,
+                "numeratorCount": numerator_count,
+                "denominatorCount": denominator_count,
+                "absoluteError": abs(actual - target.value),
+                "exact": abs(actual - target.value) <= 1e-9,
+            }
+        )
+
     emit({"type": "progress", "stage": "write_result", "rows": len(final)})
     write_parquet(final, job.result_parquet)
 
@@ -431,6 +540,15 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             {"id": target.id, "column": target.column, "value": target.value}
             for target in job.share_targets
         ],
+        "conditionalShareTargets": [
+            {
+                "id": target.id,
+                "populationColumn": target.population_column,
+                "optionColumn": target.option_column,
+                "value": target.value,
+            }
+            for target in job.conditional_share_targets
+        ],
         "achieved": {
             "mean": evaluation.achieved_mean,
             "absoluteError": evaluation.absolute_error,
@@ -438,6 +556,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             "bestPossibleMean": mean_support.achieved_mean,
             "bestPossibleAbsoluteError": mean_support.absolute_error,
             "shares": share_achieved,
+            "conditionalShares": conditional_achieved,
         },
         "validation": {
             "finalCount": True,
@@ -445,6 +564,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             "targetSupportOptimal": True,
             "categoricalSupport": True,
             "shareTargets": True,
+            "conditionalShareTargets": True,
             "duplicateRowCount": evaluation.duplicate_row_count,
         },
         "quality": {
