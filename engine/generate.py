@@ -5,14 +5,17 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from sdv.metadata import SingleTableMetadata
+from sdv.metadata import Metadata
 from sdv.single_table import GaussianCopulaSynthesizer
+
+
+TABLE_NAME = "table"
 
 
 @dataclass(frozen=True)
 class CandidatePool:
     data: pd.DataFrame
-    metadata: SingleTableMetadata
+    metadata: dict[str, object]
 
 
 def _model_frame(source: pd.DataFrame, id_column: str) -> pd.DataFrame:
@@ -61,6 +64,47 @@ def _valid_categorical_rows(
     return valid
 
 
+def _build_metadata(
+    model_data: pd.DataFrame,
+    *,
+    target_column: str,
+    categorical_columns: list[str],
+    timestamp_column: str | None,
+) -> tuple[Metadata, dict[str, object]]:
+    metadata = Metadata.detect_from_dataframe(
+        data=model_data,
+        table_name=TABLE_NAME,
+        infer_keys=None,
+    )
+    metadata.update_column(
+        column_name=target_column,
+        sdtype="numerical",
+        table_name=TABLE_NAME,
+    )
+    if timestamp_column is not None:
+        metadata.update_column(
+            column_name=timestamp_column,
+            sdtype="datetime",
+            table_name=TABLE_NAME,
+        )
+    for column in categorical_columns:
+        metadata.update_column(
+            column_name=column,
+            sdtype="categorical",
+            table_name=TABLE_NAME,
+        )
+    metadata.validate()
+
+    serialized = metadata.to_dict()
+    tables = serialized.get("tables")
+    if not isinstance(tables, dict):
+        raise RuntimeError("SDV metadata did not contain tables")
+    table_metadata = tables.get(TABLE_NAME)
+    if not isinstance(table_metadata, dict):
+        raise RuntimeError("SDV metadata did not contain the synthesis table")
+    return metadata, table_metadata
+
+
 def generate_candidates(
     source: pd.DataFrame,
     *,
@@ -101,13 +145,12 @@ def generate_candidates(
             raise ValueError(f"categorical source column must contain strings only: {column}")
         allowed_values[column] = frozenset(values.tolist())
 
-    metadata = SingleTableMetadata()
-    metadata.detect_from_dataframe(model_data)
-    metadata.update_column(target_column, sdtype="numerical")
-    if timestamp_column is not None:
-        metadata.update_column(timestamp_column, sdtype="datetime")
-    if categorical_columns:
-        metadata.update_columns(categorical_columns, sdtype="categorical")
+    metadata, quality_metadata = _build_metadata(
+        model_data,
+        target_column=target_column,
+        categorical_columns=categorical_columns,
+        timestamp_column=timestamp_column,
+    )
 
     random.seed(seed)
     np.random.seed(seed)
@@ -146,4 +189,4 @@ def generate_candidates(
         )
 
     data = pd.concat(accepted, ignore_index=True).iloc[:pool_size].copy()
-    return CandidatePool(data=data, metadata=metadata)
+    return CandidatePool(data=data, metadata=quality_metadata)
