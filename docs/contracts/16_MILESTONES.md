@@ -1,255 +1,160 @@
-# Implementation Milestones
+# v2 Implementation Milestones
 
-## M0 — Scaffold
+Build vertical slices that prove user scenarios. Do not rebuild the entire architecture before the first synthesis scenario works.
 
-Goal: prove all process boundaries.
+## M0 — Rewrite boundary
 
-Deliver:
+- archive current pre-v2 state
+- v2 contracts authoritative
+- remove compatibility requirements for current development DB/IPC
+- identify reusable Google/Form/UI/export code
 
-- pnpm workspace
-- Tauri + React shell
-- TS sidecar
-- NDJSON hello/handshake
-- React → Rust → sidecar round-trip
-- crash handling skeleton
-- shared contracts
-- lint/typecheck/unit CI
-- dependency-boundary enforcement
-
-Do not start Google/DB feature scope before the process skeleton is reliable.
-
-## M1 — Google login / account
+## M1 — Electron shell
 
 Deliver:
 
-- desktop OAuth
-- PKCE
-- loopback callback
-- Google `sub` identity
-- SecureSecretStore
-- refresh/access lifecycle
-- single-flight refresh
-- reauth handling
-- multiple saved Google accounts
-- switch/logout/revoke semantics
+- Electron Main / preload / renderer
+- narrow contextBridge API
+- basic job registry
+- no Tauri/Rust/sidecar runtime dependency
 
-Done when app restart restores a valid session without exposing tokens to React.
+Acceptance: packaged/dev Electron app launches and renderer can call one typed Main operation.
 
-## M2 — Form import
+## M2 — Clean persistence + Google import
 
 Deliver:
 
-- Drive Form listing/search
-- Shared Drive direction
-- forms.get
-- responses pagination
-- normalization
-- FormLogic
-- PathResolver
-- answer-state inference
-- unsupported question handling
-- 0-response/permission errors
+- Drizzle + better-sqlite3 schema from `0001`
+- Google account/session lifecycle
+- Form listing/import
+- Form normalization and conservative reachability
+- immutable SourceRevision
+- project reopen from local SQLite
 
-Done when a real/mock Form can be selected and normalized with full paginated responses.
+No legacy DB migration work.
 
-## M3 — Local project / profiler
+## M3 — Python compute boundary
 
 Deliver:
 
-- encrypted SQLite
-- repositories
-- migrations
-- source revision #1
-- response versions
-- QuestionProfiler
-- semantic inference
-- RelationshipAnalyzer
-- project reopening without Google calls
+- packaged/dev Python CLI
+- Pydantic job validation
+- Parquet input/output
+- Electron spawn/cancel/error handling
+- pandas / PyArrow / SDV / SciPy / SDMetrics load successfully
 
-Done when app restart opens the project entirely from local storage.
+Acceptance: a packaged smoke job reads source rows and returns a result/report.
 
-## M4 — Basic synthesis
+## M4 — Scenario 1: final N + mean target
 
-Start narrow:
-
-- SingleChoice
-- Ordinal/rating
-- Numeric
-- response timestamp
-
-Deliver:
-
-- TargetCompiler
-- static feasibility
-- FeatureCompiler
-- OptimizationBackend
-- HiGHS adapter
-- WeightOptimizer
-- RowAllocator
-- basic mutation
-- validator
-- seeded reproducibility
-
-This is the first technical go/no-go gate.
-
-Acceptance:
-
-- source immutable
-- exact counts exact
-- ratios/means nearest feasible
-- no-target preservation acceptable
-- infeasible targets caught
-- same seed reproducible
-
-## M5 — Target Editor
-
-Deliver UI and editing semantics for:
-
-- single choice
-- checkbox
-- ordinal
-- numeric
-- date/time
-- free-text strategy
-- file policy
-- grid
-- detailed goals
-
-Deliver:
-
-- AllocationInput
-- `% / 명` semantic distinction
-- reset removes constraint
-- semantic ambiguity handling
-- autosave and target revision
-- inline feasibility errors
-
-## M6 — Advanced synthesis
-
-Deliver:
-
-- checkbox co-occurrence
-- selection-count distribution
-- relationship preservation
-- conditional goals
-- grid relationships
-- date/time relationships
-- missingness preservation
-- GlobalRepair MIP
-- duplicate minimization
-- structural mutation
-- branch-aware donor selection
-
-Second go/no-go gate.
-
-Acceptance:
-
-- relationship regression benchmarks
-- branch contradictions zero where evidence is confirmed
-- required violations zero
-- ambiguous routing not invented
-- user targets dominate preservation priorities
-
-## M7 — Source refresh / revisions
-
-Deliver:
-
-- 새 응답 가져오기
-- schema hash/diff
-- response content hashes
-- response versioning
-- source revisions
-- target migration
-- semantic override migration
-
-Acceptance:
-
-- old Run remains bound to old source
-- new source revision can become current
-- breaking target changes not silently discarded
-- final target N remains user-owned
-- feasibility reruns after source update
-
-## M8 — Export
-
-Deliver:
-
-- shared export schema
-- CSV streaming
-- XLSX
-- grid flatten
-- typed date/time/numeric cells
-- formula-injection safety
-- save dialog
-- project timezone
-
-This milestone forms a complete non-AI v1 product.
-
-## M9 — Optional AI free text
-
-Deliver:
-
-- LlmGateway
-- secure credential
-- PII detector/redactor
-- context selector
-- batching
-- prompt builder
-- validation
-- retries/fallback
-- persisted generated text
-
-Keep public feature gated until current Google policy review permits the actual third-party data flow.
-
-## M10 — Security / release hardening
-
-Deliver/verify:
-
-- encrypted DB release implementation
-- secure deletion
-- safe logging
-- temp cleanup
-- account/project delete
-- tight Tauri capabilities/CSP
-- sidecar packaging
-- Windows/Linux installers (macOS excluded: requires Apple Developer Program membership)
-- code signing
-- updater signing
-- migration backup/recovery
-- privacy/support web pages
-- Google OAuth verification readiness
-
-Public release requires M10.
-
-## Implementation order before feature work
-
-Recommended initial spike sequence:
+Scenario:
 
 ```text
-1. pnpm monorepo
-2. React + Tauri shell
-3. TS sidecar hello RPC
-4. shared contracts
-5. dependency boundary lint
-6. secure host capability skeleton
-7. encrypted SQLite packaging spike
-8. HiGHS/worker packaging spike
-9. packaged sidecar installation spike
-10. Google OAuth
+SourceScope = submitted time range
+add 40 responses
+Likert mean target = 4.7
 ```
 
-The main early packaging risk is the combination of:
+Deliver:
+
+- frozen SourceScope
+- ordinal score feature
+- SDV candidate generation
+- SciPy MILP selection
+- nearest representable mean diagnostics
+- timestamp validity/quality check
+- result persistence/export
+
+This is the first synthesis go/no-go gate.
+
+## M5 — Scenario 2: ValueGroup + share
+
+Scenario:
 
 ```text
-encrypted SQLite native dependency
-+
-HiGHS/WASM
-+
-Worker Thread
-+
-self-contained TypeScript sidecar
-+
-Tauri installer
+short-text values
+user defines ValueGroup
+final/delta share target
 ```
 
-Prove it before investing heavily in UI polish.
+Deliver:
+
+- observed-value frequency/search UI
+- reusable ValueGroup
+- group snapshot in Run
+- share target compilation
+- append-only infeasibility diagnostics
+
+No automatic semantic classifier.
+
+## M6 — Scenario 3: conditional checkbox share
+
+Scenario:
+
+```text
+ValueGroup population
+AND checkbox option
+conditional share targets for multiple options
+```
+
+Deliver:
+
+- conditional denominator features
+- checkbox option indicators
+- overlapping target contribution
+- simultaneous MILP constraints
+
+Acceptance: one row may contribute to multiple checkbox targets correctly.
+
+## M7 — Original replacement planning
+
+Deliver:
+
+- append-only solve first
+- replacement-enabled solve minimizing replaced source rows
+- complete replacement candidate rows
+- before/after EditPlan UI
+- explicit approval gate
+- persisted approved EditPlan
+
+Imported source observations remain immutable.
+
+## M8 — Quality and edge cases
+
+Deliver scenario coverage for:
+
+- branching/required questions
+- candidate support regeneration
+- duplicate/concentration diagnostics
+- datetime distribution sanity
+- low-cardinality vs high-cardinality text behavior
+- numeric/date deterministic parsing where needed
+- cancellation/partial-file cleanup
+
+Do not add custom temporal/diversity/relationship engines unless a benchmark in this milestone proves the current approach insufficient.
+
+## M9 — Export and packaged product
+
+Deliver:
+
+- CSV/XLSX logical equivalence
+- safe spreadsheet text handling
+- packaged Python engine discovery
+- Windows x64 and Linux x64 artifact smoke
+- Google auth/import smoke in packaged architecture where practical
+
+## M10 — Release hardening
+
+Only after core scenarios are stable:
+
+- signing/publishing workflow
+- privacy/support copy matching implementation
+- Google OAuth release review
+- updater if actually needed
+- diagnostics/logging cleanup
+
+## Scope rule
+
+A milestone may add a small prerequisite required for its scenario. It must not implement speculative future subsystems merely because the code is nearby.
+
+The architecture is successful when Scenarios 2 and 3 extend Scenario 1 primarily by adding features/target compilation, not by replacing the synthesis engine.
