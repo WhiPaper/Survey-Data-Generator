@@ -46,6 +46,50 @@ export type EngineConditionalShareAchievement = {
   exact: boolean;
 };
 
+export type EngineEditPlanShareOutcome = {
+  id: string;
+  value: number;
+  share: number;
+  absoluteError: number;
+  exact: boolean;
+};
+
+export type EngineEditPlanConditionalOutcome = EngineEditPlanShareOutcome & {
+  numeratorCount: number;
+  denominatorCount: number;
+};
+
+export type EngineEditPlanTargetOutcome = {
+  mean: number;
+  absoluteError: number;
+  exact: boolean;
+  shares: EngineEditPlanShareOutcome[];
+  conditionalShares: EngineEditPlanConditionalOutcome[];
+  quality?: {
+    sdmetricsScore: number | null;
+    warning: string | null;
+  };
+  duplicateRowCount?: number;
+};
+
+export type EngineEditPlan =
+  | {
+      status: "not_required" | "impossible";
+      replacementCount: 0;
+      proposedReplacements: [];
+      appendOnlyOutcome: EngineEditPlanTargetOutcome;
+    }
+  | {
+      status: "available";
+      replacementCount: number;
+      proposedReplacements: Array<{
+        sourceResponseId: string;
+        replacementResponseId: string;
+      }>;
+      appendOnlyOutcome: EngineEditPlanTargetOutcome;
+      replacementOutcome: EngineEditPlanTargetOutcome;
+    };
+
 export type EngineSynthesisSuccessReport = {
   status: "success";
   kind: "synthesize";
@@ -76,6 +120,7 @@ export type EngineSynthesisSuccessReport = {
     shares: EngineShareAchievement[];
     conditionalShares: EngineConditionalShareAchievement[];
   };
+  editPlan: EngineEditPlan;
   validation: Record<string, unknown>;
   quality: {
     sdmetricsScore: number | null;
@@ -229,6 +274,73 @@ const validConditionalShareAchievement = (value: unknown): boolean => {
   );
 };
 
+const validEditPlanShareOutcome = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const share = value as Record<string, unknown>;
+  return (
+    typeof share.id === "string" &&
+    typeof share.value === "number" &&
+    typeof share.share === "number" &&
+    typeof share.absoluteError === "number" &&
+    typeof share.exact === "boolean"
+  );
+};
+
+const validEditPlanConditionalOutcome = (value: unknown): boolean => {
+  if (!validEditPlanShareOutcome(value)) return false;
+  const share = value as Record<string, unknown>;
+  return typeof share.numeratorCount === "number" && typeof share.denominatorCount === "number";
+};
+
+const validEditPlanTargetOutcome = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const outcome = value as Record<string, unknown>;
+  return (
+    typeof outcome.mean === "number" &&
+    typeof outcome.absoluteError === "number" &&
+    typeof outcome.exact === "boolean" &&
+    Array.isArray(outcome.shares) &&
+    outcome.shares.every(validEditPlanShareOutcome) &&
+    Array.isArray(outcome.conditionalShares) &&
+    outcome.conditionalShares.every(validEditPlanConditionalOutcome)
+  );
+};
+
+const validProposedReplacement = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const replacement = value as Record<string, unknown>;
+  return (
+    typeof replacement.sourceResponseId === "string" &&
+    replacement.sourceResponseId.length > 0 &&
+    typeof replacement.replacementResponseId === "string" &&
+    replacement.replacementResponseId.length > 0
+  );
+};
+
+const validEditPlan = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const plan = value as Record<string, unknown>;
+  if (
+    !["not_required", "available", "impossible"].includes(String(plan.status)) ||
+    typeof plan.replacementCount !== "number" ||
+    !Number.isInteger(plan.replacementCount) ||
+    plan.replacementCount < 0 ||
+    !Array.isArray(plan.proposedReplacements) ||
+    !plan.proposedReplacements.every(validProposedReplacement) ||
+    !validEditPlanTargetOutcome(plan.appendOnlyOutcome)
+  ) {
+    return false;
+  }
+  if (plan.status === "available") {
+    return (
+      plan.replacementCount > 0 &&
+      plan.proposedReplacements.length === plan.replacementCount &&
+      validEditPlanTargetOutcome(plan.replacementOutcome)
+    );
+  }
+  return plan.replacementCount === 0 && plan.proposedReplacements.length === 0;
+};
+
 const parseSynthesisReport = (input: unknown): EngineSynthesisReport => {
   if (typeof input !== "object" || input === null) {
     throw backendFailure("INTERNAL", "Python synthesis engine returned an invalid report");
@@ -274,7 +386,8 @@ const parseSynthesisReport = (input: unknown): EngineSynthesisReport => {
     !Array.isArray(achievedRecord.shares) ||
     !achievedRecord.shares.every(validShareAchievement) ||
     !Array.isArray(achievedRecord.conditionalShares) ||
-    !achievedRecord.conditionalShares.every(validConditionalShareAchievement)
+    !achievedRecord.conditionalShares.every(validConditionalShareAchievement) ||
+    !validEditPlan(report.editPlan)
   ) {
     throw backendFailure("INTERNAL", "Python synthesis engine returned invalid success metrics");
   }
