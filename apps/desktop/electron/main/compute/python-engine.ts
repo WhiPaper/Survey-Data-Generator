@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -106,12 +106,11 @@ const parseSmokeReport = (input: unknown): EngineSmokeReport => {
 
 export const createPythonEngine = ({ jobs, launch }: CreatePythonEngineOptions): PythonEngine => {
   const runSelftest = async (operationId: string, workDir: string): Promise<EngineSmokeReport> => {
-    let child: ChildProcessWithoutNullStreams | null = null;
+    let child: ChildProcess | null = null;
     const signal = jobs.start(operationId, () => child?.kill());
 
     try {
-      const result = await new Promise<{ stdout: string; stderr: string }>((resolveRun, rejectRun) => {
-        let stdout = "";
+      await new Promise<void>((resolveRun, rejectRun) => {
         let stderr = "";
 
         try {
@@ -128,10 +127,11 @@ export const createPythonEngine = ({ jobs, launch }: CreatePythonEngineOptions):
           return;
         }
 
-        child.stdout.on("data", (chunk: Buffer) => {
+        let stdout = "";
+        child.stdout?.on("data", (chunk: Buffer) => {
           stdout = appendCaptured(stdout, chunk);
         });
-        child.stderr.on("data", (chunk: Buffer) => {
+        child.stderr?.on("data", (chunk: Buffer) => {
           stderr = appendCaptured(stderr, chunk);
         });
         child.once("error", rejectRun);
@@ -149,7 +149,7 @@ export const createPythonEngine = ({ jobs, launch }: CreatePythonEngineOptions):
             );
             return;
           }
-          resolveRun({ stdout, stderr });
+          resolveRun();
         });
       }).catch((error: unknown) => {
         if (signal.aborted) throw backendFailure("JOB_CANCELLED", "Python compute job was cancelled");
@@ -162,7 +162,6 @@ export const createPythonEngine = ({ jobs, launch }: CreatePythonEngineOptions):
         throw error;
       });
 
-      void result;
       const reportPath = join(workDir, "report.json");
       let raw: string;
       try {
