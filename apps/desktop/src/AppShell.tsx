@@ -1,12 +1,20 @@
 import { useEffect, useState } from "react";
 
-import type { FormImportSummary, FormListItem, SessionView } from "@survey-synth/contracts";
+import type {
+  FormImportSummary,
+  FormListItem,
+  ProjectDetailView,
+  ProjectSummaryView,
+  SessionView,
+} from "@survey-synth/contracts";
 
 import {
   cancelFormImport,
+  getProject,
   getSession,
   importForm,
   listForms,
+  listProjects,
   login,
   logout,
   pingBackend,
@@ -26,6 +34,10 @@ export function AppShell() {
   const [forms, setForms] = useState<FormListItem[]>([]);
   const [formsBusy, setFormsBusy] = useState(false);
   const [formsError, setFormsError] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectSummaryView[]>([]);
+  const [projectsBusy, setProjectsBusy] = useState(false);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [selectedProject, setSelectedProject] = useState<ProjectDetailView | null>(null);
   const [importOperationId, setImportOperationId] = useState<string | null>(null);
   const [importingFormId, setImportingFormId] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<FormImportSummary | null>(null);
@@ -55,21 +67,34 @@ export function AppShell() {
   useEffect(() => {
     if (!session) {
       setForms([]);
+      setProjects([]);
+      setSelectedProject(null);
       return;
     }
     let active = true;
     setFormsBusy(true);
+    setProjectsBusy(true);
     setFormsError(null);
-    void listForms()
-      .then((result) => {
-        if (active) setForms(result.items);
+    setProjectsError(null);
+
+    void Promise.all([listForms(), listProjects()])
+      .then(([formsResult, projectResult]) => {
+        if (!active) return;
+        setForms(formsResult.items);
+        setProjects(projectResult);
       })
       .catch((error: unknown) => {
-        if (active) setFormsError(errorMessage(error));
+        if (!active) return;
+        const text = errorMessage(error);
+        setFormsError(text);
+        setProjectsError(text);
       })
       .finally(() => {
-        if (active) setFormsBusy(false);
+        if (!active) return;
+        setFormsBusy(false);
+        setProjectsBusy(false);
       });
+
     return () => {
       active = false;
     };
@@ -94,6 +119,7 @@ export function AppShell() {
       await logout();
       setSession(null);
       setImportSummary(null);
+      setSelectedProject(null);
     } catch (error: unknown) {
       setAuthError(errorMessage(error));
     } finally {
@@ -113,6 +139,30 @@ export function AppShell() {
     }
   };
 
+  const reloadProjects = async (): Promise<void> => {
+    setProjectsBusy(true);
+    setProjectsError(null);
+    try {
+      setProjects(await listProjects());
+    } catch (error: unknown) {
+      setProjectsError(errorMessage(error));
+    } finally {
+      setProjectsBusy(false);
+    }
+  };
+
+  const openProject = async (projectId: string): Promise<void> => {
+    setProjectsBusy(true);
+    setProjectsError(null);
+    try {
+      setSelectedProject(await getProject(projectId));
+    } catch (error: unknown) {
+      setProjectsError(errorMessage(error));
+    } finally {
+      setProjectsBusy(false);
+    }
+  };
+
   const handleImport = async (form: FormListItem): Promise<void> => {
     const operationId = `form-import-${Date.now()}`;
     setImportOperationId(operationId);
@@ -120,7 +170,10 @@ export function AppShell() {
     setImportSummary(null);
     setFormsError(null);
     try {
-      setImportSummary(await importForm(form.formId, operationId));
+      const summary = await importForm(form.formId, operationId);
+      setImportSummary(summary);
+      await reloadProjects();
+      await openProject(summary.importId);
     } catch (error: unknown) {
       setFormsError(errorMessage(error));
     } finally {
@@ -149,7 +202,7 @@ export function AppShell() {
         color: "var(--foreground)",
       }}
     >
-      <section style={{ width: "min(680px, 100%)" }}>
+      <section style={{ width: "min(760px, 100%)" }}>
         <p style={{ margin: 0, fontSize: 14, opacity: 0.6 }}>Survey Synth v2</p>
         <h1 style={{ margin: "8px 0 12px", fontSize: 28, fontWeight: 600 }}>Desktop runtime</h1>
         <p style={{ margin: 0, fontSize: 15 }}>{message}</p>
@@ -176,6 +229,60 @@ export function AppShell() {
             <button type="button" disabled={authBusy} onClick={() => void handleLogout()}>
               로그아웃
             </button>
+
+            <div style={{ marginTop: 28, borderTop: "1px solid currentColor", paddingTop: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <h2 style={{ margin: 0, fontSize: 18 }}>프로젝트</h2>
+                <button type="button" disabled={projectsBusy} onClick={() => void reloadProjects()}>
+                  {projectsBusy ? "불러오는 중…" : "새로고침"}
+                </button>
+              </div>
+
+              {!projectsBusy && projects.length === 0 ? (
+                <p style={{ fontSize: 13, opacity: 0.65 }}>저장된 프로젝트가 없습니다.</p>
+              ) : null}
+
+              <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                {projects.map((project) => (
+                  <div
+                    key={project.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 16,
+                      padding: 12,
+                      border: "1px solid currentColor",
+                      borderRadius: 8,
+                    }}
+                  >
+                    <div>
+                      <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{project.name}</p>
+                      <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
+                        응답 {project.responseCount}개 · 질문 {project.questionCount}개
+                      </p>
+                    </div>
+                    <button type="button" disabled={projectsBusy} onClick={() => void openProject(project.id)}>
+                      열기
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {selectedProject ? (
+                <div style={{ marginTop: 12, padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
+                  <p style={{ margin: 0, fontWeight: 600 }}>열린 프로젝트: {selectedProject.name}</p>
+                  <p style={{ margin: "6px 0 0", fontSize: 13 }}>
+                    SourceRevision {selectedProject.currentSourceRevisionId} · 응답 {selectedProject.responseCount}개
+                  </p>
+                  {selectedProject.responseTimestampRange ? (
+                    <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
+                      {selectedProject.responseTimestampRange.start} → {selectedProject.responseTimestampRange.end}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
 
             <div style={{ marginTop: 28, borderTop: "1px solid currentColor", paddingTop: 20 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
@@ -251,6 +358,11 @@ export function AppShell() {
         {formsError ? (
           <p role="alert" style={{ marginTop: 16, fontSize: 13 }}>
             {formsError}
+          </p>
+        ) : null}
+        {projectsError ? (
+          <p role="alert" style={{ marginTop: 16, fontSize: 13 }}>
+            {projectsError}
           </p>
         ) : null}
       </section>
