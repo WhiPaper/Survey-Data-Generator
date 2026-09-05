@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import { CodeChallengeMethod, OAuth2Client } from "google-auth-library";
 
-import { backendFailure, type BackendFailure } from "../errors";
+import { backendFailure, BackendFailure } from "../errors";
 import type { GoogleOAuthConfig } from "./config";
 
 export const GOOGLE_SCOPES = [
@@ -135,6 +135,50 @@ const callbackCode = (
   return code;
 };
 
+const waitForOAuthCode = (
+  server: Server,
+  state: string,
+  timeoutMs: number,
+): { promise: Promise<string>; stop: () => void } => {
+  let stop = (): void => undefined;
+  const promise = new Promise<string>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      server.off("request", onRequest);
+      server.off("error", onError);
+    };
+    const finish = (result: string | Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (result instanceof Error) reject(result);
+      else resolve(result);
+    };
+    const onRequest = (request: IncomingMessage, response: ServerResponse): void => {
+      if (settled) {
+        respond(response, 409, "Authorization callback already handled");
+        return;
+      }
+      const result = callbackCode(request, response, state);
+      if (result !== null) finish(result);
+    };
+    const onError = (): void =>
+      finish(backendFailure("INTERNAL", "Google login callback failed"));
+
+    server.on("request", onRequest);
+    server.on("error", onError);
+    timer = setTimeout(
+      () => finish(backendFailure("VALIDATION_FAILED", "Google login timed out")),
+      timeoutMs,
+    );
+    stop = cleanup;
+  });
+  return { promise, stop };
+};
+
 export const createGoogleProvider = ({
   getConfig,
   openExternal,
@@ -145,6 +189,7 @@ export const createGoogleProvider = ({
     const config = await getConfig();
     const server = createServer();
     const state = randomBytes(32).toString("base64url");
+    let stopWaiting = (): void => undefined;
 
     try {
       const port = await listenLoopback(server);
@@ -163,32 +208,10 @@ export const createGoogleProvider = ({
         prompt: flow === "add_account" ? "select_account consent" : "consent",
       });
 
-      const codePromise = new Promise<string>((resolve, reject) => {
-        let handled = false;
-        const timer = setTimeout(
-          () => reject(backendFailure("VALIDATION_FAILED", "Google login timed out")),
-          timeoutMs,
-        );
-        server.on("request", (request, response) => {
-          if (handled) {
-            respond(response, 409, "Authorization callback already handled");
-            return;
-          }
-          const result = callbackCode(request, response, state);
-          if (result === null) return;
-          handled = true;
-          clearTimeout(timer);
-          if (result instanceof Error) reject(result);
-          else resolve(result);
-        });
-        server.once("error", (error) => {
-          clearTimeout(timer);
-          reject(error);
-        });
-      });
-
+      const callback = waitForOAuthCode(server, state, timeoutMs);
+      stopWaiting = callback.stop;
       await openExternal(authorizationUrl);
-      const code = await codePromise;
+      const code = await callback.promise;
 
       let tokens;
       try {
@@ -228,6 +251,7 @@ export const createGoogleProvider = ({
         ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
       };
     } finally {
+      stopWaiting();
       await closeServer(server);
     }
   },
@@ -244,7 +268,7 @@ export const createGoogleProvider = ({
         expiresAtMs: client.credentials.expiry_date ?? now() + 60 * 60_000,
       };
     } catch (error: unknown) {
-      if (error instanceof Error && error.name === "BackendFailure") throw error;
+      if (error instanceof BackendFailure) throw error;
       throw googleError(error, "Google access token could not be refreshed");
     }
   },
