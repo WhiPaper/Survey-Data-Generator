@@ -5,9 +5,9 @@ import Database from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 
-import * as schema from "./schema";
+import { persistenceSchema } from "./schema";
 
-export type SurveyDatabase = BetterSQLite3Database<typeof schema>;
+export type SurveyDatabase = BetterSQLite3Database<typeof persistenceSchema>;
 
 export type AppDatabase = {
   db: SurveyDatabase;
@@ -32,7 +32,7 @@ export const openAppDatabase = ({
   sqlite.pragma("foreign_keys = ON");
   sqlite.pragma("journal_mode = WAL");
 
-  const db = drizzle(sqlite, { schema });
+  const db = drizzle(sqlite, { schema: persistenceSchema });
   migrate(db, { migrationsFolder });
 
   return {
