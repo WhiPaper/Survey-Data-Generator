@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 
 import type {
   FrozenRunTarget,
+  FrozenValueGroup,
   RunTargetSnapshot,
   RunsGetResult,
   SourceScope,
@@ -27,6 +28,7 @@ import {
 } from "../persistence/store";
 import {
   createFlatTablePlan,
+  multiChoiceOptionCells,
   readResultParquet,
   RESPONSE_ID_COLUMN,
   TARGET_SCORE_COLUMN,
@@ -57,6 +59,8 @@ type FrozenScope = {
   responseSetHash: string;
   responses: StoredSourceResponse[];
 };
+
+type ValueGroupRecord = typeof valueGroups.$inferSelect;
 
 const parseFormSnapshot = (schemaJson: string): FormSnapshot => {
   const parsed = JSON.parse(schemaJson) as unknown;
@@ -148,6 +152,41 @@ const parseMembers = (membersJson: string): string[] => {
   return parsed;
 };
 
+const frozenValueGroup = (row: ValueGroupRecord, members: string[]): FrozenValueGroup => ({
+  id: row.id,
+  questionId: row.questionId,
+  name: row.name,
+  members,
+});
+
+const loadValueGroup = (
+  db: SurveyDatabase,
+  projectId: string,
+  valueGroupId: string,
+): { row: ValueGroupRecord; members: string[] } => {
+  const row = db.select().from(valueGroups).where(eq(valueGroups.id, valueGroupId)).get();
+  if (!row || row.projectId !== projectId) {
+    throw backendFailure("VALIDATION_FAILED", "Target ValueGroup was not found in this project");
+  }
+  return { row, members: parseMembers(row.membersJson) };
+};
+
+const ensureGroupableQuestion = (form: FormSnapshot, questionId: string): void => {
+  const question = form.questions.find((candidate) => candidate.id === questionId);
+  if (!question || (question.kind !== "single_choice" && question.kind !== "text")) {
+    throw backendFailure(
+      "VALIDATION_FAILED",
+      "ValueGroup targets require a single-choice or text population question",
+    );
+  }
+};
+
+const conditionalTargetId = (
+  valueGroupId: string,
+  questionId: string,
+  optionKey: string,
+): string => `conditional:${valueGroupId}:${questionId}:${optionKey}`;
+
 const jsonRecord = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -184,11 +223,12 @@ export const createSynthesisService = ({
 
     const means = params.targets.filter((target) => target.kind === "mean");
     const shares = params.targets.filter((target) => target.kind === "share");
+    const conditionals = params.targets.filter((target) => target.kind === "conditional_share");
     if (means.length !== 1) {
-      throw backendFailure("VALIDATION_FAILED", "M5 requires exactly one ordinal mean target");
+      throw backendFailure("VALIDATION_FAILED", "M6 requires exactly one ordinal mean target");
     }
     if (shares.length > 1) {
-      throw backendFailure("VALIDATION_FAILED", "M5 supports at most one ValueGroup share target");
+      throw backendFailure("VALIDATION_FAILED", "M6 supports at most one overall ValueGroup share target");
     }
 
     const mean = means[0]!;
@@ -205,21 +245,19 @@ export const createSynthesisService = ({
       member_values: string[];
       value: number;
     }> = [];
+    const conditionalJobTargets: Array<{
+      id: string;
+      population_column: string;
+      population_member_values: string[];
+      option_column: string;
+      option_values: string[];
+      value: number;
+    }> = [];
     const frozenTargets: FrozenRunTarget[] = [{ ...mean }];
 
     for (const share of shares) {
-      const row = db.select().from(valueGroups).where(eq(valueGroups.id, share.valueGroupId)).get();
-      if (!row || row.projectId !== project.id) {
-        throw backendFailure("VALIDATION_FAILED", "Share target ValueGroup was not found in this project");
-      }
-      const members = parseMembers(row.membersJson);
-      const question = form.questions.find((candidate) => candidate.id === row.questionId);
-      if (!question || (question.kind !== "single_choice" && question.kind !== "text")) {
-        throw backendFailure(
-          "VALIDATION_FAILED",
-          "M5 share targets require a single-choice or text ValueGroup",
-        );
-      }
+      const { row, members } = loadValueGroup(db, project.id, share.valueGroupId);
+      ensureGroupableQuestion(form, row.questionId);
       const column = plan.questionColumns.get(row.questionId as QuestionId);
       if (!column) {
         throw backendFailure("INTERNAL", "ValueGroup question is not available in the synthesis table");
@@ -244,13 +282,85 @@ export const createSynthesisService = ({
       frozenTargets.push({
         kind: "share",
         value: share.value,
-        valueGroup: {
-          id: row.id,
-          questionId: row.questionId,
-          name: row.name,
-          members,
-        },
+        valueGroup: frozenValueGroup(row, members),
       });
+    }
+
+    for (const target of conditionals) {
+      const { row, members } = loadValueGroup(db, project.id, target.valueGroupId);
+      ensureGroupableQuestion(form, row.questionId);
+      const populationColumn = plan.questionColumns.get(row.questionId as QuestionId);
+      if (!populationColumn) {
+        throw backendFailure("INTERNAL", "Conditional population question is not available in the synthesis table");
+      }
+      const populationMemberValues = valueGroupMemberCells(
+        scope.responses,
+        row.questionId as QuestionId,
+        members,
+      );
+      if (populationMemberValues.length === 0) {
+        return {
+          status: "infeasible",
+          issues: [
+            {
+              code: "conditional_population_support",
+              message: `ValueGroup “${row.name}” has no observed population values in this SourceScope`,
+            },
+          ],
+        };
+      }
+
+      const checkbox = form.questions.find((question) => question.id === target.questionId);
+      if (!checkbox || checkbox.kind !== "multi_choice") {
+        throw backendFailure(
+          "VALIDATION_FAILED",
+          "Conditional share targets require a checkbox question",
+        );
+      }
+      if (!checkbox.options.some((option) => String(option.key) === target.optionKey)) {
+        throw backendFailure("VALIDATION_FAILED", "Conditional share option was not found in the Form");
+      }
+      const optionColumn = plan.questionColumns.get(checkbox.id);
+      if (!optionColumn) {
+        throw backendFailure("INTERNAL", "Conditional checkbox question is not available in the synthesis table");
+      }
+      const optionValues = multiChoiceOptionCells(
+        scope.responses,
+        checkbox.id,
+        target.optionKey,
+      );
+      if (optionValues.length === 0) {
+        return {
+          status: "infeasible",
+          issues: [
+            {
+              code: "conditional_option_support",
+              message: `Checkbox option “${target.optionKey}” has no observed support in this SourceScope`,
+            },
+          ],
+        };
+      }
+
+      const id = conditionalTargetId(row.id, checkbox.id, target.optionKey);
+      conditionalJobTargets.push({
+        id,
+        population_column: populationColumn,
+        population_member_values: populationMemberValues,
+        option_column: optionColumn,
+        option_values: optionValues,
+        value: target.value,
+      });
+      frozenTargets.push({
+        kind: "conditional_share",
+        value: target.value,
+        valueGroup: frozenValueGroup(row, members),
+        questionId: checkbox.id,
+        optionKey: target.optionKey,
+      });
+    }
+
+    if (new Set(conditionalJobTargets.map((target) => target.id)).size !== conditionalJobTargets.length) {
+      throw backendFailure("VALIDATION_FAILED", "Duplicate conditional share targets are not allowed");
     }
 
     const targetSnapshot: RunTargetSnapshot = {
@@ -286,6 +396,7 @@ export const createSynthesisService = ({
               maximum: meanQuestion.max,
             },
             share_targets: shareJobTargets,
+            conditional_share_targets: conditionalJobTargets,
             seed: params.seed,
             id_column: RESPONSE_ID_COLUMN,
             categorical_columns: [...plan.questionColumns.values()],
