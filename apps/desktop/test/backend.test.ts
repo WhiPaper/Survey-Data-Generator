@@ -119,7 +119,8 @@ describe("typed desktop backend client", () => {
       if (request.method === "forms.import") {
         expect(request.params).toMatchObject({ formId: "form-1" });
         return {
-          importId: "import-1",
+          projectId: "project-1",
+          sourceRevisionId: "revision-1",
           formId: "form-1",
           title: "Customer survey",
           responseCount: 2,
@@ -134,11 +135,13 @@ describe("typed desktop backend client", () => {
       nextCursor: "page-2",
     });
     await expect(importForm("form-1" as FormId, { invoke })).resolves.toMatchObject({
-      importId: "import-1",
+      projectId: "project-1",
+      sourceRevisionId: "revision-1",
       responseCount: 2,
     });
     await expect(importForm("form-1" as FormId, "operation-1", { invoke })).resolves.toMatchObject({
-      importId: "import-1",
+      projectId: "project-1",
+      sourceRevisionId: "revision-1",
       responseCount: 2,
     });
     expect(invoke).toHaveBeenCalledTimes(3);
