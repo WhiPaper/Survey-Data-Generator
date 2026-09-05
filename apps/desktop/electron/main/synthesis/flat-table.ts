@@ -51,7 +51,7 @@ const targetScore = (response: NormalizedResponse, questionId: QuestionId): numb
   if (slot?.state !== "answered" || slot.value.kind !== "ordinal") {
     throw backendFailure(
       "VALIDATION_FAILED",
-      "M4 mean synthesis currently requires the target ordinal question to be answered in every source row",
+      "M4/M5 mean synthesis currently requires the target ordinal question to be answered in every source row",
     );
   }
   return slot.value.value;
@@ -69,6 +69,26 @@ export const createFlatTablePlan = (
     index += 1;
   }
   return { targetQuestionId, questionColumns };
+};
+
+export const valueGroupMemberCells = (
+  responses: readonly StoredSourceResponse[],
+  questionId: QuestionId,
+  members: readonly string[],
+): string[] => {
+  const memberSet = new Set(members);
+  const cells = new Set<string>();
+  for (const stored of responses) {
+    const slot = asNormalizedResponse(stored.response).answers[questionId];
+    if (
+      slot?.state === "answered" &&
+      slot.value.kind === "single_choice" &&
+      memberSet.has(String(slot.value.optionKey))
+    ) {
+      cells.add(JSON.stringify(slot));
+    }
+  }
+  return [...cells];
 };
 
 export const writeSourceParquet = async (
@@ -179,9 +199,7 @@ const syntheticResponse = (
   const answers = {} as Record<QuestionId, AnswerSlot>;
   for (const question of form.questions) {
     const slot = provisional[question.id];
-    if (!slot) {
-      throw backendFailure("INTERNAL", `Synthetic result is missing question ${question.id}`);
-    }
+    if (!slot) throw backendFailure("INTERNAL", `Synthetic result is missing question ${question.id}`);
     if (slot.state === "answered") {
       answers[question.id] = slot;
       continue;
@@ -222,12 +240,8 @@ export const readResultParquet = async (
   const originals = new Map(
     sourceResponses.map((stored) => [stored.responseId, asNormalizedResponse(stored.response)] as const),
   );
-  const file = await asyncBufferFromFile(path);
-  const parquetRows = await parquetReadObjects({ file });
-  const rows: DecodedRunRow[] = [];
-
-  for (const rawRow of parquetRows) {
-    const row = rawRow as ParquetRecord;
+  const rows = (await parquetReadObjects({ file: await asyncBufferFromFile(path) })) as ParquetRecord[];
+  return rows.map((row) => {
     const responseId = stringValue(row[RESPONSE_ID_COLUMN], "response_id");
     const submittedAtMs = timestampMs(row[TIMESTAMP_COLUMN]);
     if (!Number.isFinite(submittedAtMs)) {
@@ -236,21 +250,17 @@ export const readResultParquet = async (
     const origin = row[ORIGIN_COLUMN];
     if (origin === "original") {
       const response = originals.get(responseId);
-      if (!response) {
-        throw backendFailure("INTERNAL", "Synthetic result references an unknown source row");
-      }
-      rows.push({ responseId, submittedAtMs, origin: "original", response });
-    } else if (origin === "synthetic") {
-      rows.push({
+      if (!response) throw backendFailure("INTERNAL", "Synthetic result references an unknown source row");
+      return { responseId, submittedAtMs, origin: "original" as const, response };
+    }
+    if (origin === "synthetic") {
+      return {
         responseId,
         submittedAtMs,
-        origin: "synthetic",
+        origin: "synthetic" as const,
         response: syntheticResponse(form, plan, row, responseId, submittedAtMs),
-      });
-    } else {
-      throw backendFailure("INTERNAL", "Synthetic result contains invalid provenance");
+      };
     }
-  }
-
-  return rows;
+    throw backendFailure("INTERNAL", "Synthetic result contains invalid provenance");
+  });
 };
