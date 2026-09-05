@@ -44,6 +44,7 @@ from select import (  # noqa: E402
     ShareTarget,
     TargetInfeasible,
     TargetSelection,
+    _conditional_vectors,
     plan_mean_support,
     plan_share_support,
     select_for_targets,
@@ -572,13 +573,14 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         target.id: target for target in selection.conditional_shares
     }
     conditional_achieved: list[dict[str, object]] = []
-    for target in job.conditional_share_targets:
-        population = final[target.population_column].isin(target.population_member_values)
-        option = final[target.option_column].isin(target.option_values)
+    for target, compiled in zip(job.conditional_share_targets, conditionals, strict=True):
+        population, numerator = _conditional_vectors(final, compiled)
         denominator_count = int(population.sum())
         if denominator_count <= 0:
-            raise RuntimeError(f"Conditional target {target.id} has an empty final population")
-        numerator_count = int((population & option).sum())
+            raise RuntimeError(
+                f"Conditional target {target.id} has an empty final eligible population"
+            )
+        numerator_count = int(numerator.sum())
         actual = numerator_count / denominator_count
         selected = conditional_selection_by_id[target.id]
         if (
