@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type {
+  EditPlanTargetOutcome,
   ProjectDetailView,
   RunsGetResult,
   SourceScope,
@@ -16,6 +17,7 @@ import {
   getRun,
   listValueGroups,
   listValueGroupValues,
+  resolveSynthesisEditPlan,
   startSynthesis,
 } from "./api/backend";
 
@@ -108,6 +110,36 @@ const conditionalTargetId = (
   questionId: string,
   optionKey: string,
 ): string => `conditional:${valueGroupId}:${questionId}:${optionKey}`;
+
+function EditPlanOutcomeView({
+  label,
+  outcome,
+}: {
+  label: string;
+  outcome: EditPlanTargetOutcome;
+}) {
+  return (
+    <div style={{ display: "grid", gap: 3 }}>
+      <strong>{label}</strong>
+      <span>
+        평균 {outcome.mean.toFixed(6)} · 오차 {outcome.absoluteError.toFixed(6)} ·{" "}
+        {outcome.exact ? "정확히 표현됨" : "가장 가까운 표현"}
+      </span>
+      {outcome.shares.map((share) => (
+        <span key={share.id}>
+          {share.id} · {(share.share * 100).toFixed(2)}% · 오차{" "}
+          {(share.absoluteError * 100).toFixed(2)}%p
+        </span>
+      ))}
+      {outcome.conditionalShares.map((share) => (
+        <span key={share.id}>
+          {share.id} · {share.numeratorCount}/{share.denominatorCount} ={" "}
+          {(share.share * 100).toFixed(2)}% · 오차 {(share.absoluteError * 100).toFixed(2)}%p
+        </span>
+      ))}
+    </div>
+  );
+}
 
 const achieved = (
   run: RunsGetResult | null,
@@ -215,6 +247,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   const [conditionalDrafts, setConditionalDrafts] = useState<ConditionalDraft[]>([]);
   const [groupBusy, setGroupBusy] = useState(false);
   const [operationId, setOperationId] = useState<string | null>(null);
+  const [planBusy, setPlanBusy] = useState(false);
   const [result, setResult] = useState<SynthesisStartResult | null>(null);
   const [run, setRun] = useState<RunsGetResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -248,6 +281,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     setConditionalQuestionId(checkbox[0]?.id ?? "");
     setConditionalDrafts([]);
     setOperationId(null);
+    setPlanBusy(false);
     setResult(null);
     setRun(null);
     setError(null);
@@ -442,6 +476,23 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     }
   };
 
+  const handleResolveEditPlan = async (
+    choice: "append_only" | "replacement",
+  ): Promise<void> => {
+    if (result?.status !== "approval_required") return;
+    setPlanBusy(true);
+    setError(null);
+    try {
+      const resolved = await resolveSynthesisEditPlan(result.planId, choice);
+      setResult(resolved);
+      setRun(await getRun(resolved.runId));
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
+    } finally {
+      setPlanBusy(false);
+    }
+  };
+
   const handleCancel = async (): Promise<void> => {
     if (!operationId) return;
     try {
@@ -541,7 +592,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
       ) : (
         <section style={{ padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
           <p style={{ margin: 0, fontWeight: 600 }}>
-            M6 · 최종 N + mean + share + conditional checkbox share
+            M7 · 최종 N + targets + 승인형 original replacement
           </p>
           <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
             <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
@@ -723,6 +774,56 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
             ) : null}
           </div>
 
+          {result?.status === "approval_required" ? (
+            <div
+              style={{
+                marginTop: 10,
+                display: "grid",
+                gap: 10,
+                padding: 10,
+                border: "1px solid currentColor",
+                borderRadius: 8,
+                fontSize: 12,
+              }}
+            >
+              <p style={{ margin: 0, fontWeight: 600 }}>
+                목표를 더 가깝게 맞추려면 원본-derived 행 {result.editPlan.replacementCount}개를
+                최종 결과에서 교체해야 합니다. 원본 import 자체는 변경되지 않습니다.
+              </p>
+              <EditPlanOutcomeView
+                label="원본 유지 (append-only)"
+                outcome={result.editPlan.appendOnlyOutcome}
+              />
+              <EditPlanOutcomeView
+                label={`교체 적용 (${result.editPlan.replacementCount}개)`}
+                outcome={result.editPlan.replacementOutcome}
+              />
+              <div style={{ display: "grid", gap: 3 }}>
+                {result.editPlan.proposedReplacements.map((replacement) => (
+                  <span key={`${replacement.sourceResponseId}:${replacement.replacementResponseId}`}>
+                    {replacement.sourceResponseId} → {replacement.replacementResponseId}
+                  </span>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  disabled={planBusy}
+                  onClick={() => void handleResolveEditPlan("append_only")}
+                >
+                  원본 유지 결과 사용
+                </button>
+                <button
+                  type="button"
+                  disabled={planBusy}
+                  onClick={() => void handleResolveEditPlan("replacement")}
+                >
+                  {planBusy ? "처리 중…" : "교체 계획 승인"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           {result?.status === "success" ? (
             <div style={{ marginTop: 10, fontSize: 12 }}>
               <p style={{ margin: 0 }}>Run {result.runId}</p>
@@ -738,6 +839,11 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                       ? ""
                       : ` · SDMetrics ${metrics.qualityScore.toFixed(4)}`}
                   </p>
+                  {run.targetSnapshot.editPlan ? (
+                    <p style={{ margin: "4px 0 0" }}>
+                      승인된 original replacement {run.targetSnapshot.editPlan.replacementCount}개
+                    </p>
+                  ) : null}
                   {metrics.shares.map((share) => {
                     const frozen = run.targetSnapshot.targets.find(
                       (target) => target.kind === "share" && target.valueGroup.id === share.id,
