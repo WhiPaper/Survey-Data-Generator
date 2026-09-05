@@ -20,6 +20,26 @@ const workDir = (): string => {
   return directory;
 };
 
+const writeSynthesisJob = (directory: string): { jobPath: string; reportPath: string } => {
+  const jobPath = join(directory, "job.json");
+  const reportPath = join(directory, "report.json");
+  writeFileSync(
+    jobPath,
+    JSON.stringify({
+      protocol_version: 1,
+      kind: "synthesize",
+      source_parquet: "source.parquet",
+      result_parquet: "result.parquet",
+      report_json: "report.json",
+      final_count: 4,
+      mean_target: { column: "target_score", value: 4.5, minimum: 1, maximum: 5 },
+      conditional_share_targets: [],
+      seed: 42,
+    }),
+  );
+  return { jobPath, reportPath };
+};
+
 afterEach(() => {
   while (directories.length > 0) {
     const directory = directories.pop();
@@ -64,30 +84,15 @@ describe("Python compute boundary", () => {
     });
   });
 
-  it("parses conditional share counts from synthesis report.json", async () => {
+  it("parses conditional share counts and the edit plan from synthesis report.json", async () => {
     const directory = workDir();
-    const jobPath = join(directory, "job.json");
-    const reportPath = join(directory, "report.json");
-    writeFileSync(
-      jobPath,
-      JSON.stringify({
-        protocol_version: 1,
-        kind: "synthesize",
-        source_parquet: "source.parquet",
-        result_parquet: "result.parquet",
-        report_json: "report.json",
-        final_count: 4,
-        mean_target: { column: "target_score", value: 4.5, minimum: 1, maximum: 5 },
-        conditional_share_targets: [],
-        seed: 42,
-      }),
-    );
+    const { jobPath, reportPath } = writeSynthesisJob(directory);
     const engine = createPythonEngine({
       jobs: createJobRegistry(),
       launch: { command: process.execPath, argsPrefix: [fixture] },
     });
 
-    await expect(engine.synthesize("engine-m6", jobPath, reportPath)).resolves.toMatchObject({
+    await expect(engine.synthesize("engine-m7", jobPath, reportPath)).resolves.toMatchObject({
       status: "success",
       achieved: {
         conditionalShares: [
@@ -99,6 +104,26 @@ describe("Python compute boundary", () => {
           },
         ],
       },
+      editPlan: {
+        status: "not_required",
+        replacementCount: 0,
+      },
+    });
+  });
+
+  it("rejects malformed replacement plans at the Electron/Python boundary", async () => {
+    const directory = workDir();
+    const { jobPath, reportPath } = writeSynthesisJob(directory);
+    const engine = createPythonEngine({
+      jobs: createJobRegistry(),
+      launch: {
+        command: process.execPath,
+        argsPrefix: [fixture, "invalid-edit-plan"],
+      },
+    });
+
+    await expect(engine.synthesize("engine-invalid-edit-plan", jobPath, reportPath)).rejects.toMatchObject({
+      backendError: { code: "INTERNAL" },
     });
   });
 
