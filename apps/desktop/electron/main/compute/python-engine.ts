@@ -36,6 +36,16 @@ export type EngineShareAchievement = {
   bestPossibleAbsoluteError: number;
 };
 
+export type EngineConditionalShareAchievement = {
+  id: string;
+  value: number;
+  share: number;
+  numeratorCount: number;
+  denominatorCount: number;
+  absoluteError: number;
+  exact: boolean;
+};
+
 export type EngineSynthesisSuccessReport = {
   status: "success";
   kind: "synthesize";
@@ -51,6 +61,12 @@ export type EngineSynthesisSuccessReport = {
     maximum: number;
   };
   shareTargets: Array<{ id: string; column: string; value: number }>;
+  conditionalShareTargets: Array<{
+    id: string;
+    populationColumn: string;
+    optionColumn: string;
+    value: number;
+  }>;
   achieved: {
     mean: number;
     absoluteError: number;
@@ -58,6 +74,7 @@ export type EngineSynthesisSuccessReport = {
     bestPossibleMean: number;
     bestPossibleAbsoluteError: number;
     shares: EngineShareAchievement[];
+    conditionalShares: EngineConditionalShareAchievement[];
   };
   validation: Record<string, unknown>;
   quality: {
@@ -74,6 +91,12 @@ export type EngineSynthesisInfeasibleReport = {
   finalCount: number;
   target: { kind: "mean"; column: string; value: number };
   shareTargets: Array<{ id: string; column: string; value: number }>;
+  conditionalShareTargets: Array<{
+    id: string;
+    populationColumn: string;
+    optionColumn: string;
+    value: number;
+  }>;
   issues: Array<{ code: string; message: string }>;
 };
 
@@ -192,6 +215,20 @@ const validShareAchievement = (value: unknown): boolean => {
   );
 };
 
+const validConditionalShareAchievement = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const share = value as Record<string, unknown>;
+  return (
+    typeof share.id === "string" &&
+    typeof share.value === "number" &&
+    typeof share.share === "number" &&
+    typeof share.numeratorCount === "number" &&
+    typeof share.denominatorCount === "number" &&
+    typeof share.absoluteError === "number" &&
+    typeof share.exact === "boolean"
+  );
+};
+
 const parseSynthesisReport = (input: unknown): EngineSynthesisReport => {
   if (typeof input !== "object" || input === null) {
     throw backendFailure("INTERNAL", "Python synthesis engine returned an invalid report");
@@ -204,6 +241,7 @@ const parseSynthesisReport = (input: unknown): EngineSynthesisReport => {
     if (
       !Array.isArray(report.issues) ||
       !Array.isArray(report.shareTargets) ||
+      !Array.isArray(report.conditionalShareTargets) ||
       typeof report.finalCount !== "number"
     ) {
       throw backendFailure(
@@ -226,6 +264,7 @@ const parseSynthesisReport = (input: unknown): EngineSynthesisReport => {
     typeof report.syntheticCount !== "number" ||
     typeof report.finalCount !== "number" ||
     !Array.isArray(report.shareTargets) ||
+    !Array.isArray(report.conditionalShareTargets) ||
     !achievedRecord ||
     typeof achievedRecord.mean !== "number" ||
     typeof achievedRecord.absoluteError !== "number" ||
@@ -233,7 +272,9 @@ const parseSynthesisReport = (input: unknown): EngineSynthesisReport => {
     typeof achievedRecord.bestPossibleMean !== "number" ||
     typeof achievedRecord.bestPossibleAbsoluteError !== "number" ||
     !Array.isArray(achievedRecord.shares) ||
-    !achievedRecord.shares.every(validShareAchievement)
+    !achievedRecord.shares.every(validShareAchievement) ||
+    !Array.isArray(achievedRecord.conditionalShares) ||
+    !achievedRecord.conditionalShares.every(validConditionalShareAchievement)
   ) {
     throw backendFailure("INTERNAL", "Python synthesis engine returned invalid success metrics");
   }
