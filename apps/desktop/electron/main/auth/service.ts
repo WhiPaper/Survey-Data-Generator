@@ -32,6 +32,7 @@ export interface GoogleAuthService {
   deleteAccountData(id: GoogleAccountId): Promise<void>;
   getAccounts(): Promise<GoogleAccountView[]>;
   getAccessToken(id: GoogleAccountId): Promise<string>;
+  refreshAccessToken(id: GoogleAccountId): Promise<string>;
 }
 
 export type CreateGoogleAuthServiceOptions = {
@@ -79,6 +80,22 @@ export const createGoogleAuthService = ({
       expiresAtMs: grant.expiresAtMs,
     });
     return sessionView(account);
+  };
+
+  const refreshAccessToken = async (id: GoogleAccountId): Promise<string> => {
+    if (!getGoogleAccount(db, id)) {
+      throw backendFailure("NOT_FOUND", "Google account was not found");
+    }
+    const refreshToken = await refreshTokens.get(id);
+    if (!refreshToken) {
+      throw backendFailure("REAUTH_REQUIRED", "Google authorization expired. Sign in again.");
+    }
+    const refreshed = await google.refresh(refreshToken);
+    accessTokens.set(id, {
+      value: refreshed.accessToken,
+      expiresAtMs: refreshed.expiresAtMs,
+    });
+    return refreshed.accessToken;
   };
 
   return {
@@ -145,19 +162,9 @@ export const createGoogleAuthService = ({
       if (cached && cached.expiresAtMs - ACCESS_TOKEN_SAFETY_MARGIN_MS > now()) {
         return cached.value;
       }
-      if (!getGoogleAccount(db, id)) {
-        throw backendFailure("NOT_FOUND", "Google account was not found");
-      }
-      const refreshToken = await refreshTokens.get(id);
-      if (!refreshToken) {
-        throw backendFailure("REAUTH_REQUIRED", "Google authorization expired. Sign in again.");
-      }
-      const refreshed = await google.refresh(refreshToken);
-      accessTokens.set(id, {
-        value: refreshed.accessToken,
-        expiresAtMs: refreshed.expiresAtMs,
-      });
-      return refreshed.accessToken;
+      return refreshAccessToken(id);
     },
+
+    refreshAccessToken,
   };
 };
