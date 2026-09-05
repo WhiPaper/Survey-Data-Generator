@@ -125,11 +125,11 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertEqual(report["finalCount"], 9)
             self.assertTrue(report["validation"]["categoricalSupport"])
 
-    def test_synthesize_reaches_final_count_and_exact_mean(self) -> None:
+    def test_synthesize_generates_target_directed_candidate_support(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             work_dir = Path(directory)
             source_path = work_dir / "source.parquet"
-            scores = [5] * 44 + [4] * 36
+            scores = [5] + [4] * 79
             source = pd.DataFrame(
                 {
                     "response_id": [f"source-{index + 1}" for index in range(80)],
@@ -154,7 +154,7 @@ class EngineSmokeTest(unittest.TestCase):
                         "final_count": 120,
                         "mean_target": {
                             "column": "score",
-                            "value": 4.7,
+                            "value": 4.3,
                             "minimum": 1,
                             "maximum": 5,
                         },
@@ -184,15 +184,20 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertEqual(report["syntheticCount"], 40)
             self.assertEqual(report["finalCount"], 120)
             self.assertTrue(report["achieved"]["exact"])
+            self.assertTrue(report["validation"]["targetSupportOptimal"])
             self.assertTrue(report["validation"]["categoricalSupport"])
-            self.assertAlmostEqual(report["achieved"]["mean"], 4.7)
+            self.assertAlmostEqual(report["achieved"]["mean"], 4.3)
+            self.assertAlmostEqual(report["achieved"]["bestPossibleMean"], 4.3)
 
             output = pd.read_parquet(work_dir / "result.parquet")
+            synthetic = output.loc[output["__origin"] == "synthetic"]
             self.assertEqual(len(output), 120)
-            self.assertAlmostEqual(float(output["score"].mean()), 4.7)
+            self.assertAlmostEqual(float(output["score"].mean()), 4.3)
             self.assertEqual((output["__origin"] == "original").sum(), 80)
-            self.assertEqual((output["__origin"] == "synthetic").sum(), 40)
-            self.assertTrue(set(output.loc[output["__origin"] == "synthetic", "segment"]) <= {"A", "B"})
+            self.assertEqual(len(synthetic), 40)
+            self.assertEqual(int((synthetic["score"] == 5).sum()), 35)
+            self.assertEqual(int((synthetic["score"] == 4).sum()), 5)
+            self.assertTrue(set(synthetic["segment"]) <= {"A", "B"})
 
 
 if __name__ == "__main__":
