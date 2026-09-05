@@ -17,6 +17,7 @@ import {
   type SessionView,
   type SynthesisStartParams,
   type SynthesisStartResult,
+  type SynthesisSuccessResult,
   type ValueGroupObservedValue,
   type ValueGroupView,
 } from "@survey-synth/contracts";
@@ -174,6 +175,12 @@ export const startSynthesis = (
   params: SynthesisStartParams,
   backend?: BackendInvoker,
 ): Promise<SynthesisStartResult> => callBackend("synthesis.start", params, backend);
+export const resolveSynthesisEditPlan = (
+  planId: string,
+  choice: "append_only" | "replacement",
+  backend?: BackendInvoker,
+): Promise<SynthesisSuccessResult> =>
+  callBackend("synthesis.resolveEditPlan", { planId, choice }, backend);
 export const cancelSynthesis = (
   operationId: string,
   backend?: BackendInvoker,

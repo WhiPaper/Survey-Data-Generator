@@ -221,13 +221,68 @@ export const SynthesisStartParamsSchema = z
   .strict();
 export type SynthesisStartParams = z.infer<typeof SynthesisStartParamsSchema>;
 
+export const EditPlanShareOutcomeSchema = z
+  .object({
+    id: z.string().min(1),
+    value: z.number().min(0).max(1),
+    share: z.number().min(0).max(1),
+    absoluteError: z.number().nonnegative(),
+    exact: z.boolean(),
+  })
+  .strict();
+
+export const EditPlanConditionalOutcomeSchema = EditPlanShareOutcomeSchema.extend({
+  numeratorCount: z.number().int().nonnegative(),
+  denominatorCount: z.number().int().positive(),
+}).strict();
+
+export const EditPlanTargetOutcomeSchema = z
+  .object({
+    mean: z.number().finite(),
+    absoluteError: z.number().nonnegative(),
+    exact: z.boolean(),
+    shares: z.array(EditPlanShareOutcomeSchema),
+    conditionalShares: z.array(EditPlanConditionalOutcomeSchema),
+  })
+  .strict();
+export type EditPlanTargetOutcome = z.infer<typeof EditPlanTargetOutcomeSchema>;
+
+export const ProposedReplacementSchema = z
+  .object({
+    sourceResponseId: z.string().min(1),
+    replacementResponseId: z.string().min(1),
+  })
+  .strict();
+export type ProposedReplacement = z.infer<typeof ProposedReplacementSchema>;
+
+export const EditPlanPreviewSchema = z
+  .object({
+    status: z.literal("available"),
+    replacementCount: z.number().int().positive(),
+    proposedReplacements: z.array(ProposedReplacementSchema).min(1),
+    appendOnlyOutcome: EditPlanTargetOutcomeSchema,
+    replacementOutcome: EditPlanTargetOutcomeSchema,
+  })
+  .strict();
+export type EditPlanPreview = z.infer<typeof EditPlanPreviewSchema>;
+
+export const SynthesisSuccessResultSchema = z
+  .object({
+    status: z.literal("success"),
+    runId: z.string().min(1),
+    syntheticResponseCount: z.number().int().nonnegative(),
+    finalResponseCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type SynthesisSuccessResult = z.infer<typeof SynthesisSuccessResultSchema>;
+
 export const SynthesisStartResultSchema = z.discriminatedUnion("status", [
+  SynthesisSuccessResultSchema,
   z
     .object({
-      status: z.literal("success"),
-      runId: z.string().min(1),
-      syntheticResponseCount: z.number().int().nonnegative(),
-      finalResponseCount: z.number().int().nonnegative(),
+      status: z.literal("approval_required"),
+      planId: z.string().min(1),
+      editPlan: EditPlanPreviewSchema,
     })
     .strict(),
   z
@@ -238,6 +293,14 @@ export const SynthesisStartResultSchema = z.discriminatedUnion("status", [
     .strict(),
 ]);
 export type SynthesisStartResult = z.infer<typeof SynthesisStartResultSchema>;
+
+export const SynthesisResolveEditPlanParamsSchema = z
+  .object({
+    planId: z.string().min(1),
+    choice: z.enum(["append_only", "replacement"]),
+  })
+  .strict();
+export type SynthesisResolveEditPlanParams = z.infer<typeof SynthesisResolveEditPlanParamsSchema>;
 
 export const FrozenValueGroupSchema = z
   .object({
@@ -275,6 +338,7 @@ export const RunTargetSnapshotSchema = z
     finalCount: z.number().int().positive(),
     sourceScope: SourceScopeSchema,
     targets: z.array(FrozenRunTargetSchema).min(1),
+    editPlan: EditPlanPreviewSchema.optional(),
   })
   .strict();
 export type RunTargetSnapshot = z.infer<typeof RunTargetSnapshotSchema>;
@@ -339,6 +403,10 @@ export interface BackendRpc {
   };
   "valueGroups.delete": { input: z.infer<typeof ValueGroupsDeleteParamsSchema>; output: ActionResult };
   "synthesis.start": { input: SynthesisStartParams; output: SynthesisStartResult };
+  "synthesis.resolveEditPlan": {
+    input: SynthesisResolveEditPlanParams;
+    output: SynthesisSuccessResult;
+  };
   "synthesis.cancel": { input: z.infer<typeof SynthesisCancelParamsSchema>; output: ActionResult };
   "runs.get": { input: z.infer<typeof RunParamsSchema>; output: RunsGetResult };
 }
@@ -366,6 +434,7 @@ const rpcMethods = [
   "valueGroups.create",
   "valueGroups.delete",
   "synthesis.start",
+  "synthesis.resolveEditPlan",
   "synthesis.cancel",
   "runs.get",
 ] as const satisfies readonly RpcMethod[];
@@ -404,6 +473,7 @@ const rpcParamSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "valueGroups.create": ValueGroupsCreateParamsSchema,
   "valueGroups.delete": ValueGroupsDeleteParamsSchema,
   "synthesis.start": SynthesisStartParamsSchema,
+  "synthesis.resolveEditPlan": SynthesisResolveEditPlanParamsSchema,
   "synthesis.cancel": SynthesisCancelParamsSchema,
   "runs.get": RunParamsSchema,
 };
@@ -429,6 +499,7 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "valueGroups.create": ValueGroupSchema,
   "valueGroups.delete": ActionResultSchema,
   "synthesis.start": SynthesisStartResultSchema,
+  "synthesis.resolveEditPlan": SynthesisSuccessResultSchema,
   "synthesis.cancel": ActionResultSchema,
   "runs.get": RunsGetResultSchema,
 };

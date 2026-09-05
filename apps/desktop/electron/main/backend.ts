@@ -4,6 +4,7 @@ import {
   type FormsImportParams,
   type FormsListParams,
   type GoogleAccountId,
+  type SynthesisResolveEditPlanParams,
   type SynthesisStartParams,
 } from "@survey-synth/contracts";
 
@@ -100,6 +101,10 @@ export const handleBackendCall = async (
       return { ok: true };
     case "synthesis.start":
       return requireSynthesis(services).start(request.params as SynthesisStartParams);
+    case "synthesis.resolveEditPlan":
+      return requireSynthesis(services).resolveEditPlan(
+        request.params as SynthesisResolveEditPlanParams,
+      );
     case "synthesis.cancel":
       requireSynthesis(services).cancel((request.params as { operationId: string }).operationId);
       return { ok: true };
