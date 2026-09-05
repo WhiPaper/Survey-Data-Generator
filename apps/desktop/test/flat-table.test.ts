@@ -108,7 +108,7 @@ describe("synthesis flat parquet transport", () => {
     expect(JSON.parse(String(rows[0]?.q_0))).toEqual(original.answers["q-text" as never]);
   });
 
-  it("freezes ValueGroup option keys as exact observed AnswerSlot cells", () => {
+  it("freezes choice and text ValueGroup members as exact observed AnswerSlot cells", () => {
     const festivalSlot = {
       state: "answered",
       value: { kind: "single_choice", optionKey: "festival", label: "축제" },
@@ -144,6 +144,13 @@ describe("synthesis flat parquet transport", () => {
       JSON.stringify(festivalSlot),
     ]);
     expect(valueGroupMemberCells(responses, "q-choice" as never, ["performance"])).toEqual([]);
+    expect(
+      valueGroupMemberCells(
+        [{ responseId: "r-text", submittedAtMs: 3, response: original }],
+        "q-text" as never,
+        ["good"],
+      ),
+    ).toEqual([JSON.stringify(original.answers["q-text" as never])]);
   });
 
   it("reconstructs synthetic normalized responses and derives answer state from Form logic", async () => {
