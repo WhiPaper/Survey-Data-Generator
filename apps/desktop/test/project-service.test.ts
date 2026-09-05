@@ -41,10 +41,7 @@ const seedImportedProject = (database: AppDatabase): void => {
       title: "Event survey",
       schemaHash: "schema-1",
       capturedAtMs: 2000,
-      schema: {
-        title: "Event survey",
-        questions: [{ id: "q1" }, { id: "q2" }],
-      },
+      schema: { title: "Event survey", questions: [{ id: "q1" }, { id: "q2" }] },
     },
     responses: [
       { responseId: "r2", submittedAtMs: 4000, response: { answers: {} } },
@@ -81,12 +78,13 @@ describe("project service", () => {
     ]);
   });
 
-  it("reopens the current source revision with its form and timestamp range", async () => {
+  it("reopens only the current Form snapshot and timestamp range", async () => {
     const database = createDatabase();
     seedImportedProject(database);
     const service = createProjectService({ db: database.db });
 
-    await expect(service.get("project-1")).resolves.toEqual(
+    const detail = await service.get("project-1");
+    expect(detail).toEqual(
       expect.objectContaining({
         id: "project-1",
         currentSourceRevisionId: "revision-1",
@@ -95,12 +93,11 @@ describe("project service", () => {
           start: new Date(3000).toISOString(),
           end: new Date(4000).toISOString(),
         },
-        targets: {
-          targetResponseCount: 2,
-          questionTargets: [],
-        },
       }),
     );
+    expect(detail).not.toHaveProperty("profiles");
+    expect(detail).not.toHaveProperty("relationships");
+    expect(detail).not.toHaveProperty("targets");
   });
 
   it("deletes a project and its persisted source graph", async () => {
