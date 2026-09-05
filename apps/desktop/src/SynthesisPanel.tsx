@@ -20,7 +20,11 @@ import {
 } from "./api/backend";
 
 type OrdinalQuestionView = { id: string; title: string; min: number; max: number };
-type ChoiceQuestionView = { id: string; title: string };
+type GroupableQuestionView = {
+  id: string;
+  title: string;
+  kind: "single_choice" | "text";
+};
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -58,9 +62,14 @@ const ordinalQuestions = (project: ProjectDetailView): OrdinalQuestionView[] =>
     ];
   });
 
-const singleChoiceQuestions = (project: ProjectDetailView): ChoiceQuestionView[] =>
+const groupableQuestions = (project: ProjectDetailView): GroupableQuestionView[] =>
   questions(project).flatMap((question) => {
-    if (question.kind !== "single_choice" || typeof question.id !== "string") return [];
+    if (
+      (question.kind !== "single_choice" && question.kind !== "text") ||
+      typeof question.id !== "string"
+    ) {
+      return [];
+    }
     return [
       {
         id: question.id,
@@ -68,6 +77,7 @@ const singleChoiceQuestions = (project: ProjectDetailView): ChoiceQuestionView[]
           typeof question.title === "string" && question.title.length > 0
             ? question.title
             : question.id,
+        kind: question.kind,
       },
     ];
   });
@@ -126,7 +136,7 @@ const achieved = (
 
 export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   const ordinal = useMemo(() => ordinalQuestions(project), [project]);
-  const choice = useMemo(() => singleChoiceQuestions(project), [project]);
+  const groupable = useMemo(() => groupableQuestions(project), [project]);
   const [questionId, setQuestionId] = useState("");
   const [finalCount, setFinalCount] = useState(String(project.responseCount + 40));
   const [targetMean, setTargetMean] = useState("4.7");
@@ -136,6 +146,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   const [groups, setGroups] = useState<ValueGroupView[]>([]);
   const [groupQuestionId, setGroupQuestionId] = useState("");
   const [groupValues, setGroupValues] = useState<ValueGroupObservedValue[]>([]);
+  const [groupValueQuery, setGroupValueQuery] = useState("");
   const [groupName, setGroupName] = useState("");
   const [groupMembers, setGroupMembers] = useState<string[]>([]);
   const [useShare, setUseShare] = useState(false);
@@ -162,7 +173,8 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     setUseRange(false);
     setRangeStart(project.responseTimestampRange?.start ?? "");
     setRangeEnd(project.responseTimestampRange?.end ?? "");
-    setGroupQuestionId(choice[0]?.id ?? "");
+    setGroupQuestionId(groupable[0]?.id ?? "");
+    setGroupValueQuery("");
     setGroupName("");
     setGroupMembers([]);
     setUseShare(false);
@@ -185,7 +197,9 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
       .then((values) => {
         if (!active) return;
         setGroupValues(values);
-        setGroupMembers((current) => current.filter((member) => values.some((v) => v.value === member)));
+        setGroupMembers((current) =>
+          current.filter((member) => values.some((value) => value.value === member)),
+        );
       })
       .catch((cause: unknown) => {
         if (active) setError(errorMessage(cause));
@@ -200,6 +214,15 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
 
   const selectedQuestion = ordinal.find((question) => question.id === questionId) ?? null;
   const metrics = achieved(run);
+  const filteredGroupValues = useMemo(() => {
+    const query = groupValueQuery.trim().toLocaleLowerCase();
+    if (!query) return groupValues;
+    return groupValues.filter(
+      (value) =>
+        value.label.toLocaleLowerCase().includes(query) ||
+        value.value.toLocaleLowerCase().includes(query),
+    );
+  }, [groupValueQuery, groupValues]);
 
   const handleCreateGroup = async (): Promise<void> => {
     if (!groupQuestionId || !groupName.trim() || groupMembers.length === 0) {
@@ -227,7 +250,13 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   };
 
   const handleDeleteGroup = async (group: ValueGroupView): Promise<void> => {
-    if (!window.confirm(`ValueGroup “${group.name}”을 삭제할까요? 기존 Run의 frozen snapshot은 유지됩니다.`)) return;
+    if (
+      !window.confirm(
+        `ValueGroup “${group.name}”을 삭제할까요? 기존 Run의 frozen snapshot은 유지됩니다.`,
+      )
+    ) {
+      return;
+    }
     setGroupBusy(true);
     setError(null);
     try {
@@ -308,27 +337,36 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
 
   return (
     <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
-      {choice.length > 0 ? (
+      {groupable.length > 0 ? (
         <section style={{ padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
           <p style={{ margin: 0, fontWeight: 600 }}>M5 · ValueGroup</p>
           <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
             <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
-              single-choice 질문
+              그룹 질문 (single-choice / text)
               <select
                 value={groupQuestionId}
                 onChange={(event) => {
                   setGroupQuestionId(event.target.value);
+                  setGroupValueQuery("");
                   setGroupMembers([]);
                 }}
                 disabled={groupBusy}
               >
-                {choice.map((question) => (
-                  <option key={question.id} value={question.id}>{question.title}</option>
+                {groupable.map((question) => (
+                  <option key={question.id} value={question.id}>
+                    {question.title} · {question.kind === "text" ? "text" : "single-choice"}
+                  </option>
                 ))}
               </select>
             </label>
+            <input
+              placeholder="값 검색"
+              value={groupValueQuery}
+              onChange={(event) => setGroupValueQuery(event.target.value)}
+              disabled={groupBusy}
+            />
             <div style={{ display: "grid", gap: 4 }}>
-              {groupValues.map((value) => (
+              {filteredGroupValues.map((value) => (
                 <label key={value.value} style={{ fontSize: 12 }}>
                   <input
                     type="checkbox"
@@ -359,9 +397,25 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
           {groups.length > 0 ? (
             <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
               {groups.map((group) => (
-                <div key={group.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}>
-                  <span>{group.name} · 멤버 {group.members.length}개</span>
-                  <button type="button" disabled={groupBusy} onClick={() => void handleDeleteGroup(group)}>삭제</button>
+                <div
+                  key={group.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    fontSize: 12,
+                  }}
+                >
+                  <span>
+                    {group.name} · 멤버 {group.members.length}개
+                  </span>
+                  <button
+                    type="button"
+                    disabled={groupBusy}
+                    onClick={() => void handleDeleteGroup(group)}
+                  >
+                    삭제
+                  </button>
                 </div>
               ))}
             </div>
@@ -371,7 +425,9 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
 
       {ordinal.length === 0 ? (
         <section style={{ padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
-          <p style={{ margin: 0, fontSize: 13 }}>ordinal 질문이 없어 mean target을 실행할 수 없습니다.</p>
+          <p style={{ margin: 0, fontSize: 13 }}>
+            ordinal 질문이 없어 mean target을 실행할 수 없습니다.
+          </p>
         </section>
       ) : (
         <section style={{ padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
@@ -379,47 +435,91 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
           <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
             <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
               mean 질문
-              <select value={questionId} onChange={(event) => setQuestionId(event.target.value)} disabled={operationId !== null}>
+              <select
+                value={questionId}
+                onChange={(event) => setQuestionId(event.target.value)}
+                disabled={operationId !== null}
+              >
                 {ordinal.map((question) => (
-                  <option key={question.id} value={question.id}>{question.title} ({question.min}–{question.max})</option>
+                  <option key={question.id} value={question.id}>
+                    {question.title} ({question.min}–{question.max})
+                  </option>
                 ))}
               </select>
             </label>
             <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
               최종 응답 수
-              <input value={finalCount} onChange={(event) => setFinalCount(event.target.value)} disabled={operationId !== null} />
+              <input
+                value={finalCount}
+                onChange={(event) => setFinalCount(event.target.value)}
+                disabled={operationId !== null}
+              />
             </label>
             <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
               최종 평균
-              <input value={targetMean} onChange={(event) => setTargetMean(event.target.value)} disabled={operationId !== null} />
+              <input
+                value={targetMean}
+                onChange={(event) => setTargetMean(event.target.value)}
+                disabled={operationId !== null}
+              />
             </label>
             {groups.length > 0 ? (
               <>
                 <label style={{ fontSize: 12 }}>
-                  <input type="checkbox" checked={useShare} onChange={(event) => setUseShare(event.target.checked)} disabled={operationId !== null} />{" "}
+                  <input
+                    type="checkbox"
+                    checked={useShare}
+                    onChange={(event) => setUseShare(event.target.checked)}
+                    disabled={operationId !== null}
+                  />{" "}
                   ValueGroup share target 사용
                 </label>
                 {useShare ? (
                   <div style={{ display: "grid", gap: 6 }}>
-                    <select value={shareGroupId} onChange={(event) => setShareGroupId(event.target.value)} disabled={operationId !== null}>
-                      {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                    <select
+                      value={shareGroupId}
+                      onChange={(event) => setShareGroupId(event.target.value)}
+                      disabled={operationId !== null}
+                    >
+                      {groups.map((group) => (
+                        <option key={group.id} value={group.id}>
+                          {group.name}
+                        </option>
+                      ))}
                     </select>
                     <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
                       최종 share (%)
-                      <input value={targetSharePercent} onChange={(event) => setTargetSharePercent(event.target.value)} disabled={operationId !== null} />
+                      <input
+                        value={targetSharePercent}
+                        onChange={(event) => setTargetSharePercent(event.target.value)}
+                        disabled={operationId !== null}
+                      />
                     </label>
                   </div>
                 ) : null}
               </>
             ) : null}
             <label style={{ fontSize: 12 }}>
-              <input type="checkbox" checked={useRange} onChange={(event) => setUseRange(event.target.checked)} disabled={operationId !== null} />{" "}
+              <input
+                type="checkbox"
+                checked={useRange}
+                onChange={(event) => setUseRange(event.target.checked)}
+                disabled={operationId !== null}
+              />{" "}
               제출 timestamp 범위로 SourceScope 제한
             </label>
             {useRange ? (
               <div style={{ display: "grid", gap: 6 }}>
-                <input value={rangeStart} onChange={(event) => setRangeStart(event.target.value)} disabled={operationId !== null} />
-                <input value={rangeEnd} onChange={(event) => setRangeEnd(event.target.value)} disabled={operationId !== null} />
+                <input
+                  value={rangeStart}
+                  onChange={(event) => setRangeStart(event.target.value)}
+                  disabled={operationId !== null}
+                />
+                <input
+                  value={rangeEnd}
+                  onChange={(event) => setRangeEnd(event.target.value)}
+                  disabled={operationId !== null}
+                />
               </div>
             ) : null}
           </div>
@@ -428,24 +528,35 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
             <button type="button" disabled={operationId !== null} onClick={() => void handleStart()}>
               {operationId ? "합성 중…" : "합성 실행"}
             </button>
-            {operationId ? <button type="button" onClick={() => void handleCancel()}>취소</button> : null}
+            {operationId ? (
+              <button type="button" onClick={() => void handleCancel()}>
+                취소
+              </button>
+            ) : null}
           </div>
 
           {result?.status === "success" ? (
             <div style={{ marginTop: 10, fontSize: 12 }}>
               <p style={{ margin: 0 }}>Run {result.runId}</p>
-              <p style={{ margin: "4px 0 0" }}>합성 {result.syntheticResponseCount}개 · 최종 {result.finalResponseCount}개</p>
+              <p style={{ margin: "4px 0 0" }}>
+                합성 {result.syntheticResponseCount}개 · 최종 {result.finalResponseCount}개
+              </p>
               {metrics ? (
                 <>
                   <p style={{ margin: "4px 0 0" }}>
-                    달성 평균 {metrics.mean.toFixed(6)} · 오차 {metrics.absoluteError.toFixed(6)} · {metrics.exact ? "정확히 표현됨" : "가장 가까운 표현"}
-                    {metrics.qualityScore === undefined ? "" : ` · SDMetrics ${metrics.qualityScore.toFixed(4)}`}
+                    달성 평균 {metrics.mean.toFixed(6)} · 오차 {metrics.absoluteError.toFixed(6)} ·{" "}
+                    {metrics.exact ? "정확히 표현됨" : "가장 가까운 표현"}
+                    {metrics.qualityScore === undefined
+                      ? ""
+                      : ` · SDMetrics ${metrics.qualityScore.toFixed(4)}`}
                   </p>
                   {metrics.shares.map((share) => {
                     const group = groups.find((candidate) => candidate.id === share.id);
                     return (
                       <p key={share.id} style={{ margin: "4px 0 0" }}>
-                        {group?.name ?? share.id} share {(share.share * 100).toFixed(2)}% · 오차 {(share.absoluteError * 100).toFixed(2)}%p · {share.exact ? "정확히 표현됨" : "가장 가까운 표현"}
+                        {group?.name ?? share.id} share {(share.share * 100).toFixed(2)}% · 오차{" "}
+                        {(share.absoluteError * 100).toFixed(2)}%p ·{" "}
+                        {share.exact ? "정확히 표현됨" : "가장 가까운 표현"}
                       </p>
                     );
                   })}
@@ -457,14 +568,20 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
           {result?.status === "infeasible" ? (
             <div style={{ marginTop: 10, fontSize: 12 }}>
               {result.issues.map((issue) => (
-                <p key={`${issue.code}:${issue.message}`} style={{ margin: "4px 0 0" }}>{issue.code}: {issue.message}</p>
+                <p key={`${issue.code}:${issue.message}`} style={{ margin: "4px 0 0" }}>
+                  {issue.code}: {issue.message}
+                </p>
               ))}
             </div>
           ) : null}
         </section>
       )}
 
-      {error ? <p role="alert" style={{ margin: 0, fontSize: 12 }}>{error}</p> : null}
+      {error ? (
+        <p role="alert" style={{ margin: 0, fontSize: 12 }}>
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
