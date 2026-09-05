@@ -114,7 +114,7 @@ describe("v2 RPC contracts", () => {
     ).toThrow();
   });
 
-  it("validates ValueGroup and mean+share synthesis contracts", () => {
+  it("validates ValueGroup, mean, share, and conditional share synthesis contracts", () => {
     expect(
       parseRpcRequest({
         v: VERSIONS.protocolVersion,
@@ -134,7 +134,7 @@ describe("v2 RPC contracts", () => {
       parseRpcRequest({
         v: VERSIONS.protocolVersion,
         type: "request",
-        id: "synth-m5",
+        id: "synth-m6",
         method: "synthesis.start",
         params: {
           projectId: "project-1",
@@ -143,6 +143,13 @@ describe("v2 RPC contracts", () => {
           targets: [
             { kind: "mean", questionId: "q-score", value: 4.3 },
             { kind: "share", valueGroupId: "group-1", value: 0.35 },
+            {
+              kind: "conditional_share",
+              valueGroupId: "group-1",
+              questionId: "q-checkbox",
+              optionKey: "music",
+              value: 0.6,
+            },
           ],
           seed: 42,
         },
@@ -153,14 +160,20 @@ describe("v2 RPC contracts", () => {
       parseRpcRequest({
         v: VERSIONS.protocolVersion,
         type: "request",
-        id: "bad-share",
+        id: "bad-conditional-share",
         method: "synthesis.start",
         params: {
           projectId: "project-1",
           finalCount: 120,
           targets: [
             { kind: "mean", questionId: "q-score", value: 4.3 },
-            { kind: "share", valueGroupId: "group-1", value: 1.2 },
+            {
+              kind: "conditional_share",
+              valueGroupId: "group-1",
+              questionId: "q-checkbox",
+              optionKey: "music",
+              value: -0.1,
+            },
           ],
           seed: 42,
         },
@@ -182,6 +195,18 @@ describe("v2 RPC contracts", () => {
             {
               kind: "share",
               value: 0.35,
+              valueGroup: {
+                id: "group-1",
+                questionId: "q-choice",
+                name: "행사 관심",
+                members: ["festival", "performance"],
+              },
+            },
+            {
+              kind: "conditional_share",
+              value: 0.6,
+              questionId: "q-checkbox",
+              optionKey: "music",
               valueGroup: {
                 id: "group-1",
                 questionId: "q-choice",
