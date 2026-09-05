@@ -3,14 +3,10 @@ import { spawnSync } from "node:child_process";
 const pnpm = "pnpm";
 const commands = [
   ["run", "format:check"],
-  ["run", "rust:format:check"],
   ["run", "lint"],
   ["run", "typecheck"],
-  ["run", "boundaries"],
-  ["run", "versions"],
   ["run", "build"],
   ["run", "test"],
-  ["run", "rust:check"],
 ];
 
 for (const args of commands) {

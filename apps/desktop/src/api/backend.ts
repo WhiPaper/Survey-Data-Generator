@@ -1,28 +1,25 @@
-import { invoke } from "@tauri-apps/api/core";
 import {
   BackendErrorSchema,
+  type BackendError,
+  type BackendRpc,
+  createRequest,
   type FormId,
   type FormImportSummary,
   type FormsListParams,
   type FormsListResult,
   type GoogleAccountId,
   type GoogleAccountView,
-  type SessionView,
-  type BackendError,
-  type ProjectSummaryView,
-  type ProjectDetailView,
-  type ProjectTimeline,
-  type ProjectsRefreshSourceResult,
-  type BackendRpc,
-  createRequest,
   parseRpcResult,
+  type ProjectDetailView,
+  type ProjectSummaryView,
   type RpcMethod,
+  type RunsGetResult,
+  type SessionView,
+  type SynthesisStartParams,
   type SynthesisStartResult,
-  type RunExportFormat,
-  type RunsExportResult,
-  type TimestampRange,
+  type ValueGroupObservedValue,
+  type ValueGroupView,
 } from "@survey-synth/contracts";
-import type { ProjectTargets } from "@survey-synth/domain";
 
 export interface BackendInvoker {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
@@ -38,16 +35,17 @@ export class BackendClientError extends Error {
   }
 }
 
-const tauriInvoker: BackendInvoker = {
-  invoke: <T>(command: string, args?: Record<string, unknown>) => invoke<T>(command, args),
+const electronInvoker: BackendInvoker = {
+  invoke: async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
+    if (command !== "backend_call") throw new Error(`Unsupported desktop command: ${command}`);
+    const request = args?.request;
+    if (typeof request !== "string") throw new Error("Desktop backend request must be serialized JSON");
+    return (await window.surveySynth.backendCall(request)) as T;
+  },
 };
 
 let requestSequence = 0;
-
-const nextRequestId = (): string => {
-  requestSequence += 1;
-  return `ui_${requestSequence}`;
-};
+const nextRequestId = (): string => `ui_${++requestSequence}`;
 
 const structuredError = (code: BackendError["code"], message: string): BackendError => ({
   code,
@@ -66,7 +64,7 @@ const normalizeError = (value: unknown): BackendError => {
 export const callBackend = async <M extends RpcMethod>(
   method: M,
   params: BackendRpc[M]["input"],
-  backend: BackendInvoker = tauriInvoker,
+  backend: BackendInvoker = electronInvoker,
 ): Promise<BackendRpc[M]["output"]> => {
   let request: ReturnType<typeof createRequest<M>>;
   try {
@@ -97,32 +95,24 @@ export const callBackend = async <M extends RpcMethod>(
 };
 
 export const pingBackend = (backend?: BackendInvoker) => callBackend("system.ping", {}, backend);
-
 export const getSession = (backend?: BackendInvoker): Promise<SessionView | null> =>
   callBackend("session.get", {}, backend);
-
 export const login = (backend?: BackendInvoker): Promise<SessionView> =>
   callBackend("auth.login", {}, backend);
-
 export const getAccounts = (backend?: BackendInvoker): Promise<GoogleAccountView[]> =>
   callBackend("auth.accounts", {}, backend);
-
 export const addAccount = (backend?: BackendInvoker): Promise<SessionView> =>
   callBackend("auth.addAccount", {}, backend);
-
 export const switchAccount = (
   id: GoogleAccountId,
   backend?: BackendInvoker,
 ): Promise<SessionView> => callBackend("auth.switchAccount", { id }, backend);
-
 export const logout = (backend?: BackendInvoker): Promise<{ ok: true }> =>
   callBackend("auth.logout", {}, backend);
-
 export const revokeAccess = (
   id: GoogleAccountId,
   backend?: BackendInvoker,
 ): Promise<{ ok: true }> => callBackend("auth.revokeAccess", { id }, backend);
-
 export const deleteAccountData = (
   id: GoogleAccountId,
   backend?: BackendInvoker,
@@ -132,7 +122,6 @@ export const listForms = (
   params: FormsListParams = {},
   backend?: BackendInvoker,
 ): Promise<FormsListResult> => callBackend("forms.list", params, backend);
-
 export const importForm = (
   formId: FormId,
   operationIdOrBackend?: string | BackendInvoker,
@@ -146,7 +135,6 @@ export const importForm = (
     invoker,
   );
 };
-
 export const cancelFormImport = (
   operationId: string,
   backend?: BackendInvoker,
@@ -158,158 +146,39 @@ export const getProject = (
   projectId: string,
   backend?: BackendInvoker,
 ): Promise<ProjectDetailView | null> => callBackend("projects.get", { projectId }, backend);
-export const getProjectTimeline = (
+export const deleteProject = (
   projectId: string,
-  start: string,
-  end: string,
-  bucketCount: number,
-  targetCount?: number,
-  seed?: number,
   backend?: BackendInvoker,
-): Promise<ProjectTimeline> =>
-  callBackend(
-    "projects.timeline",
-    {
-      projectId,
-      start,
-      end,
-      bucketCount,
-      ...(targetCount === undefined ? {} : { targetCount }),
-      ...(seed === undefined ? {} : { seed }),
-    },
-    backend,
-  );
-export const deleteProject = (projectId: string, backend?: BackendInvoker): Promise<{ ok: true }> =>
-  callBackend("projects.delete", { projectId }, backend);
+): Promise<{ ok: true }> => callBackend("projects.delete", { projectId }, backend);
 
-export const refreshSource = (
+export const listValueGroups = (
   projectId: string,
-  expectedTargetRevision: number,
-  operationId?: string,
   backend?: BackendInvoker,
-): Promise<ProjectsRefreshSourceResult> =>
-  callBackend(
-    "projects.refreshSource",
-    { projectId, expectedTargetRevision, operationId },
-    backend,
-  );
-
-export const cancelRefreshSource = (
-  operationId: string,
-  backend?: BackendInvoker,
-): Promise<{ ok: true }> => callBackend("projects.refreshSource.cancel", { operationId }, backend);
-
-export const resolveMigrationIssue = (
+): Promise<ValueGroupView[]> => callBackend("valueGroups.list", { projectId }, backend);
+export const listValueGroupValues = (
   projectId: string,
-  issueId: string,
-  resolution?: "acknowledge" | "remove_target",
+  questionId: string,
   backend?: BackendInvoker,
-): Promise<{ ok: true }> =>
-  callBackend(
-    "projects.resolveMigrationIssue",
-    { projectId, issueId, ...(resolution ? { resolution } : {}) },
-    backend,
-  );
-
-export const getTargets = (projectId: string, backend?: BackendInvoker) =>
-  callBackend("targets.get", { projectId }, backend);
-export const updateTargets = (
-  projectId: string,
-  expectedRevision: number,
-  targets: ProjectTargets,
+): Promise<ValueGroupObservedValue[]> =>
+  callBackend("valueGroups.values", { projectId, questionId }, backend);
+export const createValueGroup = (
+  input: { projectId: string; questionId: string; name: string; members: string[] },
   backend?: BackendInvoker,
-) =>
-  callBackend(
-    "targets.update",
-    {
-      projectId,
-      expectedRevision,
-      targets: {
-        ...targets,
-        questionTargets: [...targets.questionTargets],
-        ...(targets.detailedGoals === undefined
-          ? {}
-          : { detailedGoals: [...targets.detailedGoals] }),
-      },
-    },
-    backend,
-  );
-
-export const checkTargetFeasibility = (
-  projectId: string,
-  targets: ProjectTargets,
+): Promise<ValueGroupView> => callBackend("valueGroups.create", input, backend);
+export const deleteValueGroup = (
+  valueGroupId: string,
   backend?: BackendInvoker,
-) =>
-  callBackend(
-    "targets.checkFeasibility",
-    {
-      projectId,
-      targets: {
-        ...targets,
-        questionTargets: [...targets.questionTargets],
-        ...(targets.detailedGoals === undefined
-          ? {}
-          : { detailedGoals: [...targets.detailedGoals] }),
-      },
-    },
-    backend,
-  );
-
-export const getRun = (runId: string, backend?: BackendInvoker) =>
-  callBackend("runs.get", { runId }, backend);
+): Promise<{ ok: true }> => callBackend("valueGroups.delete", { valueGroupId }, backend);
 
 export const startSynthesis = (
-  projectId: string,
-  targets: ProjectTargets,
-  seed: number,
-  operationId: string,
+  params: SynthesisStartParams,
   backend?: BackendInvoker,
-  targetRevision?: number,
-  timestampRange?: TimestampRange,
-): Promise<SynthesisStartResult> =>
-  callBackend(
-    "synthesis.start",
-    {
-      projectId,
-      targets: {
-        ...targets,
-        questionTargets: [...targets.questionTargets],
-        ...(targets.detailedGoals === undefined
-          ? {}
-          : { detailedGoals: [...targets.detailedGoals] }),
-      },
-      ...(targetRevision === undefined ? {} : { targetRevision }),
-      ...(timestampRange === undefined ? {} : { timestampRange }),
-      seed,
-      operationId,
-    },
-    backend,
-  );
-
+): Promise<SynthesisStartResult> => callBackend("synthesis.start", params, backend);
 export const cancelSynthesis = (
   operationId: string,
   backend?: BackendInvoker,
 ): Promise<{ ok: true }> => callBackend("synthesis.cancel", { operationId }, backend);
-
-export const exportRun = (
+export const getRun = (
   runId: string,
-  format: RunExportFormat,
   backend?: BackendInvoker,
-): Promise<RunsExportResult> => callBackend("runs.export", { runId, format }, backend);
-
-export const getAiStatus = (backend?: BackendInvoker) => callBackend("ai.status", {}, backend);
-
-export const configureAi = (apiKey: string, backend?: BackendInvoker) =>
-  callBackend("ai.configure", { apiKey }, backend);
-
-export const clearAiCredentials = (backend?: BackendInvoker) =>
-  callBackend("ai.clearCredentials", {}, backend);
-
-export const acknowledgeAiDisclosure = (backend?: BackendInvoker) =>
-  callBackend("ai.acknowledgeDisclosure", {}, backend);
-
-export const generateAiText = (runId: string, operationId?: string, backend?: BackendInvoker) =>
-  callBackend("ai.generate", { runId, ...(operationId ? { operationId } : {}) }, backend);
-
-export const cancelAiGeneration = (operationId: string, backend?: BackendInvoker) =>
-  callBackend("ai.cancel", { operationId }, backend);
+): Promise<RunsGetResult> => callBackend("runs.get", { runId }, backend);

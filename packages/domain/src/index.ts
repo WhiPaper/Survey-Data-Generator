@@ -13,120 +13,14 @@ export type RunId = Brand<string, "RunId">;
 export type GoogleAccountId = Brand<string, "GoogleAccountId">;
 export type SourceRevisionId = Brand<string, "SourceRevisionId">;
 export type FormSnapshotId = Brand<string, "FormSnapshotId">;
+export type ValueGroupId = Brand<string, "ValueGroupId">;
 
-/** User intent. Values always describe the final combined dataset. */
-export interface ProjectTargets {
-  targetResponseCount: number;
-  questionTargets: readonly QuestionTarget[];
-  /** M6 conditional goals. Omitted by older target snapshots. */
-  detailedGoals?: ConditionalGoal[];
-}
-
-export type TargetValue =
-  | { kind: "count"; value: number }
-  | { kind: "ratio"; value: number }
-  | { kind: "count_range"; min: number; max: number }
-  | { kind: "ratio_range"; min: number; max: number }
-  | { kind: "mean"; value: number };
-
-export interface TextClusterGroup {
-  readonly id: string;
-  readonly label: string;
-  readonly count: number;
-  readonly share: number;
-  readonly memberTexts: readonly string[];
-}
-
-export type QuestionTarget =
-  | { kind: "option"; questionId: QuestionId; optionKey: OptionKey; target: TargetValue }
-  | { kind: "mean"; questionId: QuestionId; target: Extract<TargetValue, { kind: "mean" }> }
-  | {
-      kind: "selection_count_mean";
-      questionId: QuestionId;
-      target: Extract<TargetValue, { kind: "mean" }>;
-    }
-  | {
-      kind: "text_cluster";
-      questionId: QuestionId;
-      clusterId: string;
-      label: string;
-      memberTexts: readonly string[];
-      target: TargetValue;
-    };
-
-export type ConditionPredicate =
-  | { kind: "option_selected"; questionId: QuestionId; optionKey: OptionKey }
-  | { kind: "answered"; questionId: QuestionId }
-  | { kind: "and"; conditions: ConditionPredicate[] }
-  | { kind: "or"; conditions: ConditionPredicate[] };
-
-export interface ConditionalGoal {
-  readonly id: string;
-  readonly condition: ConditionPredicate;
-  readonly outcome: Exclude<QuestionTarget, { kind: "selection_count_mean" }>;
-}
-
-export interface SynthesisRun {
-  id: RunId;
-  projectId: ProjectId;
-  sourceRevisionId: SourceRevisionId;
-  targetSnapshot: ProjectTargets;
-  targetRevision: number;
-  seed: number;
-  engineVersion: number;
-  profilerVersion: number;
-  appVersion: string;
-  createdAt: string;
-}
-
-export interface SynthesisProject {
-  id: ProjectId;
-  googleAccountId: GoogleAccountId;
-  googleFormId: FormId;
-  name: string;
-  /** Null only for pre-v8 projects whose creation timezone was never persisted. */
-  timeZone: string | null;
-  currentSourceRevisionId: SourceRevisionId;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type ProjectSummary = SynthesisProject & {
-  responseCount: number;
-  questionCount: number;
-  profileCount: number;
-};
-
-export interface SourceRevision {
-  id: SourceRevisionId;
-  projectId: ProjectId;
-  formSnapshotId: FormSnapshotId;
-  sourceResponseCount: number;
-  responseSetHash: string;
-  schemaHash: string;
-  capturedAt: string;
-  importedAt: string;
-  previousRevisionId?: SourceRevisionId;
-}
-
-export interface ProfileBase {
-  questionId: QuestionId;
-  answeredCount: number;
-  skippedCount: number;
-  notReachedCount: number;
-  indeterminateCount: number;
-  confirmedEligibleCount: number;
-  responseRate: number;
-}
-
-export interface GoogleAccount {
-  id: GoogleAccountId;
-  subject: string;
-  email: string;
-  displayName?: string;
-  avatarUrl?: string;
-  createdAt: string;
-  lastUsedAt: string;
+export interface ValueGroup {
+  readonly id: ValueGroupId;
+  readonly projectId: ProjectId;
+  readonly questionId: QuestionId;
+  readonly name: string;
+  readonly members: readonly string[];
 }
 
 export interface Section {
@@ -316,7 +210,7 @@ const answeredQuestionIds = (
 
 type SectionReachability = "reached" | "not_reached" | "unknown";
 
-/** Resolve only reachability supported by observed answers and explicit form routing. */
+/** Resolve only reachability supported by observed answers and explicit Form routing. */
 export const resolveResponsePath = (
   form: FormSnapshot,
   answers: Readonly<Record<QuestionId, AnswerSlot>>,
@@ -452,4 +346,3 @@ export const resolveResponsePath = (
   }
   return { questions, confidence };
 };
-export * from "./migration.js";

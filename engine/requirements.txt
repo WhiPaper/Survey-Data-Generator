@@ -1,0 +1,6 @@
+pydantic==2.13.5
+pandas==2.3.3
+pyarrow==25.0.1
+scipy==1.18.1
+sdv==1.38.0
+sdmetrics==0.28.2
