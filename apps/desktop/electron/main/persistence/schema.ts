@@ -60,7 +60,7 @@ export const sourceRevisions = sqliteTable(
   },
   (table) => [
     index("source_revisions_project_idx").on(table.projectId),
-    uniqueIndex("source_revisions_project_hash_unique").on(table.projectId, table.responseSetHash),
+    index("source_revisions_project_hash_idx").on(table.projectId, table.responseSetHash),
   ],
 );
 
