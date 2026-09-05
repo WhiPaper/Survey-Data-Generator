@@ -102,4 +102,23 @@ describe("project service", () => {
       }),
     );
   });
+
+  it("deletes a project and its persisted source graph", async () => {
+    const database = createDatabase();
+    seedImportedProject(database);
+    const service = createProjectService({ db: database.db });
+
+    await expect(service.delete("project-1")).resolves.toBeUndefined();
+    await expect(service.get("project-1")).resolves.toBeNull();
+    await expect(service.list()).resolves.toEqual([]);
+  });
+
+  it("returns not found when deleting an unknown project", async () => {
+    const database = createDatabase();
+    const service = createProjectService({ db: database.db });
+
+    await expect(service.delete("missing-project")).rejects.toMatchObject({
+      backendError: { code: "NOT_FOUND" },
+    });
+  });
 });
