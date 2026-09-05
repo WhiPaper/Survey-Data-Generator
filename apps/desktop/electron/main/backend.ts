@@ -9,10 +9,12 @@ import {
 import { backendFailure } from "./errors";
 import type { GoogleAuthService } from "./auth/service";
 import type { FormsService } from "./forms/service";
+import type { ProjectService } from "./projects/service";
 
 export type BackendServices = {
   auth?: GoogleAuthService;
   forms?: FormsService;
+  projects?: ProjectService;
 };
 
 const requireAuth = (services: BackendServices): GoogleAuthService => {
@@ -23,6 +25,11 @@ const requireAuth = (services: BackendServices): GoogleAuthService => {
 const requireForms = (services: BackendServices): FormsService => {
   if (!services.forms) throw backendFailure("BACKEND_UNAVAILABLE", "Google Forms is not initialized");
   return services.forms;
+};
+
+const requireProjects = (services: BackendServices): ProjectService => {
+  if (!services.projects) throw backendFailure("BACKEND_UNAVAILABLE", "Projects are not initialized");
+  return services.projects;
 };
 
 export const handleBackendCall = async (
@@ -60,6 +67,10 @@ export const handleBackendCall = async (
     case "forms.import.cancel":
       requireForms(services).cancelImport((request.params as FormsImportCancelParams).operationId);
       return { ok: true };
+    case "projects.list":
+      return requireProjects(services).list();
+    case "projects.get":
+      return requireProjects(services).get((request.params as { projectId: string }).projectId);
     default:
       throw new Error(`Backend method is not implemented in the Electron v2 shell: ${request.method}`);
   }
