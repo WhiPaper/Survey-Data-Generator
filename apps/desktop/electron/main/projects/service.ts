@@ -50,17 +50,13 @@ const loadProject = (db: SurveyDatabase, project: ProjectRecord): LoadedProject 
   const revisionId = project.currentSourceRevisionId;
   if (!revisionId) return null;
   const revision = getSourceRevision(db, revisionId);
-  if (!revision) {
-    throw backendFailure("INTERNAL", "Project source revision is missing");
-  }
+  if (!revision) throw backendFailure("INTERNAL", "Project source revision is missing");
   const snapshot = db
     .select()
     .from(formSnapshots)
     .where(eq(formSnapshots.id, revision.formSnapshotId))
     .get();
-  if (!snapshot) {
-    throw backendFailure("INTERNAL", "Project Form snapshot is missing");
-  }
+  if (!snapshot) throw backendFailure("INTERNAL", "Project Form snapshot is missing");
   return { project, revision, form: parseForm(snapshot.schemaJson) };
 };
 
@@ -73,13 +69,11 @@ const summary = ({ project, revision, form }: LoadedProject): ProjectSummaryView
     googleAccountId: project.googleAccountId as GoogleAccountId,
     googleFormId: project.googleFormId as FormId,
     name: project.name,
-    timeZone: null,
     currentSourceRevisionId: revision.id,
     createdAt: new Date(project.createdAtMs).toISOString(),
     updatedAt: new Date(project.updatedAtMs).toISOString(),
     responseCount: revision.responseCount,
     questionCount: questionCount(form),
-    profileCount: 0,
   };
 };
 
@@ -107,18 +101,10 @@ export const createProjectService = ({ db }: CreateProjectServiceOptions): Proje
     if (!project) return null;
     const loaded = loadProject(db, project);
     if (!loaded) return null;
-    const base = summary(loaded);
     return {
-      ...base,
+      ...summary(loaded),
       form: loaded.form,
       responseTimestampRange: responseTimestampRange(db, loaded.revision.id),
-      targets: {
-        targetResponseCount: loaded.revision.responseCount,
-        questionTargets: [],
-      },
-      targetRevision: 0,
-      profiles: [],
-      relationships: [],
     };
   },
 
