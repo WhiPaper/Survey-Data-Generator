@@ -71,6 +71,13 @@ export const createFlatTablePlan = (
   return { targetQuestionId, questionColumns };
 };
 
+const valueGroupMemberKey = (slot: AnswerSlot | undefined): string | null => {
+  if (slot?.state !== "answered") return null;
+  if (slot.value.kind === "single_choice") return String(slot.value.optionKey);
+  if (slot.value.kind === "text") return slot.value.value;
+  return null;
+};
+
 export const valueGroupMemberCells = (
   responses: readonly StoredSourceResponse[],
   questionId: QuestionId,
@@ -80,13 +87,8 @@ export const valueGroupMemberCells = (
   const cells = new Set<string>();
   for (const stored of responses) {
     const slot = asNormalizedResponse(stored.response).answers[questionId];
-    if (
-      slot?.state === "answered" &&
-      slot.value.kind === "single_choice" &&
-      memberSet.has(String(slot.value.optionKey))
-    ) {
-      cells.add(JSON.stringify(slot));
-    }
+    const key = valueGroupMemberKey(slot);
+    if (key !== null && memberSet.has(key) && slot) cells.add(JSON.stringify(slot));
   }
   return [...cells];
 };
