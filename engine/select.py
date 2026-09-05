@@ -15,6 +15,13 @@ class TargetInfeasible(Exception):
 
 
 @dataclass(frozen=True)
+class MeanSupportPlan:
+    score_counts: dict[int, int]
+    achieved_mean: float
+    absolute_error: float
+
+
+@dataclass(frozen=True)
 class MeanSelection:
     selected_indices: np.ndarray
     achieved_mean: float
@@ -22,16 +29,25 @@ class MeanSelection:
     exact_target: bool
 
 
-def select_for_mean(
+def _source_scores(source: pd.DataFrame, target_column: str) -> pd.Series:
+    scores = pd.to_numeric(source[target_column], errors="coerce")
+    if scores.isna().any():
+        raise TargetInfeasible(
+            "mean_requires_answered_source",
+            "M4 mean targets currently require the target ordinal question to be answered in every source row",
+        )
+    return scores
+
+
+def plan_mean_support(
     source: pd.DataFrame,
-    candidates: pd.DataFrame,
     *,
     target_column: str,
     final_count: int,
     target_mean: float,
     target_min: int,
     target_max: int,
-) -> MeanSelection:
+) -> MeanSupportPlan:
     source_count = len(source)
     if source_count == 0:
         raise TargetInfeasible("empty_source_scope", "SourceScope contains no responses")
@@ -46,22 +62,67 @@ def select_for_mean(
             f"Requested mean {target_mean} is outside [{target_min}, {target_max}]",
         )
 
-    source_scores = pd.to_numeric(source[target_column], errors="coerce")
-    if source_scores.isna().any():
-        raise TargetInfeasible(
-            "mean_requires_answered_source",
-            "M4 mean targets currently require the target ordinal question to be answered in every source row",
+    source_scores = _source_scores(source, target_column)
+    additions = final_count - source_count
+    source_sum = float(source_scores.sum())
+    if additions == 0:
+        achieved = source_sum / final_count
+        return MeanSupportPlan(
+            score_counts={},
+            achieved_mean=achieved,
+            absolute_error=abs(achieved - target_mean),
         )
+
+    desired_synthetic_sum = target_mean * final_count - source_sum
+    minimum_sum = additions * target_min
+    maximum_sum = additions * target_max
+    nearest_integer_sum = int(np.floor(desired_synthetic_sum + 0.5))
+    synthetic_sum = min(max(nearest_integer_sum, minimum_sum), maximum_sum)
+
+    low_score = synthetic_sum // additions
+    remainder = synthetic_sum - low_score * additions
+    score_counts: dict[int, int] = {}
+    if additions - remainder > 0:
+        score_counts[int(low_score)] = int(additions - remainder)
+    if remainder > 0:
+        score_counts[int(low_score + 1)] = int(remainder)
+
+    achieved = (source_sum + synthetic_sum) / final_count
+    return MeanSupportPlan(
+        score_counts=score_counts,
+        achieved_mean=float(achieved),
+        absolute_error=abs(float(achieved) - target_mean),
+    )
+
+
+def select_for_mean(
+    source: pd.DataFrame,
+    candidates: pd.DataFrame,
+    *,
+    target_column: str,
+    final_count: int,
+    target_mean: float,
+    target_min: int,
+    target_max: int,
+) -> MeanSelection:
+    source_count = len(source)
+    support = plan_mean_support(
+        source,
+        target_column=target_column,
+        final_count=final_count,
+        target_mean=target_mean,
+        target_min=target_min,
+        target_max=target_max,
+    )
+    source_scores = _source_scores(source, target_column)
 
     additions = final_count - source_count
     if additions == 0:
-        achieved = float(source_scores.mean())
-        error = abs(achieved - target_mean)
         return MeanSelection(
             selected_indices=np.array([], dtype=int),
-            achieved_mean=achieved,
-            absolute_error=error,
-            exact_target=error <= 1e-9,
+            achieved_mean=support.achieved_mean,
+            absolute_error=support.absolute_error,
+            exact_target=support.absolute_error <= 1e-9,
         )
 
     if len(candidates) < additions:
@@ -125,6 +186,15 @@ def select_for_mean(
 
     achieved = float((source_sum + float(scores[selected].sum())) / final_count)
     error = abs(achieved - target_mean)
+    if error > support.absolute_error + 1e-9:
+        raise TargetInfeasible(
+            "candidate_target_support",
+            (
+                f"Candidate pool can only reach mean {achieved:.6f}, but the ordinal score domain "
+                f"can reach {support.achieved_mean:.6f} for this immutable source"
+            ),
+        )
+
     return MeanSelection(
         selected_indices=selected,
         achieved_mean=achieved,
