@@ -121,6 +121,8 @@ describe("Google Forms service", () => {
 
     const summary = await service.importForm({ formId: "form-1" as FormId });
     expect(summary).toMatchObject({
+      projectId: expect.any(String),
+      sourceRevisionId: expect.any(String),
       formId: "form-1",
       title: "Event survey",
       responseCount: 1,
@@ -129,19 +131,17 @@ describe("Google Forms service", () => {
 
     const projects = listProjects(database.db);
     expect(projects).toHaveLength(1);
-    expect(summary.importId).toBe(projects[0]?.id);
-    const project = getProject(database.db, summary.importId);
+    expect(summary.projectId).toBe(projects[0]?.id);
+    const project = getProject(database.db, summary.projectId);
     expect(project?.googleAccountId).toBe("google-sub-1");
     expect(project?.googleFormId).toBe("form-1");
-    expect(project?.currentSourceRevisionId).toBeTruthy();
+    expect(project?.currentSourceRevisionId).toBe(summary.sourceRevisionId);
 
-    const revisionId = project?.currentSourceRevisionId;
-    expect(revisionId).toBeTruthy();
-    const revision = getSourceRevision(database.db, revisionId!);
+    const revision = getSourceRevision(database.db, summary.sourceRevisionId);
     expect(revision?.responseCount).toBe(1);
     expect(revision?.responseSetHash).toMatch(/^[a-f0-9]{64}$/);
 
-    const responses = listSourceResponses(database.db, revisionId!);
+    const responses = listSourceResponses(database.db, summary.sourceRevisionId);
     expect(responses).toHaveLength(1);
     expect(responses[0]?.responseId).toBe("r1");
     expect(responses[0]?.submittedAtMs).toBe(Date.parse("2026-08-01T00:01:00.000Z"));
