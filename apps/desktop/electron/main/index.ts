@@ -12,6 +12,7 @@ import { createGoogleFormsClient } from "./forms/google-client";
 import { createFormsService } from "./forms/service";
 import { createJobRegistry } from "./jobs";
 import { openAppDatabase, type AppDatabase } from "./persistence/database";
+import { createProjectService } from "./projects/service";
 
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
 let appDatabase: AppDatabase | null = null;
@@ -90,6 +91,7 @@ void app
         db: appDatabase.db,
         jobs,
       }),
+      projects: createProjectService({ db: appDatabase.db }),
     };
 
     createWindow();
