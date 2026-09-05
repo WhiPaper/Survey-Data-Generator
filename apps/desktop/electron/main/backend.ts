@@ -79,6 +79,9 @@ export const handleBackendCall = async (
       return requireProjects(services).list();
     case "projects.get":
       return requireProjects(services).get((request.params as { projectId: string }).projectId);
+    case "projects.delete":
+      await requireProjects(services).delete((request.params as { projectId: string }).projectId);
+      return { ok: true };
     case "synthesis.start":
       return requireSynthesis(services).start(request.params as SynthesisStartParams);
     case "synthesis.cancel":
