@@ -32,20 +32,19 @@ const memoryTokenStore = (): RefreshTokenStore & { values: Map<string, string> }
   };
 };
 
-const provider = (): GoogleProvider & {
-  authorize: ReturnType<typeof vi.fn<GoogleProvider["authorize"]>>;
-  refresh: ReturnType<typeof vi.fn<GoogleProvider["refresh"]>>;
-  revoke: ReturnType<typeof vi.fn<GoogleProvider["revoke"]>>;
-} => ({
-  authorize: vi.fn(async () => ({
-    identity: { subject: "google-sub-1", email: "user@example.com", displayName: "Survey User" },
-    accessToken: "access-1",
-    refreshToken: "refresh-1",
-    expiresAtMs: 100_000,
-  })),
-  refresh: vi.fn(async () => ({ accessToken: "access-refreshed", expiresAtMs: 200_000 })),
-  revoke: vi.fn(async () => undefined),
-});
+const provider = () => {
+  const result = {
+    authorize: vi.fn(async () => ({
+      identity: { subject: "google-sub-1", email: "user@example.com", displayName: "Survey User" },
+      accessToken: "access-1",
+      refreshToken: "refresh-1",
+      expiresAtMs: 100_000,
+    })),
+    refresh: vi.fn(async () => ({ accessToken: "access-refreshed", expiresAtMs: 200_000 })),
+    revoke: vi.fn(async () => undefined),
+  } satisfies GoogleProvider;
+  return result;
+};
 
 afterEach(() => {
   while (databases.length > 0) databases.pop()?.close();
@@ -60,9 +59,6 @@ describe("Google auth service", () => {
     const database = createDatabase();
     const refreshTokens = memoryTokenStore();
     const google = provider();
-    const auth = createGoogleAuthService({ database: undefined } as never);
-    void auth;
-
     const service = createGoogleAuthService({
       db: database.db,
       refreshTokens,
@@ -134,7 +130,7 @@ describe("Google auth service", () => {
 });
 
 describe("refresh token file store", () => {
-  it("stores only codec-encrypted bytes on disk and round-trips them", async () => {
+  it("stores codec-encrypted bytes and round-trips the token", async () => {
     const directory = mkdtempSync(join(tmpdir(), "survey-synth-auth-"));
     tempDirectories.push(directory);
     const store = new FileRefreshTokenStore(join(directory, "tokens.json"), {
