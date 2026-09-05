@@ -8,6 +8,15 @@ target/
 *.log
 *.tsbuildinfo
 
+# Python engine development/build output.
+.venv/
+__pycache__/
+*.pyc
+engine/build/
+engine/dist/
+.local-engine-smoke/
+.local-engine-binary-smoke/
+
 # Local OAuth configuration may contain client credentials.
 google_oauth.local.json
 
