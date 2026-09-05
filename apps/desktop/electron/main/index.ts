@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
 
 import { handleBackendCall } from "./backend";
+import { openAppDatabase, type AppDatabase } from "./persistence/database";
 
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
+let appDatabase: AppDatabase | null = null;
 
 const createWindow = (): BrowserWindow => {
   const window = new BrowserWindow({
@@ -37,12 +39,28 @@ ipcMain.handle(BACKEND_CALL_CHANNEL, (_event, serializedRequest: string) =>
   handleBackendCall(serializedRequest),
 );
 
-void app.whenReady().then(() => {
-  createWindow();
+void app
+  .whenReady()
+  .then(() => {
+    appDatabase = openAppDatabase({
+      filename: join(app.getPath("userData"), "survey-synth.sqlite"),
+      migrationsFolder: join(app.getAppPath(), "drizzle"),
+    });
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    createWindow();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  })
+  .catch((error: unknown) => {
+    console.error("Failed to initialize Survey Synth:", error);
+    app.quit();
   });
+
+app.on("will-quit", () => {
+  appDatabase?.close();
+  appDatabase = null;
 });
 
 app.on("window-all-closed", () => {
