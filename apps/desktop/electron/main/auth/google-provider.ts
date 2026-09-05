@@ -75,7 +75,7 @@ const createOAuthClient = (config: GoogleOAuthConfig, redirectUri?: string): OAu
     ...(redirectUri ? { redirectUri } : {}),
   });
 
-const listenLoopback = async (server: Server): Promise<number> =>
+const listenLoopback = async (server: Server): Promise<number> => {
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error): void => {
       server.off("error", onError);
