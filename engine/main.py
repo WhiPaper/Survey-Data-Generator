@@ -34,7 +34,7 @@ from sdv.single_table import GaussianCopulaSynthesizer  # noqa: E402,F401
 from evaluate import evaluate_result  # noqa: E402
 from generate import generate_candidates  # noqa: E402
 from prepare import read_source, smoke_source, write_parquet  # noqa: E402
-from select import TargetInfeasible, select_for_mean  # noqa: E402
+from select import TargetInfeasible, plan_mean_support, select_for_mean  # noqa: E402
 
 
 class JobPaths(BaseModel):
@@ -247,13 +247,23 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
     additions = job.final_count - source_count
 
     try:
-        if additions < 0:
-            raise TargetInfeasible(
-                "final_count_below_source",
-                f"Final response count {job.final_count} is below immutable source count {source_count}",
-            )
+        support = plan_mean_support(
+            source,
+            target_column=job.mean_target.column,
+            final_count=job.final_count,
+            target_mean=job.mean_target.value,
+            target_min=job.mean_target.minimum,
+            target_max=job.mean_target.maximum,
+        )
 
-        emit({"type": "progress", "stage": "generate_candidates", "rows": additions})
+        emit(
+            {
+                "type": "progress",
+                "stage": "generate_candidates",
+                "rows": additions,
+                "targetScores": support.score_counts,
+            }
+        )
         pool_size = job.candidate_pool_size or max(additions * 20, 200)
         pool = generate_candidates(
             source,
@@ -261,6 +271,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             target_column=job.mean_target.column,
             target_min=job.mean_target.minimum,
             target_max=job.mean_target.maximum,
+            target_score_counts=support.score_counts,
             pool_size=pool_size,
             seed=job.seed,
             categorical_columns=job.categorical_columns,
@@ -340,10 +351,13 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             "mean": evaluation.achieved_mean,
             "absoluteError": evaluation.absolute_error,
             "exact": selection.exact_target,
+            "bestPossibleMean": support.achieved_mean,
+            "bestPossibleAbsoluteError": support.absolute_error,
         },
         "validation": {
             "finalCount": True,
             "targetDomain": True,
+            "targetSupportOptimal": evaluation.absolute_error <= support.absolute_error + 1e-9,
             "categoricalSupport": True,
             "duplicateRowCount": evaluation.duplicate_row_count,
         },
