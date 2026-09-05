@@ -1,4 +1,5 @@
-import { ParquetReader, ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
+import { asyncBufferFromFile, parquetReadObjects } from "hyparquet";
+import { parquetWriteFile } from "hyparquet-writer";
 
 import {
   resolveResponsePath,
@@ -35,7 +36,11 @@ const asNormalizedResponse = (value: unknown): NormalizedResponse => {
     throw backendFailure("INTERNAL", "Stored normalized response is invalid");
   }
   const record = value as Record<string, unknown>;
-  if (typeof record.responseId !== "string" || typeof record.answers !== "object" || record.answers === null) {
+  if (
+    typeof record.responseId !== "string" ||
+    typeof record.answers !== "object" ||
+    record.answers === null
+  ) {
     throw backendFailure("INTERNAL", "Stored normalized response is invalid");
   }
   return value as NormalizedResponse;
@@ -72,34 +77,48 @@ export const writeSourceParquet = async (
   responses: readonly StoredSourceResponse[],
   plan: FlatTablePlan,
 ): Promise<void> => {
-  const fields: Record<string, { type: "UTF8" | "DOUBLE"; optional?: boolean }> = {
-    [RESPONSE_ID_COLUMN]: { type: "UTF8" },
-    [TIMESTAMP_COLUMN]: { type: "UTF8" },
-    [TARGET_SCORE_COLUMN]: { type: "DOUBLE" },
-  };
-  for (const column of plan.questionColumns.values()) fields[column] = { type: "UTF8" };
+  const normalized = responses.map((stored) => ({
+    stored,
+    response: asNormalizedResponse(stored.response),
+  }));
 
-  const writer = await ParquetWriter.openFile(new ParquetSchema(fields), path);
-  try {
-    for (const stored of responses) {
-      const response = asNormalizedResponse(stored.response);
-      const row: Record<string, string | number> = {
-        [RESPONSE_ID_COLUMN]: stored.responseId,
-        [TIMESTAMP_COLUMN]: new Date(stored.submittedAtMs).toISOString(),
-        [TARGET_SCORE_COLUMN]: targetScore(response, plan.targetQuestionId),
-      };
-      for (const [questionId, column] of plan.questionColumns) {
-        const slot = response.answers[questionId];
-        if (!slot) {
-          throw backendFailure("INTERNAL", `Stored response is missing question ${questionId}`);
-        }
-        row[column] = JSON.stringify(slot);
+  const questionColumns = [...plan.questionColumns].map(([questionId, column]) => ({
+    name: column,
+    data: normalized.map(({ response }) => {
+      const slot = response.answers[questionId];
+      if (!slot) {
+        throw backendFailure("INTERNAL", `Stored response is missing question ${questionId}`);
       }
-      await writer.appendRow(row);
-    }
-  } finally {
-    await writer.close();
-  }
+      return JSON.stringify(slot);
+    }),
+    type: "STRING" as const,
+    nullable: false,
+  }));
+
+  parquetWriteFile({
+    filename: path,
+    columnData: [
+      {
+        name: RESPONSE_ID_COLUMN,
+        data: normalized.map(({ stored }) => stored.responseId),
+        type: "STRING" as const,
+        nullable: false,
+      },
+      {
+        name: TIMESTAMP_COLUMN,
+        data: normalized.map(({ stored }) => new Date(stored.submittedAtMs).toISOString()),
+        type: "STRING" as const,
+        nullable: false,
+      },
+      {
+        name: TARGET_SCORE_COLUMN,
+        data: normalized.map(({ response }) => targetScore(response, plan.targetQuestionId)),
+        type: "DOUBLE" as const,
+        nullable: false,
+      },
+      ...questionColumns,
+    ],
+  });
 
   void form;
 };
@@ -112,7 +131,9 @@ const parseGeneratedSlot = (value: unknown, questionId: QuestionId): AnswerSlot 
     const parsed = JSON.parse(value) as unknown;
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error();
     const state = (parsed as Record<string, unknown>).state;
-    if (!['answered', 'skipped', 'not_reached', 'indeterminate'].includes(String(state))) throw new Error();
+    if (!["answered", "skipped", "not_reached", "indeterminate"].includes(String(state))) {
+      throw new Error();
+    }
     return parsed as AnswerSlot;
   } catch {
     throw backendFailure("INTERNAL", `Synthetic row contains invalid question ${questionId}`);
@@ -158,7 +179,9 @@ const syntheticResponse = (
   const answers = {} as Record<QuestionId, AnswerSlot>;
   for (const question of form.questions) {
     const slot = provisional[question.id];
-    if (!slot) throw backendFailure("INTERNAL", `Synthetic result is missing question ${question.id}`);
+    if (!slot) {
+      throw backendFailure("INTERNAL", `Synthetic result is missing question ${question.id}`);
+    }
     if (slot.state === "answered") {
       answers[question.id] = slot;
       continue;
@@ -199,36 +222,35 @@ export const readResultParquet = async (
   const originals = new Map(
     sourceResponses.map((stored) => [stored.responseId, asNormalizedResponse(stored.response)] as const),
   );
-  const reader = await ParquetReader.openFile(path);
+  const file = await asyncBufferFromFile(path);
+  const parquetRows = await parquetReadObjects({ file });
   const rows: DecodedRunRow[] = [];
-  try {
-    const cursor = reader.getCursor();
-    while (true) {
-      const row = (await cursor.next()) as ParquetRecord | null;
-      if (!row) break;
-      const responseId = stringValue(row[RESPONSE_ID_COLUMN], "response_id");
-      const submittedAtMs = timestampMs(row[TIMESTAMP_COLUMN]);
-      if (!Number.isFinite(submittedAtMs)) {
-        throw backendFailure("INTERNAL", "Synthetic result contains an invalid timestamp");
-      }
-      const origin = row[ORIGIN_COLUMN];
-      if (origin === "original") {
-        const response = originals.get(responseId);
-        if (!response) throw backendFailure("INTERNAL", "Synthetic result references an unknown source row");
-        rows.push({ responseId, submittedAtMs, origin: "original", response });
-      } else if (origin === "synthetic") {
-        rows.push({
-          responseId,
-          submittedAtMs,
-          origin: "synthetic",
-          response: syntheticResponse(form, plan, row, responseId, submittedAtMs),
-        });
-      } else {
-        throw backendFailure("INTERNAL", "Synthetic result contains invalid provenance");
-      }
+
+  for (const rawRow of parquetRows) {
+    const row = rawRow as ParquetRecord;
+    const responseId = stringValue(row[RESPONSE_ID_COLUMN], "response_id");
+    const submittedAtMs = timestampMs(row[TIMESTAMP_COLUMN]);
+    if (!Number.isFinite(submittedAtMs)) {
+      throw backendFailure("INTERNAL", "Synthetic result contains an invalid timestamp");
     }
-  } finally {
-    await reader.close();
+    const origin = row[ORIGIN_COLUMN];
+    if (origin === "original") {
+      const response = originals.get(responseId);
+      if (!response) {
+        throw backendFailure("INTERNAL", "Synthetic result references an unknown source row");
+      }
+      rows.push({ responseId, submittedAtMs, origin: "original", response });
+    } else if (origin === "synthetic") {
+      rows.push({
+        responseId,
+        submittedAtMs,
+        origin: "synthetic",
+        response: syntheticResponse(form, plan, row, responseId, submittedAtMs),
+      });
+    } else {
+      throw backendFailure("INTERNAL", "Synthetic result contains invalid provenance");
+    }
   }
+
   return rows;
 };
