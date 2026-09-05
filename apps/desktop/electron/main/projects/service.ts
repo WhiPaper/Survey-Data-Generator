@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 
-import type { ProjectDetailView, ProjectSummaryView } from "@survey-synth/contracts";
+import type {
+  FormId,
+  GoogleAccountId,
+  ProjectDetailView,
+  ProjectSummaryView,
+} from "@survey-synth/contracts";
 
 import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
@@ -64,8 +69,8 @@ const summary = ({ project, revision, form }: LoadedProject): ProjectSummaryView
   }
   return {
     id: project.id,
-    googleAccountId: project.googleAccountId,
-    googleFormId: project.googleFormId,
+    googleAccountId: project.googleAccountId as GoogleAccountId,
+    googleFormId: project.googleFormId as FormId,
     name: project.name,
     timeZone: null,
     currentSourceRevisionId: revision.id,
