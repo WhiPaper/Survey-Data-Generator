@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from importlib.metadata import version
 from pathlib import Path
 from typing import Literal
 
@@ -20,10 +19,15 @@ if sys.version_info[:2] != (3, 12):
     )
     raise SystemExit(1)
 
-import pyarrow  # noqa: E402,F401
+import pandas  # noqa: E402
+import pyarrow  # noqa: E402
+import pydantic  # noqa: E402
+import scipy  # noqa: E402
+import sdmetrics  # noqa: E402
+import sdv  # noqa: E402
 from pydantic import BaseModel, ConfigDict, ValidationError  # noqa: E402
 from scipy.optimize import milp  # noqa: E402,F401
-from sdmetrics.reports.single_table import QualityReport  # noqa: E402,F401
+from sdmetrics.reports import QualityReport  # noqa: E402,F401
 from sdv.single_table import GaussianCopulaSynthesizer  # noqa: E402,F401
 
 from prepare import read_source, smoke_source, write_parquet  # noqa: E402
@@ -72,10 +76,21 @@ def load_job(job_path: Path) -> SmokeJob:
 
 
 def dependency_versions() -> dict[str, str]:
-    return {
-        name: version(name)
-        for name in ("pydantic", "pandas", "pyarrow", "scipy", "sdv", "sdmetrics")
+    modules = {
+        "pydantic": pydantic,
+        "pandas": pandas,
+        "pyarrow": pyarrow,
+        "scipy": scipy,
+        "sdv": sdv,
+        "sdmetrics": sdmetrics,
     }
+    versions: dict[str, str] = {}
+    for name, module in modules.items():
+        value = getattr(module, "__version__", None)
+        if not isinstance(value, str) or not value:
+            raise RuntimeError(f"{name} does not expose __version__")
+        versions[name] = value
+    return versions
 
 
 def write_report(path: Path, report: dict[str, object]) -> None:
