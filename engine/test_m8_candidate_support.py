@@ -15,6 +15,7 @@ class CandidateSupportRegenerationTest(unittest.TestCase):
             {
                 "response_id": [f"source-{index + 1}" for index in range(5)],
                 "score": [5, 5, 5, 5, 1],
+                "segment": ["A", "B", "A", "B", "A"],
             }
         )
 
@@ -27,9 +28,11 @@ class CandidateSupportRegenerationTest(unittest.TestCase):
             target_score_counts={},
             pool_size=20,
             seed=20260906,
+            categorical_columns=["segment"],
         )
         generated_scores = set(pd.to_numeric(pool.data["score"], errors="raise").astype(int))
         self.assertTrue({1, 5} <= generated_scores)
+        self.assertTrue(set(pool.data["segment"]) <= {"A", "B"})
 
         append_only = select_for_targets(
             source,
