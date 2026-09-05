@@ -9,7 +9,7 @@ import type {
 
 import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
-import { formSnapshots } from "../persistence/schema";
+import { formSnapshots, projects } from "../persistence/schema";
 import {
   getProject,
   getSourceRevision,
@@ -22,6 +22,7 @@ import {
 export interface ProjectService {
   list(): Promise<ProjectSummaryView[]>;
   get(projectId: string): Promise<ProjectDetailView | null>;
+  delete(projectId: string): Promise<void>;
 }
 
 export type CreateProjectServiceOptions = {
@@ -119,5 +120,11 @@ export const createProjectService = ({ db }: CreateProjectServiceOptions): Proje
       profiles: [],
       relationships: [],
     };
+  },
+
+  delete: async (projectId) => {
+    const project = getProject(db, projectId);
+    if (!project) throw backendFailure("NOT_FOUND", "Project was not found");
+    db.delete(projects).where(eq(projects.id, projectId)).run();
   },
 });
