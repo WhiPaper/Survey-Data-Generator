@@ -80,6 +80,51 @@ export const sourceResponses = sqliteTable(
   ],
 );
 
+export const runs = sqliteTable(
+  "runs",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    sourceRevisionId: text("source_revision_id")
+      .notNull()
+      .references(() => sourceRevisions.id, { onDelete: "restrict" }),
+    scopeKind: text("scope_kind").notNull(),
+    scopeStartMs: integer("scope_start_ms"),
+    scopeEndMs: integer("scope_end_ms"),
+    scopeResponseCount: integer("scope_response_count").notNull(),
+    scopeResponseSetHash: text("scope_response_set_hash").notNull(),
+    finalResponseCount: integer("final_response_count").notNull(),
+    targetJson: text("target_json").notNull(),
+    seed: integer("seed").notNull(),
+    engineReportJson: text("engine_report_json").notNull(),
+    createdAtMs: integer("created_at_ms").notNull(),
+  },
+  (table) => [
+    index("runs_project_idx").on(table.projectId),
+    index("runs_source_revision_idx").on(table.sourceRevisionId),
+  ],
+);
+
+export const runRows = sqliteTable(
+  "run_rows",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    rowIndex: integer("row_index").notNull(),
+    responseId: text("response_id").notNull(),
+    submittedAtMs: integer("submitted_at_ms").notNull(),
+    origin: text("origin").notNull(),
+    responseJson: text("response_json").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.runId, table.rowIndex] }),
+    index("run_rows_run_idx").on(table.runId),
+  ],
+);
+
 export const preferences = sqliteTable("preferences", {
   key: text("key").primaryKey(),
   valueJson: text("value_json").notNull(),
@@ -92,5 +137,7 @@ export const persistenceSchema = {
   formSnapshots,
   sourceRevisions,
   sourceResponses,
+  runs,
+  runRows,
   preferences,
 };
