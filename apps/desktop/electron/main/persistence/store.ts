@@ -5,13 +5,107 @@ import { asc, desc, eq } from "drizzle-orm";
 import type { SurveyDatabase } from "./database";
 import {
   formSnapshots,
+  googleAccounts,
+  preferences,
   projects,
   sourceResponses,
   sourceRevisions,
 } from "./schema";
 
+export type GoogleAccountRecord = typeof googleAccounts.$inferSelect;
 export type ProjectRecord = typeof projects.$inferSelect;
 export type SourceRevisionRecord = typeof sourceRevisions.$inferSelect;
+
+const ACTIVE_GOOGLE_ACCOUNT_PREFERENCE = "auth.activeGoogleAccountId";
+
+export type UpsertGoogleAccountInput = {
+  /** Google OpenID Connect `sub`. Google is the only provider, so it is also our stable local id. */
+  id: string;
+  email: string;
+  displayName?: string;
+  nowMs?: number;
+};
+
+export const upsertGoogleAccount = (
+  db: SurveyDatabase,
+  input: UpsertGoogleAccountInput,
+): GoogleAccountRecord => {
+  const nowMs = input.nowMs ?? Date.now();
+  const existing = getGoogleAccount(db, input.id);
+  const createdAtMs = existing?.createdAtMs ?? nowMs;
+
+  db.insert(googleAccounts)
+    .values({
+      id: input.id,
+      email: input.email,
+      displayName: input.displayName ?? null,
+      createdAtMs,
+      updatedAtMs: nowMs,
+    })
+    .onConflictDoUpdate({
+      target: googleAccounts.id,
+      set: {
+        email: input.email,
+        displayName: input.displayName ?? null,
+        updatedAtMs: nowMs,
+      },
+    })
+    .run();
+
+  return getGoogleAccount(db, input.id)!;
+};
+
+export const getGoogleAccount = (
+  db: SurveyDatabase,
+  accountId: string,
+): GoogleAccountRecord | null =>
+  db.select().from(googleAccounts).where(eq(googleAccounts.id, accountId)).get() ?? null;
+
+export const listGoogleAccounts = (db: SurveyDatabase): GoogleAccountRecord[] =>
+  db.select().from(googleAccounts).orderBy(desc(googleAccounts.updatedAtMs)).all();
+
+export const removeGoogleAccount = (db: SurveyDatabase, accountId: string): void => {
+  db.delete(googleAccounts).where(eq(googleAccounts.id, accountId)).run();
+};
+
+export const getActiveGoogleAccountId = (db: SurveyDatabase): string | null => {
+  const row = db
+    .select()
+    .from(preferences)
+    .where(eq(preferences.key, ACTIVE_GOOGLE_ACCOUNT_PREFERENCE))
+    .get();
+  if (!row) return null;
+
+  try {
+    const value = JSON.parse(row.valueJson) as unknown;
+    return typeof value === "string" && value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+};
+
+export const setActiveGoogleAccountId = (
+  db: SurveyDatabase,
+  accountId: string | null,
+  nowMs = Date.now(),
+): void => {
+  if (accountId === null) {
+    db.delete(preferences).where(eq(preferences.key, ACTIVE_GOOGLE_ACCOUNT_PREFERENCE)).run();
+    return;
+  }
+
+  db.insert(preferences)
+    .values({
+      key: ACTIVE_GOOGLE_ACCOUNT_PREFERENCE,
+      valueJson: JSON.stringify(accountId),
+      updatedAtMs: nowMs,
+    })
+    .onConflictDoUpdate({
+      target: preferences.key,
+      set: { valueJson: JSON.stringify(accountId), updatedAtMs: nowMs },
+    })
+    .run();
+};
 
 export type CreateProjectInput = {
   id?: string;
