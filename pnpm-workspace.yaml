@@ -4,7 +4,9 @@ packages:
 
 onlyBuiltDependencies:
   - esbuild
+  - electron
   - better-sqlite3-multiple-ciphers
 allowBuilds:
   better-sqlite3-multiple-ciphers: true
+  electron: true
   esbuild: true
