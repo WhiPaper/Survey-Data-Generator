@@ -1,12 +1,12 @@
 packages:
-  - apps/*
-  - packages/*
+  - apps/desktop
+  - packages/domain
+  - packages/contracts
 
 onlyBuiltDependencies:
-  - esbuild
   - electron
-  - better-sqlite3-multiple-ciphers
+  - esbuild
+
 allowBuilds:
-  better-sqlite3-multiple-ciphers: true
   electron: true
   esbuild: true
