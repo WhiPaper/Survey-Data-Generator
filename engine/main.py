@@ -26,7 +26,7 @@ import pydantic  # noqa: E402
 import scipy  # noqa: E402
 import sdmetrics  # noqa: E402
 import sdv  # noqa: E402
-from pydantic import BaseModel, ConfigDict, ValidationError  # noqa: E402
+from pydantic import BaseModel, ConfigDict, Field, ValidationError  # noqa: E402
 from scipy.optimize import milp  # noqa: E402,F401
 from sdmetrics.reports import QualityReport  # noqa: E402,F401
 from sdv.single_table import GaussianCopulaSynthesizer  # noqa: E402,F401
@@ -65,6 +65,7 @@ class SynthesizeJob(JobPaths):
     mean_target: MeanTargetSpec
     seed: int
     id_column: str = "response_id"
+    categorical_columns: list[str] = Field(default_factory=list)
     timestamp_column: str | None = None
     timestamp_start: str | None = None
     timestamp_end: str | None = None
@@ -194,6 +195,17 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         raise ValueError("mean target minimum must not exceed maximum")
     if job.candidate_pool_size is not None and job.candidate_pool_size <= 0:
         raise ValueError("candidate_pool_size must be positive")
+    if len(job.categorical_columns) != len(set(job.categorical_columns)):
+        raise ValueError("categorical_columns must not contain duplicates")
+
+    reserved_columns = {job.id_column, job.mean_target.column}
+    if job.timestamp_column is not None:
+        reserved_columns.add(job.timestamp_column)
+    conflicting = [column for column in job.categorical_columns if column in reserved_columns]
+    if conflicting:
+        raise ValueError(
+            f"categorical_columns contain reserved columns: {', '.join(conflicting)}"
+        )
 
     emit({"type": "progress", "stage": "read_source"})
     source = read_source(job.source_parquet).copy()
@@ -201,6 +213,13 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         raise ValueError(f"source is missing id column: {job.id_column}")
     if job.mean_target.column not in source.columns:
         raise ValueError(f"source is missing mean target column: {job.mean_target.column}")
+    missing_categorical = [
+        column for column in job.categorical_columns if column not in source.columns
+    ]
+    if missing_categorical:
+        raise ValueError(
+            f"source is missing categorical columns: {', '.join(missing_categorical)}"
+        )
 
     source_scores = pandas.to_numeric(source[job.mean_target.column], errors="coerce")
     if source_scores.notna().any():
@@ -244,6 +263,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             target_max=job.mean_target.maximum,
             pool_size=pool_size,
             seed=job.seed,
+            categorical_columns=job.categorical_columns,
             timestamp_column=job.timestamp_column,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
@@ -324,6 +344,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         "validation": {
             "finalCount": True,
             "targetDomain": True,
+            "categoricalSupport": True,
             "duplicateRowCount": evaluation.duplicate_row_count,
         },
         "quality": {
