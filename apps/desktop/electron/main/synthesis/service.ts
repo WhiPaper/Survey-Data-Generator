@@ -183,9 +183,14 @@ export const createSynthesisService = ({
     }
 
     const means = params.targets.filter((target) => target.kind === "mean");
+    const shares = params.targets.filter((target) => target.kind === "share");
     if (means.length !== 1) {
       throw backendFailure("VALIDATION_FAILED", "M5 requires exactly one ordinal mean target");
     }
+    if (shares.length > 1) {
+      throw backendFailure("VALIDATION_FAILED", "M5 supports at most one ValueGroup share target");
+    }
+
     const mean = means[0]!;
     const form = loadForm(db, revision.formSnapshotId);
     const meanQuestion = form.questions.find((question) => question.id === mean.questionId);
@@ -202,7 +207,7 @@ export const createSynthesisService = ({
     }> = [];
     const frozenTargets: FrozenRunTarget[] = [{ ...mean }];
 
-    for (const share of params.targets.filter((target) => target.kind === "share")) {
+    for (const share of shares) {
       const row = db.select().from(valueGroups).where(eq(valueGroups.id, share.valueGroupId)).get();
       if (!row || row.projectId !== project.id) {
         throw backendFailure("VALIDATION_FAILED", "Share target ValueGroup was not found in this project");
