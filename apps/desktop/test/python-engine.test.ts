@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,6 +61,44 @@ describe("Python compute boundary", () => {
       kind: "smoke",
       rowCount: 2,
       capabilities: { scipyMilp: true, sdvGaussianCopula: true },
+    });
+  });
+
+  it("parses conditional share counts from synthesis report.json", async () => {
+    const directory = workDir();
+    const jobPath = join(directory, "job.json");
+    const reportPath = join(directory, "report.json");
+    writeFileSync(
+      jobPath,
+      JSON.stringify({
+        protocol_version: 1,
+        kind: "synthesize",
+        source_parquet: "source.parquet",
+        result_parquet: "result.parquet",
+        report_json: "report.json",
+        final_count: 4,
+        mean_target: { column: "target_score", value: 4.5, minimum: 1, maximum: 5 },
+        conditional_share_targets: [],
+        seed: 42,
+      }),
+    );
+    const engine = createPythonEngine({
+      jobs: createJobRegistry(),
+      launch: { command: process.execPath, argsPrefix: [fixture] },
+    });
+
+    await expect(engine.synthesize("engine-m6", jobPath, reportPath)).resolves.toMatchObject({
+      status: "success",
+      achieved: {
+        conditionalShares: [
+          {
+            share: 0.75,
+            numeratorCount: 3,
+            denominatorCount: 4,
+            exact: true,
+          },
+        ],
+      },
     });
   });
 
