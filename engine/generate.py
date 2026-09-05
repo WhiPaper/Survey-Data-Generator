@@ -10,6 +10,8 @@ from sdv.metadata import Metadata
 from sdv.sampling import Condition
 from sdv.single_table import GaussianCopulaSynthesizer
 
+from answer_slots import answer_cell_eligible
+
 
 TABLE_NAME = "table"
 
@@ -458,11 +460,14 @@ def generate_candidates(
 
     for support in conditional_supports:
         observed_options = allowed_values[support.option_column]
+        eligible_options = frozenset(
+            value for value in observed_options if answer_cell_eligible(value)
+        )
         states: list[frozenset[str]] = []
         if support.target_value > 0:
             states.append(support.option_values)
         if support.target_value < 1:
-            states.append(observed_options - support.option_values)
+            states.append(eligible_options - support.option_values)
         for score, required_score_count in candidate_score_counts.items():
             directed_total = max(required_score_count * 3, 30)
             for option_values in states:
