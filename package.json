@@ -18,6 +18,7 @@
     "engine:install": "python -m pip install -r engine/requirements.txt -r engine/requirements-build.txt",
     "engine:test": "python -m unittest engine/test_engine.py",
     "engine:smoke": "python engine/main.py selftest --work-dir .local-engine-smoke",
+    "engine:electron-smoke": "pnpm --filter @survey-synth/desktop exec vitest run test/python-engine-real.integration.ts",
     "engine:build": "cd engine && python -m PyInstaller survey-synth-engine.spec --noconfirm --clean",
     "engine:binary-smoke": "node scripts/engine-binary-smoke.mjs"
   },
