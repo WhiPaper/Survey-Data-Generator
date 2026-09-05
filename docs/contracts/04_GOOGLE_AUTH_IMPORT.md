@@ -42,7 +42,7 @@ Google Form + Responses
 
 The Google API transport, pagination requests, token refresh, and provider error transport should remain library-backed. Custom code is justified only for Survey Synth domain normalization, hard Form invariants, and persistence semantics.
 
-Import persists immediately; do not introduce a separate in-memory import-session subsystem before project creation.
+Import persists immediately; do not introduce a separate in-memory import-session subsystem before project creation. A successful `forms.import` result identifies the persisted records explicitly with `projectId` and `sourceRevisionId`; do not expose a generic `importId`.
 
 Do not run a custom relationship analyzer during import.
 
