@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from answer_slots import answer_cell_eligible
-from selection_solver import ConditionalMetric, solve_binary_selection
+from selection_solver import ConditionalMetric, PopulationKey, solve_binary_selection
 
 
 class TargetInfeasible(Exception):
@@ -273,12 +273,16 @@ def _population_key(target: ConditionalShareTarget) -> tuple[str, frozenset[str]
     return target.population_column, target.population_member_values
 
 
+def _conditional_group_key(target: ConditionalShareTarget) -> PopulationKey:
+    return target.population_column, target.population_member_values, target.option_column
+
+
 def _group_conditional_targets(
     targets: tuple[ConditionalShareTarget, ...],
-) -> list[tuple[tuple[str, frozenset[str]], tuple[ConditionalShareTarget, ...]]]:
-    grouped: dict[tuple[str, frozenset[str]], list[ConditionalShareTarget]] = {}
+) -> list[tuple[PopulationKey, tuple[ConditionalShareTarget, ...]]]:
+    grouped: dict[PopulationKey, list[ConditionalShareTarget]] = {}
     for target in targets:
-        grouped.setdefault(_population_key(target), []).append(target)
+        grouped.setdefault(_conditional_group_key(target), []).append(target)
     return [(key, tuple(values)) for key, values in grouped.items()]
 
 
@@ -313,8 +317,11 @@ def plan_conditional_support(
     if not targets:
         raise ValueError("conditional support requires at least one target")
     population_column, population_values = _population_key(targets[0])
+    option_column = targets[0].option_column
     if any(_population_key(target) != (population_column, population_values) for target in targets):
         raise ValueError("conditional support targets must share one population")
+    if any(target.option_column != option_column for target in targets):
+        raise ValueError("conditional support targets must share one eligible question")
 
     source_population_count = int(_conditional_vectors(source, targets[0])[0].sum())
     if source_population_count <= 0:
@@ -417,19 +424,18 @@ def select_for_targets(
         (share.column, share.member_values): support
         for share, support in zip(share_targets, share_supports, strict=True)
     }
-    conditional_support_plans = {
-        key: plan_conditional_support(
+    conditional_support_plans: dict[PopulationKey, ConditionalSupportPlan] = {}
+    for key, targets in conditional_groups:
+        membership_key = _population_key(targets[0])
+        population_support = share_support_by_population.get(membership_key)
+        conditional_support_plans[key] = plan_conditional_support(
             source,
             targets=targets,
             final_count=final_count,
             population_additions=(
-                share_support_by_population[key].synthetic_member_count
-                if key in share_support_by_population
-                else None
+                population_support.synthetic_member_count if population_support is not None else None
             ),
         )
-        for key, targets in conditional_groups
-    }
 
     if additions == 0:
         shares = tuple(
@@ -491,13 +497,13 @@ def select_for_targets(
         _conditional_vectors(candidates, target) for target in conditional_share_targets
     ]
 
-    group_denominators: dict[tuple[str, frozenset[str]], list[int]] = {}
+    group_denominators: dict[PopulationKey, list[int]] = {}
     for key, targets in conditional_groups:
         source_population = int(_conditional_vectors(source, targets[0])[0].sum())
+        membership_key = _population_key(targets[0])
+        population_support = share_support_by_population.get(membership_key)
         population_additions = (
-            share_support_by_population[key].synthetic_member_count
-            if key in share_support_by_population
-            else additions
+            population_support.synthetic_member_count if population_support is not None else additions
         )
         group_denominators[key] = list(
             range(source_population, source_population + population_additions + 1)
@@ -518,7 +524,7 @@ def select_for_targets(
         share_values=tuple(target.value for target in share_targets),
         conditionals=tuple(
             ConditionalMetric(
-                population_key=_population_key(target),
+                population_key=_conditional_group_key(target),
                 value=target.value,
                 population=np.concatenate([source_vectors[0], candidate_vectors[0]]),
                 numerator=np.concatenate([source_vectors[1], candidate_vectors[1]]),
@@ -605,10 +611,11 @@ def select_for_targets(
             )
         )
 
-    results_by_population: dict[tuple[str, frozenset[str]], list[ConditionalShareAchievement]] = {}
+    results_by_population: dict[PopulationKey, list[ConditionalShareAchievement]] = {}
     target_by_id = {target.id: target for target in conditional_share_targets}
     for achieved in conditional_results:
-        results_by_population.setdefault(_population_key(target_by_id[achieved.id]), []).append(achieved)
+        key = _conditional_group_key(target_by_id[achieved.id])
+        results_by_population.setdefault(key, []).append(achieved)
     for key, results in results_by_population.items():
         support = conditional_support_plans[key]
         actual_total_error = sum(result.absolute_error for result in results)
