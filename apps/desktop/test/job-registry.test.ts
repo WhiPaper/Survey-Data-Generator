@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createJobRegistry } from "../electron/main/jobs";
 
@@ -14,12 +14,14 @@ describe("Electron job registry", () => {
     expect(jobs.has("job-1")).toBe(false);
   });
 
-  it("cancels through AbortSignal", () => {
+  it("cancels through AbortSignal and optional worker termination", () => {
     const jobs = createJobRegistry();
-    const signal = jobs.start("job-1");
+    const terminate = vi.fn();
+    const signal = jobs.start("job-1", terminate);
 
     expect(jobs.cancel("job-1")).toBe(true);
     expect(signal.aborted).toBe(true);
+    expect(terminate).toHaveBeenCalledOnce();
     expect(jobs.has("job-1")).toBe(false);
   });
 
