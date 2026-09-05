@@ -175,6 +175,7 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertEqual(report["syntheticCount"], 40)
             self.assertEqual(report["finalCount"], 120)
             self.assertTrue(report["achieved"]["exact"])
+            self.assertTrue(report["validation"]["targetSupportOptimal"])
             self.assertTrue(report["validation"]["categoricalSupport"])
             self.assertAlmostEqual(report["achieved"]["mean"], 4.3)
             self.assertAlmostEqual(report["achieved"]["bestPossibleMean"], 4.3)
@@ -189,7 +190,7 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertEqual(int((synthetic["score"] == 4).sum()), 5)
             self.assertTrue(set(synthetic["segment"]) <= {"A", "B"})
 
-    def test_synthesize_solves_mean_and_share_jointly(self) -> None:
+    def test_synthesize_directs_rare_share_support_and_solves_jointly(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             work_dir = Path(directory)
             source_path = work_dir / "source.parquet"
@@ -200,11 +201,12 @@ class EngineSmokeTest(unittest.TestCase):
                         "2026-08-01T00:00:00Z", periods=80, freq="20min"
                     ),
                     "score": [5] * 44 + [4] * 36,
-                    "segment": ["A" if index % 2 == 0 else "B" for index in range(80)],
+                    "segment": ["A"] + ["B"] * 79,
                 }
             )
             source.to_parquet(source_path, index=False)
             job_path = work_dir / "job.json"
+            target_share = 41 / 120
             job_path.write_text(
                 json.dumps(
                     {
@@ -225,13 +227,13 @@ class EngineSmokeTest(unittest.TestCase):
                                 "id": "group-1",
                                 "column": "segment",
                                 "member_values": ["A"],
-                                "value": 0.5,
+                                "value": target_share,
                             }
                         ],
                         "seed": 20260906,
                         "categorical_columns": ["segment"],
                         "timestamp_column": "submitted_at",
-                        "candidate_pool_size": 800,
+                        "candidate_pool_size": 400,
                     }
                 ),
                 encoding="utf-8",
@@ -246,15 +248,20 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             report = json.loads((work_dir / "report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["status"], "success")
+            self.assertTrue(report["validation"]["targetSupportOptimal"])
             self.assertAlmostEqual(report["achieved"]["mean"], 4.7)
             self.assertEqual(len(report["achieved"]["shares"]), 1)
-            self.assertAlmostEqual(report["achieved"]["shares"][0]["share"], 0.5)
-            self.assertAlmostEqual(report["achieved"]["shares"][0]["absoluteError"], 0.0)
+            share = report["achieved"]["shares"][0]
+            self.assertAlmostEqual(share["share"], target_share)
+            self.assertAlmostEqual(share["absoluteError"], 0.0)
+            self.assertAlmostEqual(share["bestPossibleShare"], target_share)
 
             output = pd.read_parquet(work_dir / "result.parquet")
+            synthetic = output.loc[output["__origin"] == "synthetic"]
             self.assertEqual(len(output), 120)
             self.assertAlmostEqual(float(output["score"].mean()), 4.7)
-            self.assertAlmostEqual(float((output["segment"] == "A").mean()), 0.5)
+            self.assertAlmostEqual(float((output["segment"] == "A").mean()), target_share)
+            self.assertEqual(int((synthetic["segment"] == "A").sum()), 40)
 
 
 if __name__ == "__main__":
