@@ -156,6 +156,134 @@ const writeResult = (
   });
 };
 
+const replacementEngine = (): PythonEngine => ({
+  selftest: async () => {
+    throw new Error("unused");
+  },
+  synthesize: async (_operationId, jobPath) => {
+    const workDir = dirname(jobPath);
+    writeResult(join(workDir, "result.parquet"), [
+      {
+        responseId: "source-1",
+        submittedAt: new Date(3000).toISOString(),
+        score: 5,
+        origin: "original",
+      },
+      {
+        responseId: "source-2",
+        submittedAt: new Date(4000).toISOString(),
+        score: 5,
+        origin: "original",
+      },
+      {
+        responseId: "source-3",
+        submittedAt: new Date(5000).toISOString(),
+        score: 5,
+        origin: "original",
+      },
+      {
+        responseId: "synthetic:7:1",
+        submittedAt: new Date(6000).toISOString(),
+        score: 1,
+        origin: "synthetic",
+      },
+    ]);
+    writeResult(join(workDir, "result.replacement.parquet"), [
+      {
+        responseId: "source-1",
+        submittedAt: new Date(3000).toISOString(),
+        score: 5,
+        origin: "original",
+      },
+      {
+        responseId: "source-2",
+        submittedAt: new Date(4000).toISOString(),
+        score: 5,
+        origin: "original",
+      },
+      {
+        responseId: "replacement:7:1",
+        submittedAt: new Date(5500).toISOString(),
+        score: 1,
+        origin: "synthetic",
+      },
+      {
+        responseId: "synthetic:7:1",
+        submittedAt: new Date(6000).toISOString(),
+        score: 1,
+        origin: "synthetic",
+      },
+    ]);
+    return {
+      status: "success",
+      kind: "synthesize",
+      sourceCount: 3,
+      syntheticCount: 1,
+      finalCount: 4,
+      candidatePoolCount: 4,
+      target: { kind: "mean", column: "target_score", value: 3, minimum: 1, maximum: 5 },
+      shareTargets: [],
+      conditionalShareTargets: [],
+      achieved: {
+        mean: 4,
+        absoluteError: 1,
+        exact: false,
+        bestPossibleMean: 4,
+        bestPossibleAbsoluteError: 1,
+        shares: [],
+        conditionalShares: [],
+      },
+      editPlan: {
+        status: "available",
+        replacementCount: 1,
+        proposedReplacements: [
+          { sourceResponseId: "source-3", replacementResponseId: "replacement:7:1" },
+        ],
+        appendOnlyOutcome: {
+          mean: 4,
+          absoluteError: 1,
+          exact: false,
+          shares: [],
+          conditionalShares: [],
+        },
+        replacementOutcome: {
+          mean: 3,
+          absoluteError: 0,
+          exact: true,
+          shares: [],
+          conditionalShares: [],
+        },
+      },
+      validation: { replacementApplied: false },
+      quality: { sdmetricsScore: null, warning: null },
+      dependencies: {},
+    };
+  },
+  cancel: () => false,
+});
+
+const startPendingPlan = async (
+  database: AppDatabase,
+  workRoot: string,
+  operationId: string,
+) => {
+  const service = createSynthesisService({
+    db: database.db,
+    engine: replacementEngine(),
+    workRoot,
+  });
+  const started = await service.start({
+    projectId: "project-1",
+    finalCount: 4,
+    targets: [{ kind: "mean", questionId: "q-score", value: 3 }],
+    sourceScope: { kind: "all" },
+    seed: 7,
+    operationId,
+  });
+  if (started.status !== "approval_required") throw new Error("expected approval_required");
+  return { service, started };
+};
+
 afterEach(() => {
   while (databases.length > 0) databases.pop()?.close();
   while (directories.length > 0) {
@@ -167,85 +295,13 @@ afterEach(() => {
 describe("M7 synthesis approval gate", () => {
   it("persists no Run until the user approves the replacement plan", async () => {
     const { database, workRoot } = setup();
-    const engine: PythonEngine = {
-      selftest: async () => {
-        throw new Error("unused");
-      },
-      synthesize: async (_operationId, jobPath) => {
-        const workDir = dirname(jobPath);
-        writeResult(join(workDir, "result.parquet"), [
-          { responseId: "source-1", submittedAt: new Date(3000).toISOString(), score: 5, origin: "original" },
-          { responseId: "source-2", submittedAt: new Date(4000).toISOString(), score: 5, origin: "original" },
-          { responseId: "source-3", submittedAt: new Date(5000).toISOString(), score: 5, origin: "original" },
-          { responseId: "synthetic:7:1", submittedAt: new Date(6000).toISOString(), score: 1, origin: "synthetic" },
-        ]);
-        writeResult(join(workDir, "result.replacement.parquet"), [
-          { responseId: "source-1", submittedAt: new Date(3000).toISOString(), score: 5, origin: "original" },
-          { responseId: "source-2", submittedAt: new Date(4000).toISOString(), score: 5, origin: "original" },
-          { responseId: "replacement:7:1", submittedAt: new Date(5500).toISOString(), score: 1, origin: "synthetic" },
-          { responseId: "synthetic:7:1", submittedAt: new Date(6000).toISOString(), score: 1, origin: "synthetic" },
-        ]);
-        return {
-          status: "success",
-          kind: "synthesize",
-          sourceCount: 3,
-          syntheticCount: 1,
-          finalCount: 4,
-          candidatePoolCount: 4,
-          target: { kind: "mean", column: "target_score", value: 3, minimum: 1, maximum: 5 },
-          shareTargets: [],
-          conditionalShareTargets: [],
-          achieved: {
-            mean: 4,
-            absoluteError: 1,
-            exact: false,
-            bestPossibleMean: 4,
-            bestPossibleAbsoluteError: 1,
-            shares: [],
-            conditionalShares: [],
-          },
-          editPlan: {
-            status: "available",
-            replacementCount: 1,
-            proposedReplacements: [
-              { sourceResponseId: "source-3", replacementResponseId: "replacement:7:1" },
-            ],
-            appendOnlyOutcome: {
-              mean: 4,
-              absoluteError: 1,
-              exact: false,
-              shares: [],
-              conditionalShares: [],
-            },
-            replacementOutcome: {
-              mean: 3,
-              absoluteError: 0,
-              exact: true,
-              shares: [],
-              conditionalShares: [],
-            },
-          },
-          validation: { replacementApplied: false },
-          quality: { sdmetricsScore: null, warning: null },
-          dependencies: {},
-        } as never;
-      },
-      cancel: () => false,
-    };
+    const { service, started } = await startPendingPlan(
+      database,
+      workRoot,
+      "m7-replacement-approval",
+    );
 
-    const service = createSynthesisService({ db: database.db, engine, workRoot });
-    const started = await service.start({
-      projectId: "project-1",
-      finalCount: 4,
-      targets: [{ kind: "mean", questionId: "q-score", value: 3 }],
-      sourceScope: { kind: "all" },
-      seed: 7,
-      operationId: "m7-approval",
-    });
-
-    expect(started.status).toBe("approval_required");
     expect(database.db.select().from(runs).all()).toHaveLength(0);
-    if (started.status !== "approval_required") throw new Error("expected approval_required");
     expect(started.editPlan.replacementCount).toBe(1);
     expect(started.editPlan.appendOnlyOutcome.mean).toBe(4);
     expect(started.editPlan.replacementOutcome.mean).toBe(3);
@@ -270,5 +326,33 @@ describe("M7 synthesis approval gate", () => {
     expect(rows.filter((row) => row.origin === "original")).toHaveLength(2);
     expect(rows.some((row) => row.responseId === "source-3")).toBe(false);
     expect(rows.some((row) => row.responseId === "replacement:7:1")).toBe(true);
+  });
+
+  it("can keep the append-only result without freezing an unapproved EditPlan", async () => {
+    const { database, workRoot } = setup();
+    const { service, started } = await startPendingPlan(
+      database,
+      workRoot,
+      "m7-append-only-choice",
+    );
+
+    const resolved = await service.resolveEditPlan({
+      planId: started.planId,
+      choice: "append_only",
+    });
+    const run = await service.getRun(resolved.runId);
+
+    expect(run.targetSnapshot.editPlan).toBeUndefined();
+    expect(run.validation.achieved).toMatchObject({ mean: 4, absoluteError: 1, exact: false });
+    expect(run.validation.validation).toMatchObject({
+      replacementApplied: false,
+      approvedReplacementCount: 0,
+    });
+
+    const rows = listPersistedRunRows(database.db, resolved.runId);
+    expect(rows).toHaveLength(4);
+    expect(rows.filter((row) => row.origin === "original")).toHaveLength(3);
+    expect(rows.some((row) => row.responseId === "source-3")).toBe(true);
+    expect(rows.some((row) => row.responseId.startsWith("replacement:"))).toBe(false);
   });
 });
