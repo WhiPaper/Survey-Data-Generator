@@ -111,7 +111,7 @@ describe("typed v2 desktop backend client", () => {
     });
   });
 
-  it("exposes ValueGroup and mean+share synthesis RPCs", async () => {
+  it("exposes ValueGroup and M6 synthesis RPCs", async () => {
     const invoke = vi.fn(async (_command: string, args?: Record<string, unknown>) => {
       const request = parseRpcRequest(JSON.parse(String(args?.request)) as unknown);
       if (request.method === "valueGroups.list") return [];
@@ -127,7 +127,19 @@ describe("typed v2 desktop backend client", () => {
         };
       }
       if (request.method === "synthesis.start") {
-        expect(request.params).toMatchObject({ finalCount: 120, sourceScope: { kind: "all" } });
+        expect(request.params).toMatchObject({
+          finalCount: 120,
+          sourceScope: { kind: "all" },
+          targets: expect.arrayContaining([
+            {
+              kind: "conditional_share",
+              valueGroupId: "group-1",
+              questionId: "q-checkbox",
+              optionKey: "music",
+              value: 0.6,
+            },
+          ]),
+        });
         return {
           status: "success",
           runId: "run-1",
@@ -159,6 +171,13 @@ describe("typed v2 desktop backend client", () => {
           targets: [
             { kind: "mean", questionId: "q-score", value: 4.3 },
             { kind: "share", valueGroupId: "group-1", value: 0.35 },
+            {
+              kind: "conditional_share",
+              valueGroupId: "group-1",
+              questionId: "q-checkbox",
+              optionKey: "music",
+              value: 0.6,
+            },
           ],
           seed: 42,
         },
