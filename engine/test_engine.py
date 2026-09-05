@@ -263,6 +263,103 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertAlmostEqual(float((output["segment"] == "A").mean()), target_share)
             self.assertEqual(int((synthetic["segment"] == "A").sum()), 40)
 
+    def test_synthesize_solves_overlapping_conditional_checkbox_shares(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work_dir = Path(directory)
+            source_path = work_dir / "source.parquet"
+            population = ["P"] * 20 + ["O"] * 60
+            checkbox = ["AB"] * 2 + ["A"] * 3 + ["B"] * 5 + ["NONE"] * 10
+            checkbox += ["AB", "A", "B", "NONE"] * 15
+            source = pd.DataFrame(
+                {
+                    "response_id": [f"source-{index + 1}" for index in range(80)],
+                    "submitted_at": pd.date_range(
+                        "2026-08-01T00:00:00Z", periods=80, freq="20min"
+                    ),
+                    "score": [5] * 44 + [4] * 36,
+                    "population": population,
+                    "checkbox": checkbox,
+                }
+            )
+            source.to_parquet(source_path, index=False)
+            job_path = work_dir / "job.json"
+            job_path.write_text(
+                json.dumps(
+                    {
+                        "protocol_version": 1,
+                        "kind": "synthesize",
+                        "source_parquet": "source.parquet",
+                        "result_parquet": "result.parquet",
+                        "report_json": "report.json",
+                        "final_count": 120,
+                        "mean_target": {
+                            "column": "score",
+                            "value": 4.7,
+                            "minimum": 1,
+                            "maximum": 5,
+                        },
+                        "share_targets": [
+                            {
+                                "id": "population-P",
+                                "column": "population",
+                                "member_values": ["P"],
+                                "value": 0.5,
+                            }
+                        ],
+                        "conditional_share_targets": [
+                            {
+                                "id": "option-A",
+                                "population_column": "population",
+                                "population_member_values": ["P"],
+                                "option_column": "checkbox",
+                                "option_values": ["A", "AB"],
+                                "value": 0.75,
+                            },
+                            {
+                                "id": "option-B",
+                                "population_column": "population",
+                                "population_member_values": ["P"],
+                                "option_column": "checkbox",
+                                "option_values": ["B", "AB"],
+                                "value": 0.5,
+                            },
+                        ],
+                        "seed": 20260906,
+                        "categorical_columns": ["population", "checkbox"],
+                        "timestamp_column": "submitted_at",
+                        "candidate_pool_size": 400,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, str(MAIN), "synthesize", "--job", str(job_path)],
+                cwd=ENGINE_DIR,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads((work_dir / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "success")
+            self.assertAlmostEqual(report["achieved"]["mean"], 4.7)
+            self.assertAlmostEqual(report["achieved"]["shares"][0]["share"], 0.5)
+            conditional = {item["id"]: item for item in report["achieved"]["conditionalShares"]}
+            self.assertAlmostEqual(conditional["option-A"]["share"], 0.75)
+            self.assertAlmostEqual(conditional["option-B"]["share"], 0.5)
+            self.assertEqual(conditional["option-A"]["denominatorCount"], 60)
+            self.assertEqual(conditional["option-A"]["numeratorCount"], 45)
+            self.assertEqual(conditional["option-B"]["denominatorCount"], 60)
+            self.assertEqual(conditional["option-B"]["numeratorCount"], 30)
+
+            output = pd.read_parquet(work_dir / "result.parquet")
+            synthetic = output.loc[output["__origin"] == "synthetic"]
+            self.assertEqual(len(synthetic), 40)
+            self.assertTrue((synthetic["score"] == 5).all())
+            self.assertTrue((synthetic["population"] == "P").all())
+            self.assertEqual(int(synthetic["checkbox"].isin(["A", "AB"]).sum()), 40)
+            self.assertEqual(int(synthetic["checkbox"].isin(["B", "AB"]).sum()), 23)
+
 
 if __name__ == "__main__":
     unittest.main()
