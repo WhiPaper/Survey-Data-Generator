@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 describe("synthesis run persistence", () => {
-  it("persists a frozen run and its final rows atomically", () => {
+  it("persists a frozen Run target snapshot and final rows atomically", () => {
     const database = createDatabase();
     createProject(database.db, {
       id: "project-1",
@@ -63,7 +63,27 @@ describe("synthesis run persistence", () => {
         responseSetHash: "scope-hash",
       },
       finalResponseCount: 1,
-      target: { targetResponseCount: 1, questionTargets: [] },
+      target: {
+        finalCount: 1,
+        sourceScope: {
+          kind: "submitted_between",
+          start: new Date(10).toISOString(),
+          end: new Date(20).toISOString(),
+        },
+        targets: [
+          { kind: "mean", questionId: "q-score", value: 4.7 },
+          {
+            kind: "share",
+            value: 0.35,
+            valueGroup: {
+              id: "group-1",
+              questionId: "q-choice",
+              name: "행사 관심",
+              members: ["festival"],
+            },
+          },
+        ],
+      },
       seed: 42,
       engineReport: { status: "success", achieved: { mean: 4.7 } },
       rows: [
@@ -82,7 +102,8 @@ describe("synthesis run persistence", () => {
       createdAtMs: 3000,
     });
 
-    expect(getRunRecord(database.db, "run-1")).toMatchObject({
+    const stored = getRunRecord(database.db, "run-1");
+    expect(stored).toMatchObject({
       id: "run-1",
       projectId: "project-1",
       sourceRevisionId: "revision-1",
@@ -94,6 +115,12 @@ describe("synthesis run persistence", () => {
       finalResponseCount: 1,
       seed: 42,
       createdAtMs: 3000,
+    });
+    expect(JSON.parse(stored!.targetJson)).toMatchObject({
+      targets: [
+        { kind: "mean", questionId: "q-score", value: 4.7 },
+        { kind: "share", valueGroup: { id: "group-1", members: ["festival"] } },
+      ],
     });
     expect(listPersistedRunRows(database.db, "run-1")).toEqual([
       {
