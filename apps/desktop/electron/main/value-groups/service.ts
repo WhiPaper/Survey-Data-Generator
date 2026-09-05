@@ -158,7 +158,7 @@ export const createValueGroupService = (db: SurveyDatabase): ValueGroupService =
   create: async (input) => {
     const name = input.name.trim();
     if (!name) throw backendFailure("VALIDATION_FAILED", "ValueGroup name is required");
-    const members = [...new Set(input.members.map((member) => member.trim()).filter(Boolean))];
+    const members = [...new Set(input.members.filter((member) => member.length > 0))];
     if (members.length === 0) {
       throw backendFailure("VALIDATION_FAILED", "ValueGroup must contain at least one value");
     }
