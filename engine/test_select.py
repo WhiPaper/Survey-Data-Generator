@@ -4,7 +4,13 @@ import unittest
 
 import pandas as pd
 
-from select import ShareTarget, TargetInfeasible, select_for_mean, select_for_targets
+from select import (
+    ConditionalShareTarget,
+    ShareTarget,
+    TargetInfeasible,
+    select_for_mean,
+    select_for_targets,
+)
 
 
 class MeanSelectionTest(unittest.TestCase):
@@ -77,6 +83,59 @@ class MeanSelectionTest(unittest.TestCase):
         self.assertEqual(len(result.shares), 1)
         self.assertAlmostEqual(result.shares[0].achieved_share, 0.5)
         self.assertAlmostEqual(result.shares[0].absolute_error, 0.0)
+
+    def test_one_checkbox_row_contributes_to_multiple_conditional_targets(self) -> None:
+        source = pd.DataFrame(
+            {
+                "score": [4, 4],
+                "population": ["member", "member"],
+                "checkbox": ["A", "B"],
+            }
+        )
+        candidates = pd.DataFrame(
+            {
+                "score": [5, 5, 5, 5],
+                "population": ["member", "member", "member", "member"],
+                "checkbox": ["AB", "AB", "A", "B"],
+            }
+        )
+
+        result = select_for_targets(
+            source,
+            candidates,
+            target_column="score",
+            final_count=4,
+            target_mean=4.5,
+            target_min=1,
+            target_max=5,
+            conditional_share_targets=(
+                ConditionalShareTarget(
+                    id="option-a",
+                    population_column="population",
+                    population_member_values=frozenset({"member"}),
+                    option_column="checkbox",
+                    option_values=frozenset({"A", "AB"}),
+                    value=0.75,
+                ),
+                ConditionalShareTarget(
+                    id="option-b",
+                    population_column="population",
+                    population_member_values=frozenset({"member"}),
+                    option_column="checkbox",
+                    option_values=frozenset({"B", "AB"}),
+                    value=0.75,
+                ),
+            ),
+        )
+
+        self.assertEqual(len(result.selected_indices), 2)
+        self.assertEqual(candidates.iloc[result.selected_indices]["checkbox"].tolist(), ["AB", "AB"])
+        self.assertEqual(len(result.conditional_shares), 2)
+        for achieved in result.conditional_shares:
+            self.assertEqual(achieved.numerator_count, 3)
+            self.assertEqual(achieved.denominator_count, 4)
+            self.assertAlmostEqual(achieved.achieved_share, 0.75)
+            self.assertAlmostEqual(achieved.absolute_error, 0.0)
 
     def test_rejects_mean_outside_question_range(self) -> None:
         with self.assertRaises(TargetInfeasible) as raised:
