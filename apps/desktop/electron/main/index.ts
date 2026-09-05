@@ -1,12 +1,18 @@
 import { join } from "node:path";
 
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
 
-import { handleBackendCall } from "./backend";
+import { handleBackendCall, type BackendServices } from "./backend";
+import { loadGoogleOAuthConfig } from "./auth/config";
+import { createElectronRefreshTokenStore } from "./auth/electron-credentials";
+import { createGoogleProvider } from "./auth/google-provider";
+import { createGoogleAuthService } from "./auth/service";
+import { normalizeBackendError } from "./errors";
 import { openAppDatabase, type AppDatabase } from "./persistence/database";
 
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
 let appDatabase: AppDatabase | null = null;
+let backendServices: BackendServices = {};
 
 const createWindow = (): BrowserWindow => {
   const window = new BrowserWindow({
@@ -35,17 +41,43 @@ const createWindow = (): BrowserWindow => {
   return window;
 };
 
-ipcMain.handle(BACKEND_CALL_CHANNEL, (_event, serializedRequest: string) =>
-  handleBackendCall(serializedRequest),
-);
+ipcMain.handle(BACKEND_CALL_CHANNEL, async (_event, serializedRequest: string) => {
+  try {
+    return {
+      ok: true as const,
+      result: await handleBackendCall(serializedRequest, backendServices),
+    };
+  } catch (error: unknown) {
+    return {
+      ok: false as const,
+      error: normalizeBackendError(error),
+    };
+  }
+});
 
 void app
   .whenReady()
   .then(() => {
+    const userDataPath = app.getPath("userData");
     appDatabase = openAppDatabase({
-      filename: join(app.getPath("userData"), "survey-synth.sqlite"),
+      filename: join(userDataPath, "survey-synth.sqlite"),
       migrationsFolder: join(app.getAppPath(), "drizzle"),
     });
+
+    const refreshTokens = createElectronRefreshTokenStore(
+      join(userDataPath, "credentials", "google-refresh-tokens.json"),
+    );
+    const google = createGoogleProvider({
+      getConfig: () => loadGoogleOAuthConfig({ appPath: app.getAppPath() }),
+      openExternal: (url) => shell.openExternal(url),
+    });
+    backendServices = {
+      auth: createGoogleAuthService({
+        db: appDatabase.db,
+        refreshTokens,
+        google,
+      }),
+    };
 
     createWindow();
 
@@ -59,6 +91,7 @@ void app
   });
 
 app.on("will-quit", () => {
+  backendServices = {};
   appDatabase?.close();
   appDatabase = null;
 });
