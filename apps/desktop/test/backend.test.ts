@@ -13,6 +13,7 @@ import {
   login,
   logout,
   pingBackend,
+  resolveSynthesisEditPlan,
   startSynthesis,
   switchAccount,
 } from "../src/api/backend";
@@ -111,7 +112,7 @@ describe("typed v2 desktop backend client", () => {
     });
   });
 
-  it("exposes ValueGroup and M6 synthesis RPCs", async () => {
+  it("exposes ValueGroup and M7 synthesis RPCs", async () => {
     const invoke = vi.fn(async (_command: string, args?: Record<string, unknown>) => {
       const request = parseRpcRequest(JSON.parse(String(args?.request)) as unknown);
       if (request.method === "valueGroups.list") return [];
@@ -140,6 +141,37 @@ describe("typed v2 desktop backend client", () => {
             },
           ]),
         });
+        return {
+          status: "approval_required",
+          planId: "plan-1",
+          editPlan: {
+            status: "available",
+            replacementCount: 1,
+            proposedReplacements: [
+              {
+                sourceResponseId: "source-1",
+                replacementResponseId: "replacement:42:1",
+              },
+            ],
+            appendOnlyOutcome: {
+              mean: 4.2,
+              absoluteError: 0.1,
+              exact: false,
+              shares: [],
+              conditionalShares: [],
+            },
+            replacementOutcome: {
+              mean: 4.3,
+              absoluteError: 0,
+              exact: true,
+              shares: [],
+              conditionalShares: [],
+            },
+          },
+        };
+      }
+      if (request.method === "synthesis.resolveEditPlan") {
+        expect(request.params).toEqual({ planId: "plan-1", choice: "replacement" });
         return {
           status: "success",
           runId: "run-1",
@@ -183,6 +215,9 @@ describe("typed v2 desktop backend client", () => {
         },
         { invoke },
       ),
-    ).resolves.toMatchObject({ status: "success", runId: "run-1" });
+    ).resolves.toMatchObject({ status: "approval_required", planId: "plan-1" });
+    await expect(resolveSynthesisEditPlan("plan-1", "replacement", { invoke })).resolves.toMatchObject(
+      { status: "success", runId: "run-1" },
+    );
   });
 });
