@@ -7,13 +7,26 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Literal
 
-import pyarrow  # noqa: F401
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
-from scipy.optimize import milp  # noqa: F401
-from sdmetrics.reports.single_table import QualityReport  # noqa: F401
-from sdv.single_table import GaussianCopulaSynthesizer  # noqa: F401
+if sys.version_info[:2] != (3, 12):
+    print(
+        json.dumps(
+            {
+                "type": "error",
+                "kind": "runtime",
+                "message": f"Survey Synth engine requires Python 3.12, got {sys.version_info.major}.{sys.version_info.minor}",
+            }
+        ),
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 
-from prepare import read_source, smoke_source, write_parquet
+import pyarrow  # noqa: E402,F401
+from pydantic import BaseModel, ConfigDict, ValidationError  # noqa: E402
+from scipy.optimize import milp  # noqa: E402,F401
+from sdmetrics.reports.single_table import QualityReport  # noqa: E402,F401
+from sdv.single_table import GaussianCopulaSynthesizer  # noqa: E402,F401
+
+from prepare import read_source, smoke_source, write_parquet  # noqa: E402
 
 
 class SmokeJob(BaseModel):
@@ -25,12 +38,6 @@ class SmokeJob(BaseModel):
     result_parquet: Path
     report_json: Path
 
-    @model_validator(mode="after")
-    def outputs_are_distinct(self) -> "SmokeJob":
-        if self.source_parquet == self.result_parquet:
-            raise ValueError("source_parquet and result_parquet must be different")
-        return self
-
 
 def emit(payload: dict[str, object]) -> None:
     print(json.dumps(payload, ensure_ascii=False), flush=True)
@@ -40,13 +47,21 @@ def resolve_job_paths(job: SmokeJob, job_path: Path) -> SmokeJob:
     base = job_path.parent
 
     def resolved(path: Path) -> Path:
-        return path if path.is_absolute() else (base / path).resolve()
+        return path.resolve() if path.is_absolute() else (base / path).resolve()
+
+    source = resolved(job.source_parquet)
+    result = resolved(job.result_parquet)
+    report = resolved(job.report_json)
+    if source == result:
+        raise ValueError("source_parquet and result_parquet must be different")
+    if report in {source, result}:
+        raise ValueError("report_json must be different from parquet paths")
 
     return job.model_copy(
         update={
-            "source_parquet": resolved(job.source_parquet),
-            "result_parquet": resolved(job.result_parquet),
-            "report_json": resolved(job.report_json),
+            "source_parquet": source,
+            "result_parquet": result,
+            "report_json": report,
         }
     )
 
@@ -143,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             run_selftest(args.work_dir.resolve())
         return 0
-    except (ValidationError, json.JSONDecodeError) as error:
+    except (ValidationError, json.JSONDecodeError, ValueError) as error:
         print(json.dumps({"type": "error", "kind": "validation", "message": str(error)}), file=sys.stderr)
         return 2
     except Exception as error:  # noqa: BLE001
