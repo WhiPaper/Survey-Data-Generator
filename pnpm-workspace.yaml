@@ -4,9 +4,11 @@ packages:
   - packages/contracts
 
 onlyBuiltDependencies:
+  - better-sqlite3
   - electron
   - esbuild
 
 allowBuilds:
+  better-sqlite3: true
   electron: true
   esbuild: true
