@@ -28,6 +28,16 @@ class ShareCandidateSupport:
     synthetic_nonmember_count: int
 
 
+@dataclass(frozen=True)
+class ConditionalCandidateSupport:
+    id: str
+    population_column: str
+    population_member_values: frozenset[str]
+    option_column: str
+    option_values: frozenset[str]
+    target_value: float
+
+
 def _model_frame(source: pd.DataFrame, id_column: str) -> pd.DataFrame:
     if id_column not in source.columns:
         raise ValueError(f"source is missing id column: {id_column}")
@@ -227,6 +237,54 @@ def _weighted_requests(
     return requests
 
 
+def _weighted_joint_requests(
+    model_data: pd.DataFrame,
+    *,
+    left_column: str,
+    left_values: frozenset[str],
+    right_column: str,
+    right_values: frozenset[str],
+    requested: int,
+) -> list[tuple[dict[str, str], int]]:
+    if requested <= 0:
+        return []
+    if not left_values or not right_values:
+        raise RuntimeError(
+            f"No observed categorical values can satisfy directed support for {left_column}/{right_column}"
+        )
+
+    eligible = model_data.loc[
+        model_data[left_column].isin(left_values) & model_data[right_column].isin(right_values),
+        [left_column, right_column],
+    ]
+    counts = eligible.value_counts()
+    if len(counts) == 0:
+        left_counts = model_data[left_column].value_counts()
+        right_counts = model_data[right_column].value_counts()
+        left = max(left_values, key=lambda value: int(left_counts.get(value, 0)))
+        right = max(right_values, key=lambda value: int(right_counts.get(value, 0)))
+        return [({left_column: left, right_column: right}, requested)]
+
+    total = int(counts.sum())
+    pairs = sorted(
+        ((str(index[0]), str(index[1]), int(count)) for index, count in counts.items()),
+        key=lambda item: (-item[2], item[0], item[1]),
+    )
+    requests: list[tuple[dict[str, str], int]] = []
+    remaining = requested
+    for index, (left, right, count) in enumerate(pairs):
+        if index == len(pairs) - 1:
+            amount = remaining
+        else:
+            amount = min(remaining, max(1, int(round(requested * count / total))))
+        if amount > 0:
+            requests.append(({left_column: left, right_column: right}, amount))
+            remaining -= amount
+        if remaining <= 0:
+            break
+    return requests
+
+
 def generate_candidates(
     source: pd.DataFrame,
     *,
@@ -242,6 +300,7 @@ def generate_candidates(
     timestamp_start: pd.Timestamp | None = None,
     timestamp_end: pd.Timestamp | None = None,
     share_support: ShareCandidateSupport | None = None,
+    conditional_supports: tuple[ConditionalCandidateSupport, ...] = (),
 ) -> CandidatePool:
     if pool_size <= 0:
         raise ValueError("candidate pool size must be positive")
@@ -278,6 +337,16 @@ def generate_candidates(
             raise ValueError("share support contains categorical values outside the observed source support")
         if share_support.synthetic_member_count < 0 or share_support.synthetic_nonmember_count < 0:
             raise ValueError("share support counts must be non-negative")
+
+    for support in conditional_supports:
+        if support.population_column not in allowed_values or support.option_column not in allowed_values:
+            raise ValueError("conditional support columns must be categorical columns")
+        if not support.population_member_values <= allowed_values[support.population_column]:
+            raise ValueError("conditional population support is outside observed source support")
+        if not support.option_values <= allowed_values[support.option_column]:
+            raise ValueError("conditional option support is outside observed source support")
+        if not 0 <= support.target_value <= 1:
+            raise ValueError("conditional support target must be between 0 and 1")
 
     metadata, quality_metadata = _build_metadata(
         model_data,
@@ -346,6 +415,40 @@ def generate_candidates(
                                 target_column: score,
                                 share_support.column: value,
                             },
+                            target_column=target_column,
+                            target_score=score,
+                            target_min=target_min,
+                            target_max=target_max,
+                            allowed_values=allowed_values,
+                            timestamp_column=timestamp_column,
+                            timestamp_start=timestamp_start,
+                            timestamp_end=timestamp_end,
+                        )
+                    )
+
+    for support in conditional_supports:
+        observed_options = allowed_values[support.option_column]
+        states: list[frozenset[str]] = []
+        if support.target_value > 0:
+            states.append(support.option_values)
+        if support.target_value < 1:
+            states.append(observed_options - support.option_values)
+        for score, required_score_count in target_score_counts.items():
+            directed_total = max(required_score_count * 3, 30)
+            for option_values in states:
+                for conditions, requested in _weighted_joint_requests(
+                    model_data,
+                    left_column=support.population_column,
+                    left_values=support.population_member_values,
+                    right_column=support.option_column,
+                    right_values=option_values,
+                    requested=directed_total,
+                ):
+                    accepted.append(
+                        _sample_condition(
+                            synthesizer,
+                            requested=requested,
+                            condition_values={target_column: score, **conditions},
                             target_column=target_column,
                             target_score=score,
                             target_min=target_min,
