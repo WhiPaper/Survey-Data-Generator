@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 import pandas as pd
 from sdmetrics.reports import QualityReport
-from sdv.metadata import SingleTableMetadata
 
 
 @dataclass(frozen=True)
@@ -23,7 +22,7 @@ def evaluate_result(
     synthetic: pd.DataFrame,
     final: pd.DataFrame,
     *,
-    metadata: SingleTableMetadata,
+    metadata: dict[str, object],
     id_column: str,
     target_column: str,
     target_mean: float,
@@ -58,7 +57,7 @@ def evaluate_result(
             report.generate(
                 real_model,
                 synthetic_model,
-                metadata.to_dict(),
+                metadata,
                 verbose=False,
             )
             quality_score = float(report.get_score())
