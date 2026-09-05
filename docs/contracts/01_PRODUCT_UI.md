@@ -4,238 +4,174 @@
 
 ```text
 Google Login
-  → Projects
-  → New Project / Google Form selection
-  → Target Editor
-  → Synthesis
-  → Result
-  → Excel / CSV
+→ Projects
+→ Select Google Form
+→ Select SourceScope
+→ Set final size and targets
+→ Plan / Generate
+→ Review result
+→ Export CSV/XLSX
 ```
-
-Recommended routes:
-
-```text
-/login
-/projects
-/projects/:projectId
-/projects/:projectId/runs/:runId
-```
-
-“New Project” should be a Dialog where practical rather than a separate route.
 
 ## UI philosophy
 
-The application is for ordinary office users. The interface should be compact, production-oriented and task-focused.
+The application is for ordinary office users. Keep the interface sparse, direct, and consequence-oriented.
 
-Rules:
+- Prefer typography, spacing, and separators before cards.
+- Do not expose internal solver/model terminology by default.
+- Explain ambiguity, infeasibility, denominator semantics, and original-row replacement clearly.
+- Do not add dashboards or generic quality scores that obscure the actual target/result values.
 
-- Every visible element must earn its place.
-- Prefer omission over generic helper copy.
-- Do not repeat a page title in explanatory prose.
-- Explanations are reserved for errors, surprising consequences, ambiguity, security/privacy consequences, and decisions the user must make.
-- Prefer label → phrase → sentence → paragraph.
-- Use whitespace, typography and dividers before Cards.
-- Do not wrap every row or question in a Card.
-- Do not add Badges merely to label states such as “auto”.
-- Use progressive disclosure for advanced options.
-- Do a deletion pass after implementation.
+## Source scope
 
-### shadcn principle
+A project may default to all imported responses, but the user can choose a submitted-time range.
 
-**Maximize reuse of the shadcn/ui system and interaction patterns, not the number of visible shadcn components.**
-
-Use shadcn primitives where they materially help interaction and accessibility. Use semantic HTML/simple layout otherwise.
-
-Recommended usage:
-
-- Sidebar — app shell
-- Input / Select / Combobox / ToggleGroup / Button / Field / FieldError
-- Popover + Command — Form picker and target picker
-- Collapsible — optional score distributions
-- Sheet — advanced settings, Form inspector, validation details
-- Dialog — new project, detailed goal
-- AlertDialog — truly consequential destructive actions only
-- DataTable — raw response previews/large matrix views only
-- Chart — behind “분포 보기”; not default
-- Sonner — transient confirmation only
-
-## Login
+Display the frozen scope clearly before generation, e.g.:
 
 ```text
-[app mark / app name]
-
-[ Google로 계속하기 ]
+응답 범위
+2026-08-01 ~ 2026-08-02
+원본 80명
 ```
 
-No onboarding sequence unless a real decision is required.
+Changing the UI range after a Run does not change that historical Run.
 
-## Projects / shell
+## Final size
 
-Sidebar:
+Display source-to-final semantics directly:
 
 ```text
-Projects
-+ 새 프로젝트
-
-고객 만족도
-직원 설문
-...
-
-user@company.com ▾
+80 → [120] 명
+추가 생성 40명
 ```
 
-The account footer may show the Google profile photo when `SessionView.account.avatarUrl` is present; otherwise it shows an initials fallback.
+If final size is below scope source count, show a blocking validation error.
 
-Account menu may include:
+## Target semantics
 
-- saved Google accounts
-- Google 계정 추가
-- 로그아웃
-- low-frequency destructive/account actions as appropriate
+The UI must distinguish:
 
-No separate account-management page initially.
+- final absolute share, e.g. `25%`
+- percentage-point change, e.g. `+5%p`
+- relative percentage change, e.g. `+5%`
+- exact count, e.g. `+5명` or final `40명`
+- mean, e.g. `4.7`
 
-## Form selection
+Never store or execute ambiguous `+5%` semantics without explicit UI interpretation.
 
-Dialog:
+Initial target kinds:
 
 ```text
-새 프로젝트
-
-[ Google Form 검색... ]
-
-고객 만족도 조사       8월 28일
-직원 만족도 조사       8월 20일
-
-[취소]
+count
+share
+mean
+conditional share
 ```
 
-Do not preload response counts for every form; that would require per-form Forms Responses calls. Fetch structure/responses after selection.
-
-## Target Editor
-
-Default:
+## Single choice / ordinal examples
 
 ```text
-고객 만족도 조사
-
-50 → [200] 명
-
-조정할 문항
-
-+ 문항 추가
-
-                         [데이터 생성]
+성별
+현재 여성 40%
+목표 [55%]
 ```
-
-Absence of a target means “preserve original behavior”; do not show a redundant preserve mode.
-
-### Selected question examples
-
-Single choice:
-
-```text
-성별                  % 명
-              현재    목표
-여성           40%    [55]%
-남성           60%     ≈45%
-```
-
-The auto-derived remaining value is text, not an editable field and not an “자동” badge.
-
-Ordinal:
 
 ```text
 만족도
-현재 평균 3.7
-목표 평균 [4.2]
-
-점수별 조정
-+ 세부 목표
+현재 평균 4.2
+목표 평균 [4.7]
 ```
 
-Detailed goals are absent until created.
+Do not expose every category as an explicit user constraint unless the user edits it. Unspecified behavior is preserved by the generation model as well as practical.
 
-### Unit toggle contract
+## Checkbox
 
-Display unit and target semantics are distinct.
+Checkbox percentages mean "eligible respondents who selected this option" by default, not percentage of all option selections.
 
-If the stored constraint is ratio 55% and the user switches display to count:
+Conditional example:
 
 ```text
-≈110명
+부산 거주자 중
+버스 선택 비율 +4%p
+택시 선택 비율 +4%p
 ```
 
-is shown, but the stored target remains a ratio.
+The denominator should be visible when it is not obvious.
 
-Only when the user edits a count does the constraint become an exact count.
+## Short text / ValueGroup
 
-Resetting a field removes the constraint and returns the metric to automatic preservation.
+The application does not auto-understand concepts such as fruit, occupation, or residence.
 
-## Semantic ambiguity UI
-
-High-confidence inference should not add UI chrome.
-
-Example:
+For a short-text target, show observed values and counts and let the user select members into a reusable group:
 
 ```text
-나이
-현재 평균 36.4
-목표 평균 [40]
+그룹 이름: 과일
+
+☑ 사과       23
+☑ 오렌지      9
+☑ 귤          7
+☐ 고기       12
 ```
 
-No “numeric” badge is necessary.
+Search is required when the value set is large. Simple normalization/similarity suggestions may be added later, but automatic semantic grouping is not a v2 requirement.
 
-When ambiguous:
+Groups may overlap.
+
+## Feasibility and original replacement
+
+Generation planning should distinguish:
+
+1. exact/nearest result with original rows preserved,
+2. result possible only with original-derived row replacement,
+3. impossible with available candidates/domains.
+
+When replacement can improve or enable the requested result, show a comparison before applying it:
 
 ```text
-직급 코드
+원본 유지
+→ 결과 12.5%
 
-처리 방식
-[ 범주 ▼ ]
+원본 1개 대체
+→ 결과 12.0%
 ```
 
-Show the choice when the user interacts with that question or before synthesis if resolution is required.
+User choices:
+
+```text
+원본 유지
+최소 원본 대체 허용
+목표 수정/취소
+```
+
+No replacement is applied without explicit approval.
 
 ## Result screen
 
+Show target and achieved values first:
+
 ```text
-고객 만족도 조사
-200명 생성
-
-              목표      결과
-여성           55%      55%
-만족도         4.2      4.20
-서비스 A       60%      60%
-
-[Excel] [CSV]
-
-결과 다시 만들기
-세부 검증
+목표             결과
+만족도 4.7       4.70
+부산 15%         15.00%
+부산 중 버스     44.0%
 ```
 
-No KPI dashboard, success marketing copy, generic preservation score or default statistical charts.
+Then concise diagnostics:
 
-`세부 검증` may open a Sheet.
+- source scope
+- synthetic row count
+- original replacement count, if any
+- structural validation status
+- optional quality details
+
+Do not collapse everything into one opaque "quality score".
 
 ## Autosave
 
-There is no visible Save button.
+No visible Save button for normal target editing.
 
-- React Hook Form holds the editing draft.
-- Debounce valid changes.
-- Persist only complete/valid state.
-- Do not continuously show “saved ✓”.
-- Show save failure only.
-- Flush pending valid autosave before route leave, project/account switch, window close, and before synthesis.
+Persist valid drafts with debounce and flush before generation, project switch, navigation, and window close.
 
-Targets use an optimistic concurrency `revision`.
+## Export
 
-## Security-sensitive copy exceptions
-
-Short explanations/confirmation are justified for:
-
-- Google 접근 권한 해제
-- permanent local data deletion
-- AI external data transfer
-- file-upload placeholder not creating a real file
+Normal export contains the final survey table only. Provenance/debug metadata is not added as ordinary columns.
