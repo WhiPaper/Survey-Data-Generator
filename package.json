@@ -13,7 +13,8 @@
     "build": "pnpm run build:packages && pnpm --filter @survey-synth/desktop build",
     "build:desktop": "pnpm --filter @survey-synth/desktop build",
     "build:packages": "pnpm --filter @survey-synth/domain build && pnpm --filter @survey-synth/contracts build",
-    "test": "pnpm run build:packages && pnpm --filter @survey-synth/domain test && pnpm --filter @survey-synth/contracts test && pnpm --filter @survey-synth/desktop test"
+    "test": "pnpm run build:packages && pnpm --filter @survey-synth/domain test && pnpm --filter @survey-synth/contracts test && pnpm --filter @survey-synth/desktop test",
+    "db:generate": "pnpm --filter @survey-synth/desktop db:generate"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
