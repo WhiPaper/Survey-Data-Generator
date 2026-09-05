@@ -30,6 +30,15 @@ class ShareTarget:
 
 
 @dataclass(frozen=True)
+class ShareSupportPlan:
+    id: str
+    source_member_count: int
+    synthetic_member_count: int
+    achieved_share: float
+    absolute_error: float
+
+
+@dataclass(frozen=True)
 class ShareAchievement:
     id: str
     value: float
@@ -129,6 +138,49 @@ def _membership(data: pd.DataFrame, target: ShareTarget) -> np.ndarray:
     return data[target.column].isin(target.member_values).to_numpy(dtype=float)
 
 
+def plan_share_support(
+    source: pd.DataFrame,
+    *,
+    target: ShareTarget,
+    final_count: int,
+) -> ShareSupportPlan:
+    source_count = len(source)
+    if source_count == 0:
+        raise TargetInfeasible("empty_source_scope", "SourceScope contains no responses")
+    if final_count < source_count:
+        raise TargetInfeasible(
+            "final_count_below_source",
+            f"Final response count {final_count} is below immutable source count {source_count}",
+        )
+    if not 0 <= target.value <= 1:
+        raise TargetInfeasible(
+            "share_out_of_range",
+            f"Requested share {target.value} is outside [0, 1]",
+        )
+    if not target.member_values:
+        raise TargetInfeasible(
+            "share_member_support",
+            f"ValueGroup {target.id} has no observed member values in this SourceScope",
+        )
+
+    source_member_count = int(_membership(source, target).sum())
+    additions = final_count - source_count
+    nearest_final_members = int(np.floor(target.value * final_count + 0.5))
+    final_member_count = min(
+        max(nearest_final_members, source_member_count),
+        source_member_count + additions,
+    )
+    synthetic_member_count = final_member_count - source_member_count
+    achieved_share = final_member_count / final_count
+    return ShareSupportPlan(
+        id=target.id,
+        source_member_count=source_member_count,
+        synthetic_member_count=synthetic_member_count,
+        achieved_share=achieved_share,
+        absolute_error=abs(achieved_share - target.value),
+    )
+
+
 def select_for_targets(
     source: pd.DataFrame,
     candidates: pd.DataFrame,
@@ -140,8 +192,14 @@ def select_for_targets(
     target_max: int,
     share_targets: tuple[ShareTarget, ...] = (),
 ) -> TargetSelection:
+    if len(share_targets) > 1:
+        raise TargetInfeasible(
+            "too_many_share_targets",
+            "M5 currently supports at most one share target per Run",
+        )
+
     source_count = len(source)
-    support = plan_mean_support(
+    mean_support = plan_mean_support(
         source,
         target_column=target_column,
         final_count=final_count,
@@ -149,38 +207,31 @@ def select_for_targets(
         target_min=target_min,
         target_max=target_max,
     )
+    share_supports = tuple(
+        plan_share_support(source, target=share, final_count=final_count)
+        for share in share_targets
+    )
     source_scores = _source_scores(source, target_column)
-    for share in share_targets:
-        if not 0 <= share.value <= 1:
-            raise TargetInfeasible(
-                "share_out_of_range",
-                f"Requested share {share.value} is outside [0, 1]",
-            )
-        if not share.member_values:
-            raise TargetInfeasible(
-                "share_member_support",
-                f"ValueGroup {share.id} has no observed member values in this SourceScope",
-            )
 
     additions = final_count - source_count
     source_sum = float(source_scores.sum())
-    source_memberships = [int(_membership(source, share).sum()) for share in share_targets]
+    source_memberships = [support.source_member_count for support in share_supports]
 
     if additions == 0:
         shares = tuple(
             ShareAchievement(
                 id=share.id,
                 value=share.value,
-                achieved_share=source_member / final_count,
-                absolute_error=abs(source_member / final_count - share.value),
+                achieved_share=support.achieved_share,
+                absolute_error=support.absolute_error,
             )
-            for share, source_member in zip(share_targets, source_memberships, strict=True)
+            for share, support in zip(share_targets, share_supports, strict=True)
         )
         return TargetSelection(
             selected_indices=np.array([], dtype=int),
-            achieved_mean=support.achieved_mean,
-            mean_absolute_error=support.absolute_error,
-            mean_exact=support.absolute_error <= 1e-9,
+            achieved_mean=mean_support.achieved_mean,
+            mean_absolute_error=mean_support.absolute_error,
+            mean_exact=mean_support.absolute_error <= 1e-9,
             shares=shares,
         )
 
@@ -283,12 +334,12 @@ def select_for_targets(
 
     achieved_mean = float((source_sum + float(scores[selected].sum())) / final_count)
     mean_error = abs(achieved_mean - target_mean)
-    if not share_targets and mean_error > support.absolute_error + 1e-9:
+    if mean_error > mean_support.absolute_error + 1e-9:
         raise TargetInfeasible(
             "candidate_target_support",
             (
                 f"Candidate pool can only reach mean {achieved_mean:.6f}, but the ordinal score domain "
-                f"can reach {support.achieved_mean:.6f} for this immutable source"
+                f"can reach {mean_support.achieved_mean:.6f} for this immutable source"
             ),
         )
 
@@ -305,6 +356,15 @@ def select_for_targets(
             share_targets, source_memberships, candidate_memberships, strict=True
         )
     )
+    for achieved, support in zip(share_results, share_supports, strict=True):
+        if achieved.absolute_error > support.absolute_error + 1e-9:
+            raise TargetInfeasible(
+                "candidate_target_support",
+                (
+                    f"Candidate pool can only reach share {achieved.achieved_share:.6f} for {achieved.id}, "
+                    f"but immutable source counts can reach {support.achieved_share:.6f}"
+                ),
+            )
 
     return TargetSelection(
         selected_indices=selected,
