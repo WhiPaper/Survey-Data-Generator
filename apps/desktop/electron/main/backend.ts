@@ -4,17 +4,20 @@ import {
   type FormsImportParams,
   type FormsListParams,
   type GoogleAccountId,
+  type SynthesisStartParams,
 } from "@survey-synth/contracts";
 
 import { backendFailure } from "./errors";
 import type { GoogleAuthService } from "./auth/service";
 import type { FormsService } from "./forms/service";
 import type { ProjectService } from "./projects/service";
+import type { SynthesisService } from "./synthesis/service";
 
 export type BackendServices = {
   auth?: GoogleAuthService;
   forms?: FormsService;
   projects?: ProjectService;
+  synthesis?: SynthesisService;
 };
 
 const requireAuth = (services: BackendServices): GoogleAuthService => {
@@ -30,6 +33,11 @@ const requireForms = (services: BackendServices): FormsService => {
 const requireProjects = (services: BackendServices): ProjectService => {
   if (!services.projects) throw backendFailure("BACKEND_UNAVAILABLE", "Projects are not initialized");
   return services.projects;
+};
+
+const requireSynthesis = (services: BackendServices): SynthesisService => {
+  if (!services.synthesis) throw backendFailure("BACKEND_UNAVAILABLE", "Synthesis engine is not initialized");
+  return services.synthesis;
 };
 
 export const handleBackendCall = async (
@@ -71,6 +79,13 @@ export const handleBackendCall = async (
       return requireProjects(services).list();
     case "projects.get":
       return requireProjects(services).get((request.params as { projectId: string }).projectId);
+    case "synthesis.start":
+      return requireSynthesis(services).start(request.params as SynthesisStartParams);
+    case "synthesis.cancel":
+      requireSynthesis(services).cancel((request.params as { operationId: string }).operationId);
+      return { ok: true };
+    case "runs.get":
+      return requireSynthesis(services).getRun((request.params as { runId: string }).runId);
     default:
       throw new Error(`Backend method is not implemented in the Electron v2 shell: ${request.method}`);
   }
