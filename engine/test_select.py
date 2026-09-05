@@ -137,6 +137,76 @@ class MeanSelectionTest(unittest.TestCase):
             self.assertAlmostEqual(achieved.achieved_share, 0.75)
             self.assertAlmostEqual(achieved.absolute_error, 0.0)
 
+    def test_expands_population_when_that_minimizes_actual_percentage_error(self) -> None:
+        source = pd.DataFrame(
+            {
+                "score": [4] * 5,
+                "population": ["member"] * 5,
+                "checkbox": ["ABC", "A", "ABC", "AB", "A"],
+            }
+        )
+        population_candidates = pd.DataFrame(
+            {
+                "score": [5] * 15,
+                "population": ["member"] * 15,
+                "checkbox": ["BC"] * 4 + ["B"] * 2 + ["C"] * 2 + ["none"] * 7,
+            }
+        )
+        outside_candidates = pd.DataFrame(
+            {
+                "score": [5] * 80,
+                "population": ["other"] * 80,
+                "checkbox": ["none"] * 80,
+            }
+        )
+        candidates = pd.concat([population_candidates, outside_candidates], ignore_index=True)
+
+        result = select_for_targets(
+            source,
+            candidates,
+            target_column="score",
+            final_count=100,
+            target_mean=4.95,
+            target_min=1,
+            target_max=5,
+            conditional_share_targets=(
+                ConditionalShareTarget(
+                    id="option-a",
+                    population_column="population",
+                    population_member_values=frozenset({"member"}),
+                    option_column="checkbox",
+                    option_values=frozenset({"A", "AB", "ABC"}),
+                    value=0.20,
+                ),
+                ConditionalShareTarget(
+                    id="option-b",
+                    population_column="population",
+                    population_member_values=frozenset({"member"}),
+                    option_column="checkbox",
+                    option_values=frozenset({"B", "BC", "AB", "ABC"}),
+                    value=0.30,
+                ),
+                ConditionalShareTarget(
+                    id="option-c",
+                    population_column="population",
+                    population_member_values=frozenset({"member"}),
+                    option_column="checkbox",
+                    option_values=frozenset({"C", "BC", "ABC"}),
+                    value=0.30,
+                ),
+            ),
+        )
+
+        self.assertEqual(len(result.selected_indices), 95)
+        achieved = {item.id: item for item in result.conditional_shares}
+        self.assertEqual(achieved["option-a"].denominator_count, 20)
+        self.assertEqual(achieved["option-a"].numerator_count, 4)
+        self.assertEqual(achieved["option-b"].numerator_count, 6)
+        self.assertEqual(achieved["option-c"].numerator_count, 6)
+        self.assertAlmostEqual(achieved["option-a"].absolute_error, 0.0)
+        self.assertAlmostEqual(achieved["option-b"].absolute_error, 0.0)
+        self.assertAlmostEqual(achieved["option-c"].absolute_error, 0.0)
+
     def test_rejects_mean_outside_question_range(self) -> None:
         with self.assertRaises(TargetInfeasible) as raised:
             select_for_mean(
