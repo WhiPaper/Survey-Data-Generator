@@ -10,6 +10,7 @@ import type { FormSnapshot, NormalizedResponse } from "@survey-synth/domain";
 
 import {
   createFlatTablePlan,
+  multiChoiceOptionCells,
   readResultParquet,
   valueGroupMemberCells,
   writeSourceParquet,
@@ -151,6 +152,40 @@ describe("synthesis flat parquet transport", () => {
         ["good"],
       ),
     ).toEqual([JSON.stringify(original.answers["q-text" as never])]);
+  });
+
+  it("freezes every observed multi-choice cell containing the requested option", () => {
+    const aOnly = {
+      state: "answered",
+      value: { kind: "multi_choice", optionKeys: ["A"], labels: ["A"] },
+    };
+    const aAndB = {
+      state: "answered",
+      value: { kind: "multi_choice", optionKeys: ["A", "B"], labels: ["A", "B"] },
+    };
+    const bOnly = {
+      state: "answered",
+      value: { kind: "multi_choice", optionKeys: ["B"], labels: ["B"] },
+    };
+    const responses = [aOnly, aAndB, bOnly].map((slot, index) => ({
+      responseId: `r${index + 1}`,
+      submittedAtMs: index + 1,
+      response: {
+        responseId: `r${index + 1}`,
+        answers: { "q-checkbox": slot },
+        origin: "original",
+        path: { questions: { "q-checkbox": "reached" }, confidence: "certain" },
+      } as unknown as NormalizedResponse,
+    }));
+
+    expect(multiChoiceOptionCells(responses, "q-checkbox" as never, "A")).toEqual([
+      JSON.stringify(aOnly),
+      JSON.stringify(aAndB),
+    ]);
+    expect(multiChoiceOptionCells(responses, "q-checkbox" as never, "B")).toEqual([
+      JSON.stringify(aAndB),
+      JSON.stringify(bOnly),
+    ]);
   });
 
   it("reconstructs synthetic normalized responses and derives answer state from Form logic", async () => {
