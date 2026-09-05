@@ -34,7 +34,12 @@ from sdv.single_table import GaussianCopulaSynthesizer  # noqa: E402,F401
 from evaluate import evaluate_result  # noqa: E402
 from generate import generate_candidates  # noqa: E402
 from prepare import read_source, smoke_source, write_parquet  # noqa: E402
-from select import TargetInfeasible, plan_mean_support, select_for_mean  # noqa: E402
+from select import (  # noqa: E402
+    ShareTarget,
+    TargetInfeasible,
+    plan_mean_support,
+    select_for_targets,
+)
 
 
 class JobPaths(BaseModel):
@@ -59,10 +64,20 @@ class MeanTargetSpec(BaseModel):
     maximum: int
 
 
+class ShareTargetSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    column: str
+    member_values: list[str]
+    value: float
+
+
 class SynthesizeJob(JobPaths):
     kind: Literal["synthesize"]
     final_count: int
     mean_target: MeanTargetSpec
+    share_targets: list[ShareTargetSpec] = Field(default_factory=list)
     seed: int
     id_column: str = "response_id"
     categorical_columns: list[str] = Field(default_factory=list)
@@ -139,7 +154,6 @@ def run_smoke(job_path: Path) -> dict[str, object]:
 
     emit({"type": "progress", "stage": "read_source"})
     source = read_source(job.source_parquet)
-
     emit({"type": "progress", "stage": "write_result", "rows": len(source)})
     write_parquet(source, job.result_parquet)
 
@@ -181,8 +195,24 @@ def _infeasible_report(job: SynthesizeJob, issue: TargetInfeasible) -> dict[str,
             "column": job.mean_target.column,
             "value": job.mean_target.value,
         },
+        "shareTargets": [
+            {"id": target.id, "column": target.column, "value": target.value}
+            for target in job.share_targets
+        ],
         "issues": [{"code": issue.code, "message": issue.message}],
     }
+
+
+def _share_targets(job: SynthesizeJob) -> tuple[ShareTarget, ...]:
+    return tuple(
+        ShareTarget(
+            id=target.id,
+            column=target.column,
+            member_values=frozenset(target.member_values),
+            value=target.value,
+        )
+        for target in job.share_targets
+    )
 
 
 def run_synthesize(job_path: Path) -> dict[str, object]:
@@ -197,6 +227,8 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         raise ValueError("candidate_pool_size must be positive")
     if len(job.categorical_columns) != len(set(job.categorical_columns)):
         raise ValueError("categorical_columns must not contain duplicates")
+    if len({target.id for target in job.share_targets}) != len(job.share_targets):
+        raise ValueError("share target ids must be unique")
 
     reserved_columns = {job.id_column, job.mean_target.column}
     if job.timestamp_column is not None:
@@ -209,17 +241,17 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
 
     emit({"type": "progress", "stage": "read_source"})
     source = read_source(job.source_parquet).copy()
-    if job.id_column not in source.columns:
-        raise ValueError(f"source is missing id column: {job.id_column}")
-    if job.mean_target.column not in source.columns:
-        raise ValueError(f"source is missing mean target column: {job.mean_target.column}")
-    missing_categorical = [
-        column for column in job.categorical_columns if column not in source.columns
-    ]
-    if missing_categorical:
-        raise ValueError(
-            f"source is missing categorical columns: {', '.join(missing_categorical)}"
-        )
+    required_columns = {
+        job.id_column,
+        job.mean_target.column,
+        *job.categorical_columns,
+        *(target.column for target in job.share_targets),
+    }
+    if job.timestamp_column is not None:
+        required_columns.add(job.timestamp_column)
+    missing = sorted(required_columns - set(source.columns))
+    if missing:
+        raise ValueError(f"source is missing columns: {', '.join(missing)}")
 
     source_scores = pandas.to_numeric(source[job.mean_target.column], errors="coerce")
     if source_scores.notna().any():
@@ -230,21 +262,22 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         )
         if invalid_score.any():
             raise ValueError("source contains invalid ordinal target values")
-        source.loc[source_scores.notna(), job.mean_target.column] = rounded[source_scores.notna()].astype(int)
+        source.loc[source_scores.notna(), job.mean_target.column] = rounded[
+            source_scores.notna()
+        ].astype(int)
 
     timestamp_start = _timestamp_bound(job.timestamp_start)
     timestamp_end = _timestamp_bound(job.timestamp_end)
     if timestamp_start is not None and timestamp_end is not None and timestamp_start > timestamp_end:
         raise ValueError("timestamp_start must not be after timestamp_end")
     if job.timestamp_column is not None:
-        if job.timestamp_column not in source.columns:
-            raise ValueError(f"source is missing timestamp column: {job.timestamp_column}")
         source[job.timestamp_column] = pandas.to_datetime(
             source[job.timestamp_column], utc=True, errors="raise"
         )
 
     source_count = len(source)
     additions = job.final_count - source_count
+    shares = _share_targets(job)
 
     try:
         support = plan_mean_support(
@@ -264,7 +297,8 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
                 "targetScores": support.score_counts,
             }
         )
-        pool_size = job.candidate_pool_size or max(additions * 20, 200)
+        default_pool_size = max(additions * (50 if shares else 20), 1000 if shares else 200)
+        pool_size = job.candidate_pool_size or default_pool_size
         pool = generate_candidates(
             source,
             id_column=job.id_column,
@@ -281,7 +315,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         )
 
         emit({"type": "progress", "stage": "select", "candidateRows": len(pool.data)})
-        selection = select_for_mean(
+        selection = select_for_targets(
             source,
             pool.data,
             target_column=job.mean_target.column,
@@ -289,6 +323,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             target_mean=job.mean_target.value,
             target_min=job.mean_target.minimum,
             target_max=job.mean_target.maximum,
+            share_targets=shares,
         )
     except TargetInfeasible as issue:
         report = _infeasible_report(job, issue)
@@ -330,6 +365,23 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         expected_final_count=job.final_count,
     )
 
+    share_achieved: list[dict[str, object]] = []
+    selection_by_id = {share.id: share for share in selection.shares}
+    for target in job.share_targets:
+        actual = float(final[target.column].isin(target.member_values).mean())
+        selected = selection_by_id[target.id]
+        if abs(actual - selected.achieved_share) > 1e-9:
+            raise RuntimeError(f"Share validation disagreed with MILP for target {target.id}")
+        share_achieved.append(
+            {
+                "id": target.id,
+                "value": target.value,
+                "share": actual,
+                "absoluteError": abs(actual - target.value),
+                "exact": abs(actual - target.value) <= 1e-9,
+            }
+        )
+
     emit({"type": "progress", "stage": "write_result", "rows": len(final)})
     write_parquet(final, job.result_parquet)
 
@@ -347,18 +399,23 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             "minimum": job.mean_target.minimum,
             "maximum": job.mean_target.maximum,
         },
+        "shareTargets": [
+            {"id": target.id, "column": target.column, "value": target.value}
+            for target in job.share_targets
+        ],
         "achieved": {
             "mean": evaluation.achieved_mean,
             "absoluteError": evaluation.absolute_error,
-            "exact": selection.exact_target,
+            "exact": selection.mean_exact,
             "bestPossibleMean": support.achieved_mean,
             "bestPossibleAbsoluteError": support.absolute_error,
+            "shares": share_achieved,
         },
         "validation": {
             "finalCount": True,
             "targetDomain": True,
-            "targetSupportOptimal": evaluation.absolute_error <= support.absolute_error + 1e-9,
             "categoricalSupport": True,
+            "shareTargets": True,
             "duplicateRowCount": evaluation.duplicate_row_count,
         },
         "quality": {
@@ -422,7 +479,10 @@ def main(argv: list[str] | None = None) -> int:
             run_selftest(args.work_dir.resolve())
         return 0
     except (ValidationError, json.JSONDecodeError, ValueError) as error:
-        print(json.dumps({"type": "error", "kind": "validation", "message": str(error)}), file=sys.stderr)
+        print(
+            json.dumps({"type": "error", "kind": "validation", "message": str(error)}),
+            file=sys.stderr,
+        )
         return 2
     except Exception as error:  # noqa: BLE001
         print(
