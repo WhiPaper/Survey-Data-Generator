@@ -1,11 +1,17 @@
 export const createJobRegistry = () => {
-  const jobs = new Map<string, AbortController>();
+  const jobs = new Map<
+    string,
+    {
+      controller: AbortController;
+      onCancel?: () => void;
+    }
+  >();
 
   return {
-    start(id: string): AbortSignal {
+    start(id: string, onCancel?: () => void): AbortSignal {
       if (jobs.has(id)) throw new Error(`Job already exists: ${id}`);
       const controller = new AbortController();
-      jobs.set(id, controller);
+      jobs.set(id, { controller, onCancel });
       return controller.signal;
     },
 
@@ -14,10 +20,14 @@ export const createJobRegistry = () => {
     },
 
     cancel(id: string): boolean {
-      const controller = jobs.get(id);
-      if (!controller) return false;
-      controller.abort();
-      jobs.delete(id);
+      const job = jobs.get(id);
+      if (!job) return false;
+      job.controller.abort();
+      try {
+        job.onCancel?.();
+      } finally {
+        jobs.delete(id);
+      }
       return true;
     },
 
