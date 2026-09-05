@@ -26,6 +26,16 @@ export type EngineSmokeReport = {
   };
 };
 
+export type EngineShareAchievement = {
+  id: string;
+  value: number;
+  share: number;
+  absoluteError: number;
+  exact: boolean;
+  bestPossibleShare: number;
+  bestPossibleAbsoluteError: number;
+};
+
 export type EngineSynthesisSuccessReport = {
   status: "success";
   kind: "synthesize";
@@ -40,10 +50,14 @@ export type EngineSynthesisSuccessReport = {
     minimum: number;
     maximum: number;
   };
+  shareTargets: Array<{ id: string; column: string; value: number }>;
   achieved: {
     mean: number;
     absoluteError: number;
     exact: boolean;
+    bestPossibleMean: number;
+    bestPossibleAbsoluteError: number;
+    shares: EngineShareAchievement[];
   };
   validation: Record<string, unknown>;
   quality: {
@@ -59,6 +73,7 @@ export type EngineSynthesisInfeasibleReport = {
   sourceCount: number | null;
   finalCount: number;
   target: { kind: "mean"; column: string; value: number };
+  shareTargets: Array<{ id: string; column: string; value: number }>;
   issues: Array<{ code: string; message: string }>;
 };
 
@@ -109,7 +124,11 @@ export type CreatePythonEngineOptions = {
 
 export interface PythonEngine {
   selftest(operationId: string, workDir: string): Promise<EngineSmokeReport>;
-  synthesize(operationId: string, jobPath: string, reportPath: string): Promise<EngineSynthesisReport>;
+  synthesize(
+    operationId: string,
+    jobPath: string,
+    reportPath: string,
+  ): Promise<EngineSynthesisReport>;
   cancel(operationId: string): boolean;
 }
 
@@ -159,6 +178,20 @@ const parseSmokeReport = (input: unknown): EngineSmokeReport => {
   return report as EngineSmokeReport;
 };
 
+const validShareAchievement = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const share = value as Record<string, unknown>;
+  return (
+    typeof share.id === "string" &&
+    typeof share.value === "number" &&
+    typeof share.share === "number" &&
+    typeof share.absoluteError === "number" &&
+    typeof share.exact === "boolean" &&
+    typeof share.bestPossibleShare === "number" &&
+    typeof share.bestPossibleAbsoluteError === "number"
+  );
+};
+
 const parseSynthesisReport = (input: unknown): EngineSynthesisReport => {
   if (typeof input !== "object" || input === null) {
     throw backendFailure("INTERNAL", "Python synthesis engine returned an invalid report");
@@ -168,8 +201,15 @@ const parseSynthesisReport = (input: unknown): EngineSynthesisReport => {
     throw backendFailure("INTERNAL", "Python synthesis engine returned an invalid report kind");
   }
   if (report.status === "infeasible") {
-    if (!Array.isArray(report.issues) || typeof report.finalCount !== "number") {
-      throw backendFailure("INTERNAL", "Python synthesis engine returned invalid infeasibility diagnostics");
+    if (
+      !Array.isArray(report.issues) ||
+      !Array.isArray(report.shareTargets) ||
+      typeof report.finalCount !== "number"
+    ) {
+      throw backendFailure(
+        "INTERNAL",
+        "Python synthesis engine returned invalid infeasibility diagnostics",
+      );
     }
     return input as EngineSynthesisInfeasibleReport;
   }
@@ -177,15 +217,23 @@ const parseSynthesisReport = (input: unknown): EngineSynthesisReport => {
     throw backendFailure("INTERNAL", "Python synthesis engine returned an unknown status");
   }
   const achieved = report.achieved;
+  const achievedRecord =
+    typeof achieved === "object" && achieved !== null
+      ? (achieved as Record<string, unknown>)
+      : null;
   if (
     typeof report.sourceCount !== "number" ||
     typeof report.syntheticCount !== "number" ||
     typeof report.finalCount !== "number" ||
-    typeof achieved !== "object" ||
-    achieved === null ||
-    typeof (achieved as Record<string, unknown>).mean !== "number" ||
-    typeof (achieved as Record<string, unknown>).absoluteError !== "number" ||
-    typeof (achieved as Record<string, unknown>).exact !== "boolean"
+    !Array.isArray(report.shareTargets) ||
+    !achievedRecord ||
+    typeof achievedRecord.mean !== "number" ||
+    typeof achievedRecord.absoluteError !== "number" ||
+    typeof achievedRecord.exact !== "boolean" ||
+    typeof achievedRecord.bestPossibleMean !== "number" ||
+    typeof achievedRecord.bestPossibleAbsoluteError !== "number" ||
+    !Array.isArray(achievedRecord.shares) ||
+    !achievedRecord.shares.every(validShareAchievement)
   ) {
     throw backendFailure("INTERNAL", "Python synthesis engine returned invalid success metrics");
   }
