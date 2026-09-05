@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import type {
-  FormImportSummary,
+  FormImportResult,
   FormListItem,
   ProjectDetailView,
   ProjectSummaryView,
@@ -40,7 +40,7 @@ export function AppShell() {
   const [selectedProject, setSelectedProject] = useState<ProjectDetailView | null>(null);
   const [importOperationId, setImportOperationId] = useState<string | null>(null);
   const [importingFormId, setImportingFormId] = useState<string | null>(null);
-  const [importSummary, setImportSummary] = useState<FormImportSummary | null>(null);
+  const [importSummary, setImportSummary] = useState<FormImportResult | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -173,7 +173,7 @@ export function AppShell() {
       const summary = await importForm(form.formId, operationId);
       setImportSummary(summary);
       await reloadProjects();
-      await openProject(summary.importId);
+      await openProject(summary.projectId);
     } catch (error: unknown) {
       setFormsError(errorMessage(error));
     } finally {
@@ -342,7 +342,10 @@ export function AppShell() {
                     {importSummary.title} · 응답 {importSummary.responseCount}개 · 질문 {importSummary.questionCount}개
                   </p>
                   <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
-                    프로젝트 ID: {importSummary.importId}
+                    프로젝트 ID: {importSummary.projectId}
+                  </p>
+                  <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
+                    SourceRevision ID: {importSummary.sourceRevisionId}
                   </p>
                 </div>
               ) : null}
