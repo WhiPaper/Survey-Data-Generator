@@ -6,12 +6,55 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openAppDatabase, type AppDatabase } from "../electron/main/persistence/database";
-import { createImportedProject, upsertGoogleAccount } from "../electron/main/persistence/store";
+import {
+  createImportedProject,
+  createSourceRevision,
+  upsertGoogleAccount,
+} from "../electron/main/persistence/store";
 import { createValueGroupService } from "../electron/main/value-groups/service";
 
 const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
 const databases: AppDatabase[] = [];
 const directories: string[] = [];
+
+const textQuestion = {
+  id: "q-text",
+  kind: "text",
+  presentation: "short",
+};
+
+const choiceQuestion = {
+  id: "q-choice",
+  kind: "single_choice",
+  options: [
+    { key: "festival", label: "축제" },
+    { key: "performance", label: "공연" },
+    { key: "family", label: "가족 나들이" },
+  ],
+};
+
+const normalizedResponse = (
+  responseId: string,
+  choice: { optionKey: string; label: string },
+  text: string,
+) => ({
+  responseId,
+  answers: {
+    "q-choice": {
+      state: "answered",
+      value: { kind: "single_choice", optionKey: choice.optionKey, label: choice.label },
+    },
+    "q-text": {
+      state: "answered",
+      value: { kind: "text", value: text },
+    },
+  },
+  origin: "original",
+  path: {
+    questions: { "q-choice": "reached", "q-text": "reached" },
+    confidence: "certain",
+  },
+});
 
 const setup = (): AppDatabase => {
   const directory = mkdtempSync(join(tmpdir(), "survey-synth-value-group-"));
@@ -39,90 +82,24 @@ const setup = (): AppDatabase => {
       capturedAtMs: 2000,
       schema: {
         formId: "form-1",
-        questions: [
-          {
-            id: "q-choice",
-            kind: "single_choice",
-            options: [
-              { key: "festival", label: "축제" },
-              { key: "performance", label: "공연" },
-              { key: "family", label: "가족 나들이" },
-            ],
-          },
-          {
-            id: "q-text",
-            kind: "text",
-            presentation: "short",
-          },
-        ],
+        questions: [choiceQuestion, textQuestion],
       },
     },
     responses: [
       {
         responseId: "r1",
         submittedAtMs: 3000,
-        response: {
-          responseId: "r1",
-          answers: {
-            "q-choice": {
-              state: "answered",
-              value: { kind: "single_choice", optionKey: "festival", label: "축제" },
-            },
-            "q-text": {
-              state: "answered",
-              value: { kind: "text", value: "야간축제" },
-            },
-          },
-          origin: "original",
-          path: {
-            questions: { "q-choice": "reached", "q-text": "reached" },
-            confidence: "certain",
-          },
-        },
+        response: normalizedResponse("r1", { optionKey: "festival", label: "축제" }, "야간축제"),
       },
       {
         responseId: "r2",
         submittedAtMs: 4000,
-        response: {
-          responseId: "r2",
-          answers: {
-            "q-choice": {
-              state: "answered",
-              value: { kind: "single_choice", optionKey: "family", label: "가족 나들이" },
-            },
-            "q-text": {
-              state: "answered",
-              value: { kind: "text", value: "불꽃놀이" },
-            },
-          },
-          origin: "original",
-          path: {
-            questions: { "q-choice": "reached", "q-text": "reached" },
-            confidence: "certain",
-          },
-        },
+        response: normalizedResponse("r2", { optionKey: "family", label: "가족 나들이" }, "불꽃놀이"),
       },
       {
         responseId: "r3",
         submittedAtMs: 5000,
-        response: {
-          responseId: "r3",
-          answers: {
-            "q-choice": {
-              state: "answered",
-              value: { kind: "single_choice", optionKey: "festival", label: "축제" },
-            },
-            "q-text": {
-              state: "answered",
-              value: { kind: "text", value: "야간축제" },
-            },
-          },
-          origin: "original",
-          path: {
-            questions: { "q-choice": "reached", "q-text": "reached" },
-            confidence: "certain",
-          },
-        },
+        response: normalizedResponse("r3", { optionKey: "festival", label: "축제" }, "야간축제"),
       },
     ],
   });
@@ -189,5 +166,43 @@ describe("ValueGroup service", () => {
       name: "야간 행사 언급",
       members: ["야간축제", "불꽃놀이"],
     });
+  });
+
+  it("does not auto-join newly observed text values after a source revision", async () => {
+    const database = setup();
+    const service = createValueGroupService(database.db);
+    const created = await service.create({
+      projectId: "project-1",
+      questionId: "q-text",
+      name: "야간 행사 언급",
+      members: ["야간축제"],
+    });
+
+    createSourceRevision(database.db, {
+      projectId: "project-1",
+      revisionId: "revision-2",
+      importedAtMs: 6000,
+      responseSetHash: "hash-2",
+      formSnapshot: {
+        id: "snapshot-2",
+        title: "Survey",
+        schema: { formId: "form-1", questions: [choiceQuestion, textQuestion] },
+        schemaHash: "schema-2",
+      },
+      responses: [
+        {
+          responseId: "r4",
+          submittedAtMs: 7000,
+          response: normalizedResponse("r4", { optionKey: "festival", label: "축제" }, "드론쇼"),
+        },
+      ],
+    });
+
+    await expect(service.values("project-1", "q-text")).resolves.toEqual([
+      { value: "드론쇼", label: "드론쇼", count: 1 },
+    ]);
+    await expect(service.list("project-1")).resolves.toEqual([
+      expect.objectContaining({ id: created.id, members: ["야간축제"] }),
+    ]);
   });
 });
