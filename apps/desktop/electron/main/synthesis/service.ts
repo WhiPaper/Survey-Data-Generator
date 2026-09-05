@@ -217,6 +217,7 @@ export const createSynthesisService = ({
             },
             seed: params.seed,
             id_column: RESPONSE_ID_COLUMN,
+            categorical_columns: [...plan.questionColumns.values()],
             timestamp_column: TIMESTAMP_COLUMN,
             ...(scope.startMs === undefined
               ? {}
