@@ -1,8 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { safeStorage } from "electron";
-
 import { backendFailure } from "../errors";
 
 export interface RefreshTokenStore {
@@ -11,7 +9,7 @@ export interface RefreshTokenStore {
   delete(accountId: string): Promise<void>;
 }
 
-type SecretCodec = {
+export type SecretCodec = {
   isAvailable(): boolean;
   encrypt(value: string): Buffer;
   decrypt(value: Buffer): string;
@@ -82,14 +80,3 @@ export class FileRefreshTokenStore implements RefreshTokenStore {
     }
   }
 }
-
-const electronSecretCodec: SecretCodec = {
-  isAvailable: () =>
-    safeStorage.isEncryptionAvailable() &&
-    (process.platform !== "linux" || safeStorage.getSelectedStorageBackend() !== "basic_text"),
-  encrypt: (value) => safeStorage.encryptString(value),
-  decrypt: (value) => safeStorage.decryptString(value),
-};
-
-export const createElectronRefreshTokenStore = (filename: string): RefreshTokenStore =>
-  new FileRefreshTokenStore(filename, electronSecretCodec);
