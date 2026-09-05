@@ -97,19 +97,34 @@ A structured Form option may appear in the ValueGroup UI with zero observations.
 Scenario:
 
 ```text
-ValueGroup population
-AND checkbox option
-conditional share targets for multiple options
+Population = ValueGroup "서울"
+checkbox question = "관심 행사"
+option A = "공연", target = 60%
+option B = "먹거리", target = 40%
 ```
+
+For each conditional target, the denominator is the final number of rows in the selected ValueGroup population. The numerator is the number of those population rows whose multi-choice answer contains the selected checkbox option:
+
+```text
+conditional_share(option | group)
+= count(group AND option) / count(group)
+```
+
+The denominator is not the whole final dataset and is not the number of rows that selected any checkbox option. In M6, ValueGroup population membership defines the denominator directly. Branching/not-reached denominator semantics remain an M8 edge case rather than being inferred implicitly here.
 
 Deliver:
 
-- conditional denominator features
-- checkbox option indicators
-- overlapping target contribution
-- simultaneous MILP constraints
+- conditional population indicator derived from the frozen ValueGroup
+- checkbox option indicators derived from exact observed multi-choice AnswerSlot support
+- one linear residual constraint per conditional target:
+  `numerator - p * denominator ≈ 0`
+- overlapping option contribution: one selected row may contribute to multiple option numerators
+- target-directed SDV candidate support for population + option-present/option-absent states
+- simultaneous SciPy MILP solve with final N, mean, optional overall ValueGroup share, and multiple conditional checkbox shares
+- final Parquet revalidation of numerator, denominator, and achieved conditional share
+- frozen ValueGroup + checkbox questionId + optionKey in the Run target snapshot
 
-Acceptance: one row may contribute to multiple checkbox targets correctly.
+Acceptance: one row that selected both checkbox A and checkbox B contributes to both conditional targets correctly, while each target uses the same frozen ValueGroup population denominator.
 
 ## M7 — Original replacement planning
 
@@ -128,7 +143,7 @@ Imported source observations remain immutable.
 
 Deliver scenario coverage for:
 
-- branching/required questions
+- branching/required questions, including conditional-target denominator semantics for not-reached questions
 - candidate support regeneration
 - duplicate/concentration diagnostics
 - source-clone diagnostics on larger real datasets
