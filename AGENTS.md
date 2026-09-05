@@ -2,572 +2,204 @@
 
 ## Purpose
 
-This repository is implemented against an existing, explicit product and architecture contract.
+Survey Synth is a local-first desktop application for importing Google Form responses and producing a larger final dataset that satisfies user-defined statistical targets while remaining structurally and statistically plausible.
 
-The contract documents live under:
+The authoritative product and architecture contracts live in `docs/contracts/`. Read them before changing implementation behavior.
 
-```text
-docs/contracts/
-```
+The repository is pre-release. There is no deployed user base and no compatibility obligation to the current development database, IPC protocol, or implementation architecture. Prefer a clean v2 implementation over compatibility layers.
 
-Treat those documents as **authoritative implementation requirements**, not optional design notes.
+## Read first
 
-Your job is to implement the current milestone faithfully, preserve the documented architecture and product invariants, and avoid speculative complexity.
-
----
-
-## 1. Read the contracts before changing code
-
-Before starting a task:
+Before implementation work:
 
 1. Read `docs/contracts/README.md`.
 2. Read `docs/contracts/17_DECISIONS.md`.
 3. Read `docs/contracts/16_MILESTONES.md`.
-4. Read the contract document(s) directly relevant to the requested work.
-5. Inspect the existing code and tests before proposing changes.
+4. Read the topic contract relevant to the task.
+5. Inspect existing code and tests before deciding what to reuse.
 
-Relevant contract map:
+Existing code is not authoritative when it conflicts with the v2 contracts.
 
-```text
-01_PRODUCT_UI.md
-02_ARCHITECTURE.md
-03_DOMAIN_MODEL.md
-04_GOOGLE_AUTH_IMPORT.md
-05_FORM_LOGIC.md
-06_PROFILING_RELATIONSHIPS.md
-07_TARGETS_FEASIBILITY.md
-08_SYNTHESIS_ENGINE.md
-09_PERSISTENCE_LIFECYCLE.md
-10_EXPORT.md
-11_AI_TEXT.md
-12_SECURITY_PRIVACY.md
-13_TESTING.md
-14_DEPLOYMENT_VERSIONING.md
-15_MONOREPO.md
-16_MILESTONES.md
-17_DECISIONS.md
-```
-
-Do not rely on memory or infer a new architecture when the contracts already define the answer.
-
----
-
-## 2. Contract precedence
-
-Use the following rules:
-
-1. A specific topic contract controls the detailed implementation of that topic.
-2. `17_DECISIONS.md` controls architectural intent and major decisions.
-3. `16_MILESTONES.md` controls implementation sequencing and scope.
-4. `README.md` controls global invariants and the authority model.
-
-If two documents appear to directly conflict:
-
-- do not silently choose one,
-- do not code around the conflict,
-- identify the conflicting clauses,
-- explain the smallest decision required before proceeding.
-
-Do not change a documented contract merely because another implementation would be easier.
-
----
-
-## 3. Core invariants that must never be violated
-
-These are non-negotiable unless the user explicitly changes the contract.
-
-### Product/data invariants
+## Core product invariants
 
 - Google is the only account provider.
-- Google `sub` is the stable account identity; email is display data.
-- Original responses are immutable.
-- Augmentation only creates synthetic additions.
-- User targets apply to the **final combined dataset**, not just synthetic rows.
-- Exact count targets are hard constraints.
-- Ratio/mean targets use the nearest mathematically representable result.
-- Unspecified metrics are preserved automatically; they are not hidden user constraints.
-- Preserve `answered`, `skipped`, `not_reached`, and `indeterminate` as distinct internal states.
-- Never invent a Google Form path when routing evidence is ambiguous.
-- Branch-driving mutations are structural operations, not single-cell edits.
-- Default CSV/XLSX exports do not expose synthetic provenance.
-- A saved Run is immutable with respect to its source revision, target snapshot, seed, and engine/profile versions.
+- A project is based on immutable imported source observations and immutable source revisions.
+- A run freezes the exact `SourceScope`, target snapshot, value-group definitions, seed, and compute-engine version used for that result.
+- `SourceScope` may select all responses or a submitted-time range. Every analysis, target calculation, synthesis run, result, and export must use the frozen scope.
+- The user chooses a final response count. `syntheticCount = finalCount - sourceScopeCount`, except when approved original replacements require replacement candidates in addition to the requested synthetic additions.
+- User targets apply to the final dataset, not only to generated rows.
+- Initial target kinds are `count`, `share`, `mean`, and `conditional_share`.
+- Percentage-point changes, relative percentage changes, absolute shares, and counts are distinct semantics. Never infer one from another silently.
+- Short-text semantic grouping is user-defined through `ValueGroup`; the application does not claim to understand arbitrary concepts such as fruit, occupation, or residence automatically.
+- `answered`, `skipped`, `not_reached`, and `indeterminate` remain distinct internally.
+- Confirmed Google Form routing and allowed values must remain valid. Unknown routing is never invented.
+- Append-only synthesis is attempted first.
+- If append-only cannot achieve the requested result, the system may calculate a minimal original-row replacement plan. No original-derived row is changed in the final result without explicit user approval.
+- Imported source observations themselves are never overwritten. Approved replacements are run transformations.
+- Synthetic timestamps are part of the generated row and must be plausible for the frozen source scope.
+- Obvious row-copy artifacts are a quality failure even when target values are correct.
+- Default CSV/XLSX exports contain the final survey table without synthetic provenance columns.
+- There is no LLM/AI feature in the v2 plan.
 
-### Architecture invariants
-
-- Business/backend logic is TypeScript.
-- Rust is a thin Tauri/OS/process/security bridge.
-- The TypeScript sidecar owns project SQLite.
-- React never accesses SQLite directly.
-- React never calls Google APIs directly.
-- React never calls an LLM provider directly.
-- React never receives OAuth refresh/access tokens, DB keys, or LLM API keys.
-- Large response datasets do not bounce through React IPC.
-- The sidecar uses stdout for NDJSON protocol only; logs go to stderr.
-- Concrete optimization libraries do not leak into `synthesis-core`.
-- Google SDK, SQLite, Tauri, React, and solver implementations do not leak into `domain`.
-
-### Privacy/security invariants
-
-- Project data is local-first.
-- Local project SQLite is encrypted at rest.
-- Refresh tokens, DB key material, and optional LLM keys live in `SecureSecretStore`.
-- Raw survey responses, secrets, and prompts must not appear in production logs.
-- Uploaded Google Drive file bytes are not downloaded for this product.
-- AI free-text generation is optional and off by default.
-- AI OFF means zero LLM network calls.
-- Public AI functionality remains gated until the applicable Google OAuth/Limited Use requirements have been reviewed.
-- No automatic telemetry containing survey data.
-- No automatic cloud backup/sync of project data.
-
----
-
-## 4. Work only on the current milestone
-
-Follow `16_MILESTONES.md`.
-
-Do not implement future milestones “while you are here” unless the current task explicitly requires a small prerequisite.
-
-Examples of prohibited scope creep:
-
-- adding AI infrastructure during M2,
-- adding generic provider abstractions when Google-only auth is contracted,
-- building cloud sync because persistence code is being touched,
-- implementing multiple release channels before required,
-- building advanced solver abstractions before the current synthesis milestone needs them.
-
-Prefer the smallest implementation that fully satisfies the current milestone contract and leaves the documented extension points intact.
-
-### Milestone gate rule
-
-A milestone is not complete because the feature appears to work manually.
-
-It is complete only when:
-
-- the milestone acceptance criteria are met,
-- relevant automated tests pass,
-- architecture/import boundaries pass,
-- known contract invariants remain true,
-- packaged-runtime tests are included where the milestone requires packaging validation.
-
-Do not move to the next milestone while a current milestone acceptance criterion is knowingly broken.
-
----
-
-## 5. Refactoring policy
-
-At the end of a milestone, perform a **targeted refactoring review**, not a blanket rewrite.
-
-Refactor only when it removes real technical debt such as:
-
-- duplicated domain/business logic,
-- violated package boundaries,
-- persistence/transport concerns leaking into core logic,
-- test-hostile coupling,
-- unclear responsibility that blocks the next milestone,
-- repeated ad-hoc metric calculations that should share one canonical definition.
-
-Do not refactor merely to introduce:
-
-- generic BaseService classes,
-- speculative provider systems,
-- unused Repository layers,
-- generic “shared/common/utils” dumping grounds,
-- factories/DI frameworks with no current need,
-- future-facing plugin systems,
-- wrappers that only rename an existing API.
-
-Before risky refactors, add or strengthen tests that preserve current behavior.
-
-A refactor must not change product behavior or documented contracts unless the task explicitly includes a contract change.
-
----
-
-## 6. Monorepo dependency rules
-
-Follow `15_MONOREPO.md`.
-
-Expected high-level structure:
+## Architecture invariants
 
 ```text
-apps/
-  desktop/
-  sidecar/
-
-packages/
-  domain/
-  contracts/
-  statistics/
-  synthesis-core/
-  test-support/
-
-src-tauri/
-tests/
-scripts/
+React Renderer
+    ↓
+Preload / contextBridge
+    ↓
+Electron Main
+    ├─ Google integration
+    ├─ SQLite + Drizzle
+    ├─ projects / sources / runs / export
+    ├─ job orchestration
+    └─ packaged Python compute process
+          ├─ pandas / pyarrow
+          ├─ SDV
+          ├─ scipy.optimize.milp
+          └─ SDMetrics
 ```
 
-Allowed dependency direction:
+- Electron Main owns product/application concerns.
+- React does not access SQLite, Google APIs, filesystem primitives, OAuth tokens, or Python directly.
+- Python is a compute engine, not the application backend and not a daemon.
+- A compute job is a child process that reads configuration/data, writes result files, emits small progress events if needed, and exits.
+- Use JSON for job configuration/metadata and Parquet for row data.
+- Cancellation may terminate the compute child process. Do not build a bidirectional RPC framework unless a proven requirement appears.
+- The end user must not install Python, Node.js, or an external solver.
+
+## Dependency-first rule
+
+Application-owned complexity is a primary optimization target. Dependency count is not.
+
+Before implementing a general statistical, tabular-synthesis, optimization, dataframe, serialization, or quality algorithm, verify whether the chosen mainstream dependency already owns that responsibility.
+
+Initial responsibilities:
+
+- pandas / PyArrow — tabular data and Parquet
+- Pydantic — compute job/control-plane validation
+- SDV — tabular candidate generation, including datetime columns where supported
+- SciPy `optimize.milp` — candidate selection, feasibility, and minimal original-replacement solving
+- SDMetrics — general synthetic-data quality diagnostics
+- Drizzle + better-sqlite3 — local application persistence
+
+Do not add custom relationship analysis, Bayesian/DAG synthesis, copula implementations, calibration solvers, row-allocation frameworks, temporal models, diversity optimizers, NLP classifiers, or repair engines without a concrete scenario and benchmark showing the existing pipeline cannot meet the product requirement.
+
+## Simplicity and extension policy
+
+Extensibility means stable data boundaries, not speculative abstractions.
+
+Prefer small functions and plain data structures. Do not create factories, provider registries, plugin systems, repository hierarchies, optimizer interfaces, generator class trees, or generic `shared/common/utils` packages merely because they may be useful later.
+
+Stable compute stages are conceptually:
 
 ```text
-domain
-  ↑
-  ├─ contracts
-  │    ↑
-  │    ├─ desktop
-  │    └─ sidecar
-  │
-  ├─ statistics
-  │
-  └─ synthesis-core
-       ↑
-     sidecar
+prepare
+→ generate candidates
+→ compile targets/features
+→ select
+→ evaluate
 ```
 
-### Forbidden imports
+A future implementation may replace how a stage works without changing the meaning of its input/output data.
 
-`packages/domain/**` must not import:
+## Domain boundaries
 
-- `apps/**`
-- React
-- Tauri
-- Zod
-- Google SDKs
-- SQLite implementations
-- HiGHS/solver implementations
-- Node filesystem/worker infrastructure
+Core concepts should remain small:
 
-`packages/statistics/**` must not import:
+- `Project`
+- `SourceRevision`
+- `SourceScope`
+- `ValueGroup`
+- `DerivedFeature`
+- `Target`
+- `RunSpec`
+- `EditPlan`
+- `RunResult`
 
-- sidecar infrastructure
-- desktop
-- SQLite
-- Google SDKs
-- synthesis orchestration
+Do not put Google SDK objects, Electron types, SQLite rows, SDV metadata objects, SciPy matrices, or export-library objects into domain types.
 
-`packages/synthesis-core/**` must not import:
+Target compilation should lower product targets into a small numeric/boolean feature representation. Do not build a public general-purpose target DSL.
 
-- sidecar implementation
-- SQLite implementation
-- Google implementation
-- React/Tauri
-- a concrete solver backend
+## Source and Form rules
 
-`apps/desktop/**` must not import:
+Reuse verified Google Form normalization and reachability logic where it remains valid, but remove legacy donor/mutation behavior tied to the old synthesis architecture.
 
-- sidecar source
-- SQLite
-- Google SDKs
-- solver implementations
-- Node filesystem APIs
+A generated candidate must pass hard Form validation before it can enter a final result. If routing evidence is ambiguous, preserve uncertainty rather than inventing a path.
 
-Production code must never import `packages/test-support`.
+Structured choice questions may use any value allowed by the Form schema even when that option has zero observed responses. Arbitrary short-text values must not be invented automatically; use observed or user-provided values.
 
-Do not create a generic `packages/shared`, `packages/common`, or `packages/utils` without an explicit contract change.
+## Original replacement policy
 
-Use package public exports; do not import private internal source paths across package boundaries.
+Imported source data is evidence and remains immutable.
 
----
+When append-only solving is infeasible:
 
-## 7. Implementation style
+1. solve for the minimum number of source rows that would need replacement,
+2. build complete plausible replacement rows,
+3. show the user the append-only result and the proposed replacement result,
+4. require explicit approval,
+5. freeze the approved `EditPlan` into the run.
 
-### TypeScript
+Start with complete-row replacement. Do not build cell-level mutation or semantic edit-distance systems until a real product scenario requires them.
 
-Prefer:
+## Persistence
 
-- explicit domain types,
-- discriminated unions,
-- small pure functions for domain/statistical transformations,
-- typed ports at infrastructure boundaries,
-- immutable inputs for synthesis/profiling where practical,
-- deterministic seeded behavior in structured synthesis.
+The project is pre-release. Do not preserve the existing development DB schema for compatibility.
 
-Avoid:
+- Start the v2 schema cleanly with Drizzle migrations from `0001`.
+- No legacy importer is required.
+- No encrypted SQLite requirement in v2.
+- Use OS-appropriate secure credential storage for Google refresh tokens.
+- Access tokens remain in memory.
+- React never issues SQL.
 
-- `any`,
-- broad `unknown` patches without validation,
-- business behavior encoded in React components,
-- SQL scattered outside persistence modules,
-- transport DTOs becoming domain models by accident.
+Source revisions and saved runs are immutable historical records even though the development schema itself has no legacy compatibility requirement.
 
-Runtime validation belongs at boundaries, primarily in `contracts`.
+## Testing
 
-### Rust
+Tests should be scenario- and invariant-driven.
 
-Keep Rust intentionally small.
+At minimum cover:
 
-Rust may own:
+- source-scope filtering and freezing
+- final-count semantics
+- mean target and nearest representable result
+- share target
+- conditional share, including checkbox overlap
+- overlapping `ValueGroup`s
+- infeasible append-only targets
+- minimum original replacement and approval requirement
+- form routing / required-question validity
+- timestamp inside scope and distribution sanity
+- duplicate/concentration sanity
+- same source + run spec + seed + engine version reproducibility where the selected libraries support deterministic behavior
+- CSV/XLSX logical equivalence
 
-- sidecar process lifecycle,
-- opaque RPC forwarding,
-- secure OS credentials,
-- opener/dialog/path capabilities,
-- Tauri capability enforcement.
+Do not write tests for removed compatibility behavior such as Tauri RPC, sidecar NDJSON, encrypted-DB migration history, AI gateways, donor repair, or legacy synthesis internals.
 
-Do not recreate Question/Target/Profile/Synthesis business models in Rust.
+## UI rules
 
-### Persistence
+Keep the interface sparse and task-focused.
 
-Repositories/application services own persistence access.
+The UI should make target semantics explicit, especially denominator and percentage meaning. `+5%p`, `+5% relative`, `25% final share`, and `+5 people` are different requests.
 
-Do not let UI components issue SQL.
+For short text, allow users to inspect response values/frequencies and select values into a reusable `ValueGroup`. Search and simple string-similarity assistance may be added later; semantic auto-classification is not required.
 
-Do not silently replace a failed/migration-incompatible DB with an empty DB.
+When original replacement is needed, show the consequence before synthesis and let the user choose between the nearest append-only result, approved replacement, or changing the target.
 
-Source revisions and historical Runs are append-oriented and reproducible.
+## Packaging
 
----
+Packaging is part of correctness.
 
-## 8. UI implementation rules
+The Electron bundle must include the packaged Python compute executable and its required resources. Verify the installed artifact, not only development mode.
 
-Follow `01_PRODUCT_UI.md`.
+Initial release targets are Windows x64 and Linux x64 unless the contracts are explicitly changed. macOS remains out of initial scope.
 
-The interface is intentionally sparse.
+## Documentation discipline
 
-Before adding a visible element, ask whether it materially helps the user complete the task or understand an important consequence.
+When implementation reveals that a v2 contract is wrong, change the contract first or in the same change. Do not preserve obsolete implementation behavior merely because it already exists.
 
-Do not add:
+The strongest rule for future complexity is:
 
-- generic page descriptions,
-- redundant helper text,
-- “automatic” badges for values that are simply derived,
-- a Card around every question/item,
-- default charts for every metric,
-- duplicate navigation/actions,
-- decorative dashboards/KPI blocks,
-- generic success marketing copy.
-
-Prefer:
-
-- typography,
-- spacing,
-- alignment,
-- separators,
-- progressive disclosure.
-
-Use shadcn/ui as an interaction/design-system primitive library, not as a mandate to maximize component count.
-
-### Important target editor rule
-
-Display unit and target semantic are different.
-
-Switching `%` → `명` for display does **not** convert a ratio constraint into a count constraint.
-
-Only editing the count value changes the semantic constraint type.
-
-Auto-derived values are text, not fake editable fields.
-
-Reset removes the explicit constraint.
-
-### Autosave
-
-No visible Save button.
-
-Persist valid drafts with debounce/revision control and flush before:
-
-- project/account switch,
-- navigation,
-- window close,
-- synthesis start.
-
----
-
-## 9. Synthesis and statistical implementation rules
-
-Follow `06_PROFILING_RELATIONSHIPS.md`, `07_TARGETS_FEASIBILITY.md`, and `08_SYNTHESIS_ENGINE.md`.
-
-Canonical pipeline:
-
-```text
-ProjectTargets
-→ TargetCompiler
-→ FeasibilityChecker
-→ FeatureCompiler
-→ WeightOptimizer
-→ RowAllocator
-→ Structural/Value Mutation
-→ GlobalRepair
-→ DeferredFieldGenerator
-→ Validator
-```
-
-Never optimize directly against an ad-hoc metric definition that disagrees with the Validator.
-
-Solver and Validator must share canonical FeatureSpace/metric semantics.
-
-### Preservation
-
-Selection statistic and preservation feature are not necessarily the same.
-
-Example:
-
-- Cramér's V can select an important categorical relationship.
-- Solver preservation should generally use selected joint-cell/interaction features rather than trying to optimize Cramér's V directly.
-
-### Priorities
-
-Respect semantic priority ordering:
-
-```text
-form_hard
-user_exact
-user_approx
-user_range
-preserve_marginal
-preserve_relationship
-preserve_temporal
-diversity
-```
-
-Do not improve a lower-priority objective by violating a higher-priority one.
-
-### Structural mutation
-
-Never flip a branch answer without repairing reachability.
-
-No donor support, restart ambiguity, or unsupported routing means the unsafe structural mutation is rejected.
-
-### AI
-
-AI is deferred until structured synthesis is valid.
-
-LLM failure must not corrupt valid structured synthetic rows.
-
----
-
-## 10. Testing requirements
-
-Follow `13_TESTING.md`.
-
-For any behavioral change:
-
-- add or update tests at the lowest useful layer,
-- test invariants rather than only implementation details,
-- avoid relying solely on UI/E2E tests.
-
-Critical invariants to test continuously:
-
-```text
-original mutation count = 0
-final row count is correct
-exact targets are exact
-range targets stay within range
-approx targets are nearest feasible
-confirmed branch contradictions = 0
-confirmed required violations = 0
-same structured input + seed + engine version is reproducible
-default export exposes no provenance
-AI OFF causes no LLM calls
-```
-
-Use property-based tests where the contract calls for them.
-
-Use benchmark/regression fixtures for statistical quality rather than a user-facing “preservation score”.
-
-### Before declaring a task complete
-
-Run the repository's existing:
-
-- format/lint checks,
-- typecheck,
-- unit/integration tests relevant to the change,
-- dependency-boundary checks,
-- milestone-specific smoke tests.
-
-Inspect `package.json`/workspace configuration and use the repository's actual commands. Do not invent command names if scripts already exist.
-
----
-
-## 11. Packaging is part of correctness
-
-Do not assume code that works in dev works in production packaging.
-
-The product must ship without requiring the end user to install Node.js.
-
-For packaging-sensitive work, verify the real packaged artifact where applicable:
-
-- sidecar launches,
-- RPC handshake works,
-- encrypted SQLite opens,
-- migrations work,
-- Worker Threads load,
-- optimization backend loads,
-- CSV/XLSX export works.
-
-`@yao-pkg/pkg` is not a mandatory architecture choice. The contract is a self-contained user experience. Change packaging implementation if required by native dependency reliability, without changing process architecture.
-
----
-
-## 12. Security and logging discipline
-
-Never print or persist secrets for debugging.
-
-Do not log:
-
-- refresh/access tokens,
-- DB keys,
-- LLM keys,
-- raw survey answers,
-- raw free-text responses,
-- full LLM prompts/responses.
-
-When diagnostic correlation is needed, use safe counts/codes or hashed identifiers.
-
-Temporary files must be cleaned on success, failure, cancel, and startup orphan cleanup.
-
-Destructive operations must follow the product's confirmation rules.
-
----
-
-## 13. Handling uncertainty
-
-Do not guess when the repository or contract can answer the question.
-
-If implementation reveals a genuinely missing contract:
-
-1. isolate the exact missing decision,
-2. explain why existing contracts do not decide it,
-3. provide the smallest practical options,
-4. avoid implementing speculative behavior until resolved if the choice would change product semantics.
-
-For minor implementation details that do not affect contracts, choose the simplest maintainable option and continue.
-
----
-
-## 14. Documentation changes
-
-Do not casually rewrite contract documents during feature implementation.
-
-Update `docs/contracts/` only when:
-
-- the user explicitly changes a contract, or
-- implementation exposes a necessary contract correction and that change has been approved.
-
-When a contract changes:
-
-- update the relevant specific document,
-- update `17_DECISIONS.md` if it changes a major decision,
-- update `16_MILESTONES.md` if sequencing/acceptance changes,
-- update tests to enforce the new contract.
-
-Code and contract must not intentionally diverge.
-
----
-
-## 15. Definition of done for an agent task
-
-A task is done when all applicable items are true:
-
-- requested behavior is implemented,
-- current milestone scope is respected,
-- architecture/import boundaries remain valid,
-- relevant tests are added/updated and pass,
-- security/privacy invariants remain valid,
-- no unnecessary abstraction or UI chrome was added,
-- no unrelated future milestone was implemented,
-- no existing project data/reproducibility contract was broken,
-- comments/TODOs do not hide unfinished required behavior,
-- the final summary clearly states:
-  - what changed,
-  - tests/checks run,
-  - any remaining contract-relevant risk.
-
-If a required check could not be run, say so explicitly. Do not claim completion based on assumption.
+> Add a new subsystem only after an actual scenario or benchmark proves that the current dependency-backed pipeline cannot meet the requirement.
