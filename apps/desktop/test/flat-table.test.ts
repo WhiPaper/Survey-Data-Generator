@@ -147,6 +147,6 @@ describe("synthesis flat parquet transport", () => {
       value: { kind: "ordinal", value: 5 },
     });
     expect(rows[1]?.response.answers["q-text" as never]).toEqual({ state: "skipped" });
-    expect(rows[1]?.response.path.confidence).toBe("ambiguous");
+    expect(rows[1]?.response.path.confidence).toBe("certain");
   });
 });
