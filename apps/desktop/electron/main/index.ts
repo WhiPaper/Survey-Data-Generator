@@ -7,12 +7,14 @@ import { createElectronRefreshTokenStore } from "./auth/electron-credentials";
 import { createGoogleProvider } from "./auth/google-provider";
 import { createGoogleAuthService } from "./auth/service";
 import { handleBackendCall, type BackendServices } from "./backend";
+import { createPythonEngine, resolveEngineLaunch } from "./compute/python-engine";
 import { normalizeBackendError } from "./errors";
 import { createGoogleFormsClient } from "./forms/google-client";
 import { createFormsService } from "./forms/service";
 import { createJobRegistry } from "./jobs";
 import { openAppDatabase, type AppDatabase } from "./persistence/database";
 import { createProjectService } from "./projects/service";
+import { createSynthesisService } from "./synthesis/service";
 
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
 let appDatabase: AppDatabase | null = null;
@@ -82,6 +84,14 @@ void app
     });
     const jobs = createJobRegistry();
     const googleForms = createGoogleFormsClient({ auth });
+    const engine = createPythonEngine({
+      jobs,
+      launch: resolveEngineLaunch({
+        isPackaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath,
+      }),
+    });
 
     backendServices = {
       auth,
@@ -92,6 +102,11 @@ void app
         jobs,
       }),
       projects: createProjectService({ db: appDatabase.db }),
+      synthesis: createSynthesisService({
+        db: appDatabase.db,
+        engine,
+        workRoot: join(userDataPath, "compute-jobs"),
+      }),
     };
 
     createWindow();
