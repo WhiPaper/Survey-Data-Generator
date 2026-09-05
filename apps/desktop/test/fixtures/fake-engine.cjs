@@ -2,7 +2,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const args = process.argv.slice(2);
-const mode = args[0] === "hang" || args[0] === "fail" ? args.shift() : "success";
+const supportedModes = new Set(["hang", "fail", "invalid-edit-plan"]);
+const mode = supportedModes.has(args[0]) ? args.shift() : "success";
 
 if (mode === "hang") {
   setInterval(() => undefined, 1000);
@@ -20,6 +21,23 @@ if (args[0] === "synthesize") {
   if (!jobPath) process.exit(5);
   const job = JSON.parse(fs.readFileSync(jobPath, "utf8"));
   const reportPath = path.resolve(path.dirname(jobPath), job.report_json);
+  const appendOnlyOutcome = {
+    mean: 4.5,
+    absoluteError: 0,
+    exact: true,
+    shares: [],
+    conditionalShares: [
+      {
+        id: "conditional:group-1:q-checkbox:A",
+        value: 0.75,
+        share: 0.75,
+        numeratorCount: 3,
+        denominatorCount: 4,
+        absoluteError: 0,
+        exact: true,
+      },
+    ],
+  };
   fs.writeFileSync(
     reportPath,
     JSON.stringify({
@@ -52,19 +70,27 @@ if (args[0] === "synthesize") {
         bestPossibleMean: 4.5,
         bestPossibleAbsoluteError: 0,
         shares: [],
-        conditionalShares: [
-          {
-            id: "conditional:group-1:q-checkbox:A",
-            value: 0.75,
-            share: 0.75,
-            numeratorCount: 3,
-            denominatorCount: 4,
-            absoluteError: 0,
-            exact: true,
-          },
-        ],
+        conditionalShares: appendOnlyOutcome.conditionalShares,
       },
-      validation: { finalCount: true, conditionalShareTargets: true },
+      editPlan:
+        mode === "invalid-edit-plan"
+          ? {
+              status: "available",
+              replacementCount: 1,
+              proposedReplacements: [],
+              appendOnlyOutcome,
+            }
+          : {
+              status: "not_required",
+              replacementCount: 0,
+              proposedReplacements: [],
+              appendOnlyOutcome,
+            },
+      validation: {
+        finalCount: true,
+        conditionalShareTargets: true,
+        replacementApplied: false,
+      },
       quality: { sdmetricsScore: 0.9, warning: null },
       dependencies: { pandas: "test" },
     }),
