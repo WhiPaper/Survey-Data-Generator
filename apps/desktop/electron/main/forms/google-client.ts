@@ -1,6 +1,5 @@
 import { drive } from "@googleapis/drive";
 import { forms } from "@googleapis/forms";
-import { OAuth2Client } from "google-auth-library";
 
 import type { FormsListParams, FormsListResult } from "@survey-synth/contracts";
 import type { FormId, GoogleAccountId } from "@survey-synth/domain";
@@ -30,12 +29,6 @@ export type CreateGoogleFormsClientOptions = {
   auth: GoogleAuthService;
 };
 
-const oauthClient = (accessToken: string): OAuth2Client => {
-  const client = new OAuth2Client();
-  client.setCredentials({ access_token: accessToken });
-  return client;
-};
-
 const googleStatus = (error: unknown): number | undefined =>
   (error as { response?: { status?: number } }).response?.status;
 
@@ -58,21 +51,25 @@ const googleFailure = (error: unknown, fallback: string): BackendFailure => {
 const cancelled = (): BackendFailure =>
   backendFailure("JOB_CANCELLED", "Google Form operation was cancelled");
 
+const requestOptions = (accessToken: string, signal?: AbortSignal) => ({
+  headers: { authorization: `Bearer ${accessToken}` },
+  ...(signal ? { signal } : {}),
+});
+
 export const createGoogleFormsClient = ({ auth }: CreateGoogleFormsClientOptions): GoogleFormsClient => {
   const request = async <T>(
     accountId: GoogleAccountId,
-    action: (client: OAuth2Client) => Promise<T>,
+    action: (accessToken: string) => Promise<T>,
     fallback: string,
   ): Promise<T> => {
-    const run = async (accessToken: string): Promise<T> => action(oauthClient(accessToken));
     try {
-      return await run(await auth.getAccessToken(accountId));
+      return await action(await auth.getAccessToken(accountId));
     } catch (error: unknown) {
       if (googleStatus(error) !== 401) throw googleFailure(error, fallback);
     }
 
     try {
-      return await run(await auth.refreshAccessToken(accountId));
+      return await action(await auth.refreshAccessToken(accountId));
     } catch (error: unknown) {
       throw googleFailure(error, fallback);
     }
@@ -87,8 +84,8 @@ export const createGoogleFormsClient = ({ auth }: CreateGoogleFormsClientOptions
 
       const result = await request(
         accountId,
-        async (client) => {
-          const api = drive({ version: "v3", auth: client });
+        async (accessToken) => {
+          const api = drive({ version: "v3" });
           return api.files.list(
             {
               q: clauses.join(" and "),
@@ -101,7 +98,7 @@ export const createGoogleFormsClient = ({ auth }: CreateGoogleFormsClientOptions
               pageToken: params.cursor,
               fields: "incompleteSearch,nextPageToken,files(id,name,modifiedTime)",
             },
-            signal ? { signal } : undefined,
+            requestOptions(accessToken, signal),
           );
         },
         "Google Forms could not be listed",
@@ -131,9 +128,9 @@ export const createGoogleFormsClient = ({ auth }: CreateGoogleFormsClientOptions
       if (signal?.aborted) throw cancelled();
       const result = await request(
         accountId,
-        async (client) => {
-          const api = forms({ version: "v1", auth: client });
-          return api.forms.get({ formId }, signal ? { signal } : undefined);
+        async (accessToken) => {
+          const api = forms({ version: "v1" });
+          return api.forms.get({ formId }, requestOptions(accessToken, signal));
         },
         "Google Form could not be loaded",
       );
@@ -149,15 +146,15 @@ export const createGoogleFormsClient = ({ auth }: CreateGoogleFormsClientOptions
         if (signal?.aborted) throw cancelled();
         const result = await request(
           accountId,
-          async (client) => {
-            const api = forms({ version: "v1", auth: client });
+          async (accessToken) => {
+            const api = forms({ version: "v1" });
             return api.forms.responses.list(
               {
                 formId,
                 pageSize: RESPONSE_PAGE_SIZE,
                 pageToken,
               },
-              signal ? { signal } : undefined,
+              requestOptions(accessToken, signal),
             );
           },
           "Google Form responses could not be loaded",
