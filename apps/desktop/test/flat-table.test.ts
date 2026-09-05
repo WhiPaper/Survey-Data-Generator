@@ -11,6 +11,7 @@ import type { FormSnapshot, NormalizedResponse } from "@survey-synth/domain";
 import {
   createFlatTablePlan,
   readResultParquet,
+  valueGroupMemberCells,
   writeSourceParquet,
 } from "../electron/main/synthesis/flat-table";
 
@@ -105,6 +106,44 @@ describe("synthesis flat parquet transport", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ response_id: "r1", target_score: 4 });
     expect(JSON.parse(String(rows[0]?.q_0))).toEqual(original.answers["q-text" as never]);
+  });
+
+  it("freezes ValueGroup option keys as exact observed AnswerSlot cells", () => {
+    const festivalSlot = {
+      state: "answered",
+      value: { kind: "single_choice", optionKey: "festival", label: "축제" },
+    };
+    const familySlot = {
+      state: "answered",
+      value: { kind: "single_choice", optionKey: "family", label: "가족 나들이" },
+    };
+    const responses = [
+      {
+        responseId: "r1",
+        submittedAtMs: 1,
+        response: {
+          responseId: "r1",
+          answers: { "q-choice": festivalSlot },
+          origin: "original",
+          path: { questions: { "q-choice": "reached" }, confidence: "certain" },
+        } as unknown as NormalizedResponse,
+      },
+      {
+        responseId: "r2",
+        submittedAtMs: 2,
+        response: {
+          responseId: "r2",
+          answers: { "q-choice": familySlot },
+          origin: "original",
+          path: { questions: { "q-choice": "reached" }, confidence: "certain" },
+        } as unknown as NormalizedResponse,
+      },
+    ];
+
+    expect(valueGroupMemberCells(responses, "q-choice" as never, ["festival"])).toEqual([
+      JSON.stringify(festivalSlot),
+    ]);
+    expect(valueGroupMemberCells(responses, "q-choice" as never, ["performance"])).toEqual([]);
   });
 
   it("reconstructs synthetic normalized responses and derives answer state from Form logic", async () => {
