@@ -2,314 +2,76 @@
 
 ## Meaning
 
-Default export is a normal combined survey-response dataset:
+Export is a representation of a saved Run result. It does not rerun synthesis.
+
+The default logical table is:
 
 ```text
-original rows
-+
-synthetic rows
-=
-final dataset
+kept source-derived rows
++ approved replacement rows
++ synthetic additions
+= final dataset
 ```
 
-Do not include by default:
+Do not add provenance/debug columns by default, including:
 
 ```text
 origin
 is_synthetic
-template_response_id
-seed
 run_id
-constraint metadata
-validation score
+candidate_id
+replacement flag
+seed
 ```
 
-Do not add a metadata worksheet by default.
+## Ordering
 
-## Row order
-
-Do not simply put all originals before all synthetics.
-
-Default order:
-
-```text
-Response Timestamp ascending
-```
-
-Synthetic timestamps therefore mix naturally with originals.
-
-Use a seed-stable tie-break for equal timestamps so repeated export of the same Run is stable.
-
-## Time zone
-
-Project stores an IANA timezone:
-
-```ts
-interface ProjectTemporalContext {
-  timeZone: string
-}
-```
-
-Default at project creation: OS timezone.
-
-Use this consistently for:
-
-- timestamp profiling
-- timestamp generation
-- XLSX display
-
-### Historical compatibility boundary
-
-The v8/v9 migrations preserve legacy rows without inventing export inputs. Historical export is supported at the field boundary below:
-
-- v8+ project timezone data, or a valid IANA timezone already persisted on a legacy project row, is required for timestamp rendering. `NULL` is an unknown historical timezone and returns `LEGACY_COMPATIBILITY_REQUIRED` with reason `missing_project_timezone`.
-- v9+ frozen semantic-override data is required for semantic column typing. A non-null snapshot, including `[]`, is accepted. `NULL` on a legacy Run returns `LEGACY_COMPATIBILITY_REQUIRED` with reason `missing_semantic_override_snapshot`.
-
-The current OS timezone and current project semantic overrides are never used to make an old export appear successful. This means some pre-v8/pre-v9 Runs are readable but intentionally not exportable because their original export semantics cannot be proven from persisted data.
+Default row order is response timestamp ascending with a stable tie-break. Synthetic timestamps therefore mix naturally with source-derived rows.
 
 ## Columns
 
-Order:
+Use Form snapshot order. Sections are not columns. Duplicate titles are minimally disambiguated.
 
-```text
-Response Timestamp
-question 1
-question 2
-...
-```
+Keep export semantics aligned between CSV and XLSX through one shared logical row mapping.
 
-based on the Form snapshot order.
+## Values
 
-Sections do not become columns.
+- single choice: selected display value
+- checkbox: selected options in Form order in one cell
+- grids: flatten each grid row to a column
+- ordinal/rating: numeric value
+- numeric text: numeric cell only when deterministically resolved numeric
+- free/high-cardinality text: preserve source text; generated values follow the non-LLM strategy used by the Run
+- date/time: typed appropriately
+- file upload: do not create/download files; synthetic value blank unless an explicit future placeholder policy exists
 
-Headers use question titles.
+## Timestamp
 
-Duplicate titles are minimally disambiguated:
+CSV response timestamps use ISO 8601 with offset. XLSX uses datetime cells rendered consistently for the project's selected/display timezone.
 
-```text
-만족도
-만족도 (2)
-만족도 (3)
-```
+A Run created from a submitted-time SourceScope must export exactly that frozen final result; changing the current project scope later has no effect.
 
-Do not expose internal question IDs.
+## Original replacement
 
-## Single choice
-
-One cell with the selected display value.
-
-Other option may render as:
-
-```text
-기타: <text>
-```
-
-while internal model keeps option and other text separate.
-
-## Checkbox
-
-One question = one export column.
-
-Selected options are rendered in original Form option order:
-
-```text
-서비스 A, 서비스 C
-```
-
-Absence states become blank cells in normal export.
-
-## Grids
-
-Flatten each grid row to a column.
-
-Example:
-
-```text
-서비스 만족도 [가격]
-서비스 만족도 [품질]
-서비스 만족도 [배송]
-```
-
-Checkbox grid row cell contains its selected column labels.
-
-## Ordinal/rating
-
-Export numeric value, not stars/hearts/icons.
-
-XLSX uses numeric cells.
-
-## Numeric short text
-
-If resolved as numeric, XLSX uses number cell.
-
-Identifier-like values with leading zeros remain strings.
-
-## Free text
-
-Raw original text remains unchanged.
-
-Synthetic output follows the selected strategy.
-
-`exclude` removes the column entirely.
-
-## Dates
-
-CSV:
-
-```text
-2026-09-02
-```
-
-XLSX: date cell + `yyyy-mm-dd`.
-
-Annual no-year dates remain text-like month/day representations such as `09-02`; do not invent a year.
-
-Date+time Form question:
-
-- CSV local semantic datetime, no arbitrary timezone
-- XLSX datetime cell
-
-## Time
-
-Time-of-day:
-
-- CSV `14:30`
-- XLSX time value + `hh:mm`
-
-Duration:
-
-- CSV `01:45:00`
-- XLSX numeric duration + `[h]:mm:ss`
-
-## Response timestamp
-
-CSV uses ISO 8601 with offset:
-
-```text
-2026-09-02T09:32:15+09:00
-```
-
-XLSX uses a datetime cell displayed in the project timezone.
-
-## File uploads
-
-Do not download/create/duplicate actual files.
-
-Default export value for existing original file answers may use filenames.
-
-Multiple:
-
-```text
-file-a.pdf, photo.jpg
-```
-
-Synthetic default: blank.
-
-Placeholder mode may emit a synthetic filename but must not imply that a real file exists.
-
-Do not export Drive IDs/URLs by default.
-
-## Original value immutability
-
-Profiler normalization is analysis-only.
-
-If original free text contained whitespace/case oddities, export the original stored semantic value unchanged.
-
-Synthetic categorical values may use canonical generated representation.
+When a Run contains an approved EditPlan, export the approved final replacement row, not the imported source value. The immutable imported observation remains in persistence for provenance/review but is not the final dataset row.
 
 ## CSV
 
-Default:
-
-```text
-UTF-8 with BOM
-comma delimiter
-CRLF
-double-quote escaping
-```
-
-Support Korean text and standard office spreadsheet workflows.
-
-### Formula injection
-
-Potentially dangerous string prefixes such as:
-
-```text
-=
-+
--
-@
-```
-
-must be exported as safe text, not formulas.
-
-CSV safety layer escapes appropriately.
+Use UTF-8 suitable for common spreadsheet workflows and safe quoting/escaping. User strings must not become spreadsheet formulas.
 
 ## XLSX
 
-Default workbook: one sheet, e.g. `응답`.
+Keep formatting functional rather than decorative:
 
-Useful minimal behavior:
-
-- bold header
+- header row
 - freeze top row
 - auto filter
-- reasonable clamped column widths
-- typed date/time/number cells
-- wrap long paragraph cells
+- reasonable column widths
+- typed number/date/time cells
+- wrapped long text
 
-Do not apply decorative report themes.
+## Architecture
 
-Never serialize user response text as formula cells.
+Electron Main owns export orchestration and file dialogs. Renderer does not receive huge file byte payloads.
 
-## Export architecture
-
-Compile one logical schema first:
-
-```ts
-interface ExportSchema {
-  columns: ExportColumn[]
-}
-```
-
-Both CSV and XLSX consume the same mapped rows, so logical data must match.
-
-Flow:
-
-```text
-FormSnapshot
-→ ExportSchemaCompiler
-→ ExportRowMapper
-→ CSV writer / XLSX writer
-```
-
-## Save flow
-
-```text
-React
-→ exports.save
-→ TS sidecar
-→ host.dialog.save
-→ chosen path
-→ sidecar streams file to disk
-```
-
-Do not send huge datasets/file bytes through React IPC.
-
-CSV must stream.
-
-Use a low-memory XLSX writer where practical.
-
-If an XLSX row limit is exceeded, recommend CSV rather than silently splitting the semantic dataset across multiple sheets.
-
-## Export does not rerun synthesis
-
-A saved `Run` is exported as-is.
-
-Exporting both XLSX and CSV from the same Run must not trigger:
-
-- solver
-- mutation
-- AI regeneration
-
-Only representation changes.
+For large exports, write/stream from the application process using a suitable library. The Python compute engine is not required merely to serialize an already-saved Run.
