@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ParquetReader, ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
+import { asyncBufferFromFile, parquetReadObjects } from "hyparquet";
+import { parquetWriteFile } from "hyparquet-writer";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { FormSnapshot, NormalizedResponse } from "@survey-synth/domain";
@@ -89,53 +90,70 @@ describe("synthesis flat parquet transport", () => {
     await writeSourceParquet(
       path,
       form,
-      [{ responseId: "r1", submittedAtMs: Date.parse("2026-09-01T00:00:00.000Z"), response: original }],
+      [
+        {
+          responseId: "r1",
+          submittedAtMs: Date.parse("2026-09-01T00:00:00.000Z"),
+          response: original,
+        },
+      ],
       plan,
     );
 
-    const reader = await ParquetReader.openFile(path);
-    try {
-      const row = await reader.getCursor().next();
-      expect(row).toMatchObject({ response_id: "r1", target_score: 4 });
-      expect(JSON.parse(String((row as Record<string, unknown>).q_0))).toEqual(
-        original.answers["q-text" as never],
-      );
-    } finally {
-      await reader.close();
-    }
+    const file = await asyncBufferFromFile(path);
+    const rows = await parquetReadObjects({ file });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ response_id: "r1", target_score: 4 });
+    expect(JSON.parse(String(rows[0]?.q_0))).toEqual(original.answers["q-text" as never]);
   });
 
   it("reconstructs synthetic normalized responses and derives answer state from Form logic", async () => {
     const path = tempFile("result.parquet");
-    const schema = new ParquetSchema({
-      response_id: { type: "UTF8" },
-      submitted_at: { type: "UTF8" },
-      target_score: { type: "DOUBLE" },
-      q_0: { type: "UTF8" },
-      __origin: { type: "UTF8" },
+    parquetWriteFile({
+      filename: path,
+      columnData: [
+        {
+          name: "response_id",
+          data: ["r1", "synthetic:42:1"],
+          type: "STRING",
+          nullable: false,
+        },
+        {
+          name: "submitted_at",
+          data: ["2026-09-01T00:00:00.000Z", "2026-09-01T00:01:00.000Z"],
+          type: "STRING",
+          nullable: false,
+        },
+        { name: "target_score", data: [4, 5], type: "DOUBLE", nullable: false },
+        {
+          name: "q_0",
+          data: [
+            JSON.stringify(original.answers["q-text" as never]),
+            JSON.stringify({ state: "skipped" }),
+          ],
+          type: "STRING",
+          nullable: false,
+        },
+        {
+          name: "__origin",
+          data: ["original", "synthetic"],
+          type: "STRING",
+          nullable: false,
+        },
+      ],
     });
-    const writer = await ParquetWriter.openFile(schema, path);
-    await writer.appendRow({
-      response_id: "r1",
-      submitted_at: "2026-09-01T00:00:00.000Z",
-      target_score: 4,
-      q_0: JSON.stringify(original.answers["q-text" as never]),
-      __origin: "original",
-    });
-    await writer.appendRow({
-      response_id: "synthetic:42:1",
-      submitted_at: "2026-09-01T00:01:00.000Z",
-      target_score: 5,
-      q_0: JSON.stringify({ state: "skipped" }),
-      __origin: "synthetic",
-    });
-    await writer.close();
 
     const plan = createFlatTablePlan(form, "q-score" as never);
     const rows = await readResultParquet(
       path,
       form,
-      [{ responseId: "r1", submittedAtMs: Date.parse("2026-09-01T00:00:00.000Z"), response: original }],
+      [
+        {
+          responseId: "r1",
+          submittedAtMs: Date.parse("2026-09-01T00:00:00.000Z"),
+          response: original,
+        },
+      ],
       plan,
     );
 
