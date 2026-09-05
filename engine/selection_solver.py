@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-type PopulationKey = tuple[str, frozenset[str]]
+type PopulationKey = tuple[str, frozenset[str], str]
 
 import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, milp
