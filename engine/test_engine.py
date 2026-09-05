@@ -101,6 +101,7 @@ class EngineSmokeTest(unittest.TestCase):
                             "maximum": 5,
                         },
                         "seed": 20260906,
+                        "categorical_columns": ["segment"],
                         "timestamp_column": "submitted_at",
                         "timestamp_start": "2026-08-01T00:00:00Z",
                         "timestamp_end": "2026-08-02T23:59:59Z",
@@ -125,6 +126,7 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertEqual(report["syntheticCount"], 40)
             self.assertEqual(report["finalCount"], 120)
             self.assertTrue(report["achieved"]["exact"])
+            self.assertTrue(report["validation"]["categoricalSupport"])
             self.assertAlmostEqual(report["achieved"]["mean"], 4.7)
 
             output = pd.read_parquet(work_dir / "result.parquet")
@@ -132,6 +134,7 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertAlmostEqual(float(output["score"].mean()), 4.7)
             self.assertEqual((output["__origin"] == "original").sum(), 80)
             self.assertEqual((output["__origin"] == "synthetic").sum(), 40)
+            self.assertTrue(set(output.loc[output["__origin"] == "synthetic", "segment"]) <= {"A", "B"})
 
 
 if __name__ == "__main__":
