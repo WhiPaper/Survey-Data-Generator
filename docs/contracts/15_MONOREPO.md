@@ -1,271 +1,116 @@
 # Monorepo & Dependency Rules
 
-## Top-level structure
+## Recommended structure
 
 ```text
-/
-├─ apps/
-│  ├─ desktop/
-│  └─ sidecar/
-│
-├─ packages/
-│  ├─ domain/
-│  ├─ contracts/
-│  ├─ statistics/
-│  ├─ synthesis-core/
-│  └─ test-support/
-│
-├─ src-tauri/
-│
-├─ tests/
-│  ├─ integration/
-│  ├─ e2e/
-│  └─ benchmark/
-│
-└─ scripts/
+apps/
+  desktop/
+    src/
+      main/
+      preload/
+      renderer/
+
+packages/
+  domain/
+  contracts/
+  test-support/
+
+engine/
+  main.py
+  prepare.py
+  generate.py
+  select.py
+  evaluate.py
+
+tests/
+scripts/
 ```
 
-Use pnpm workspace initially.
-
-Do not add Nx/Turborepo unless build/runtime complexity later justifies it.
-
-## Dependency direction
-
-```text
-domain
-  ↑
-  ├─ contracts
-  │    ↑
-  │    ├─ desktop
-  │    └─ sidecar
-  │
-  ├─ statistics
-  │    ↑
-  │
-  └─ synthesis-core
-       ↑
-     sidecar
-```
-
-No cycles.
+Use pnpm for the TypeScript workspace. Do not add Nx/Turborepo unless build complexity demonstrates a need.
 
 ## `packages/domain`
 
-Contains pure product meaning:
+Owns pure product meaning:
 
 - IDs
-- form/question/group/logic types
-- response and answer states
-- profile contracts
-- targets
-- project/source revision
-- synthesis-domain contracts
-- small pure domain math
+- normalized Form/answer-state types
+- SourceRevision / SourceScope
+- ValueGroup
+- Target
+- RunSpec / EditPlan / RunResult contracts
+- small pure target/domain helpers
 
 Aim for near-zero runtime dependencies.
 
-Forbidden imports:
-
-- React
-- Tauri
-- Zod
-- Google SDK
-- SQLite
-- HiGHS
-- Node fs/worker APIs
+Must not import React, Electron, Google SDKs, SQLite, Drizzle, or Python/solver-specific concepts.
 
 ## `packages/contracts`
 
-Owns cross-process/client DTOs and runtime validation.
+Owns renderer↔preload/Main DTOs and runtime validation where needed.
 
-Dependencies allowed:
-
-- domain
-- Zod
-
-Forbidden:
-
-- React implementation
-- Tauri
-- SQLite
-- Google SDK
-- solver
-
-## `packages/statistics`
-
-Owns pure:
-
-- descriptive stats
-- quantiles
-- Cramér's V / Phi
-- Pearson / Spearman
-- question profiling
-- semantic inference
-- relationship analysis
-
-Depends on domain only where practical.
-
-No sidecar/DB/Google imports.
-
-## `packages/synthesis-core`
-
-Owns:
-
-- TargetCompiler
-- ConstraintCompiler
-- FeasibilityChecker core
-- FeatureCompiler
-- WeightOptimizer logic
-- RowAllocator
-- mutation algorithms
-- repair
-- validation
-- seeded RNG
-
-Depends on:
-
-- domain
-- statistics
-
-Defines `OptimizationBackend` abstraction.
-
-Does not import HiGHS directly.
-
-## `apps/sidecar`
-
-Owns application orchestration and infrastructure:
-
-```text
-rpc/
-application/
-google/
-persistence/
-optimization/
-workers/
-export/
-ai/
-logging/
-host/
-```
-
-Repository/port interfaces live near application layer.
-
-Concrete SQLite/Google/HiGHS implementations live in infrastructure areas.
+Do not turn this into a generic backend protocol library; there is one bundled application.
 
 ## `apps/desktop`
 
-Owns:
+### Main
+
+Owns Google integration, persistence, jobs, export, and compute process invocation.
+
+### Preload
+
+Exposes narrow typed capabilities to the renderer.
+
+### Renderer
+
+Owns UI only. It does not import Main infrastructure, SQLite, Google SDKs, filesystem/process modules, or Python tooling.
+
+## `engine`
+
+Python compute engine. Keep it small and function-oriented.
+
+Initial responsibility split:
 
 ```text
-app/
-backend/
-features/
-components/ui/
-lib/
+main.py      CLI / job I/O
+prepare.py   dataframe + metadata + derived features
+generate.py  SDV candidate generation
+select.py    target compilation + SciPy MILP
+evaluate.py  hard checks + SDMetrics
 ```
 
-May depend on domain/contracts plus React ecosystem.
+Do not create `services/`, `repositories/`, `providers/`, `plugins/`, `calibration/`, `repair/`, `temporal/`, or `relationships/` directories without a demonstrated requirement.
 
-Must not import:
+## Removed v1 structure
 
-- sidecar source
-- SQLite
-- Google SDK
-- solver
-- Node filesystem
-
-UI does not independently reimplement statistical algorithms.
-
-Backend returns prepared view models/feasibility information.
-
-## `src-tauri`
-
-Thin Rust only:
+The v2 architecture does not contain:
 
 ```text
-backend/process/bridge/protocol
-host opener/secrets/dialogs/paths
-Tauri commands/capabilities
+src-tauri/
+apps/sidecar/
+packages/statistics/
+packages/synthesis-core/
 ```
 
-Do not create Rust mirrors of business-domain DTOs.
+Existing useful code may be selectively moved, but these architectural boundaries should not be preserved for compatibility.
 
-Business RPC payload may be forwarded as opaque JSON.
+## Dependency-first rule
 
-Rust interprets only transport/host capability fields.
+Python scientific libraries own general-purpose computation. TypeScript application code should not duplicate their algorithms.
 
-## `packages/test-support`
-
-Fixture builders/fakes only:
-
-- Form builder
-- Response builder
-- target builder
-- fake optimizer
-- fake Google
-- seeded fixtures
-
-Production packages must never depend on it.
-
-## Forbidden architecture patterns
-
-Do not create a vague:
-
-```text
-packages/shared
-packages/common
-packages/utils
-```
-
-dumping ground initially.
-
-Put code in the package that owns its meaning.
-
-Do not permit internal source imports such as:
-
-```ts
-@app/domain/src/internal/foo
-```
-
-Use package `exports` and meaningful subpaths such as:
-
-```text
-@app/domain/form
-@app/domain/response
-@app/domain/target
-@app/domain/synthesis
-```
-
-Avoid a single enormous barrel if subpath exports make dependencies clearer.
+Do not wrap dependencies merely to rename their API. Add a wrapper/function when it expresses Survey Synth product semantics, stabilizes a real boundary, or simplifies testing.
 
 ## Boundary enforcement
 
-Use ESLint `no-restricted-imports`, dependency-cruiser, or equivalent CI rule.
-
-Examples:
+Enforce only meaningful rules, for example:
 
 ```text
-packages/domain/** cannot import apps/**
-packages/domain/** cannot import react/@tauri/google/sqlite/highs
-statistics cannot import synthesis-core or sidecar
-synthesis-core cannot import sidecar infrastructure
-desktop cannot import sidecar source
+domain cannot import apps/infrastructure
+desktop renderer cannot import Main-only modules
+production cannot import test-support
 ```
 
-Violation fails CI.
+Avoid a large abstract dependency graph before the codebase requires it.
 
-## Development vs production sidecar
+## No dumping grounds
 
-Development may run through the local Node runtime/watch build.
-
-Production is packaged/self-contained for the user.
-
-RPC protocol remains identical in both modes.
-
-## Workers
-
-Worker entries are explicit build entrypoints and must be included in packaged-artifact smoke tests.
-
-## Migrations
-
-Prefer migrations compiled into the sidecar build rather than dynamically discovering arbitrary TS migration files by runtime filesystem path.
+Do not create generic `shared`, `common`, or `utils` packages. Put a helper beside the responsibility that owns it unless multiple real consumers justify a dedicated module.
