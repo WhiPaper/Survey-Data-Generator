@@ -15,6 +15,7 @@ import { createJobRegistry } from "./jobs";
 import { openAppDatabase, type AppDatabase } from "./persistence/database";
 import { createProjectService } from "./projects/service";
 import { createSynthesisService } from "./synthesis/service";
+import { createValueGroupService } from "./value-groups/service";
 
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
 let appDatabase: AppDatabase | null = null;
@@ -38,11 +39,8 @@ const createWindow = (): BrowserWindow => {
   window.once("ready-to-show", () => window.show());
 
   const devServerUrl = process.env.ELECTRON_RENDERER_URL;
-  if (devServerUrl) {
-    void window.loadURL(devServerUrl);
-  } else {
-    void window.loadFile(join(__dirname, "../renderer/index.html"));
-  }
+  if (devServerUrl) void window.loadURL(devServerUrl);
+  else void window.loadFile(join(__dirname, "../renderer/index.html"));
 
   return window;
 };
@@ -54,10 +52,7 @@ ipcMain.handle(BACKEND_CALL_CHANNEL, async (_event, serializedRequest: string) =
       result: await handleBackendCall(serializedRequest, backendServices),
     };
   } catch (error: unknown) {
-    return {
-      ok: false as const,
-      error: normalizeBackendError(error),
-    };
+    return { ok: false as const, error: normalizeBackendError(error) };
   }
 });
 
@@ -102,6 +97,7 @@ void app
         jobs,
       }),
       projects: createProjectService({ db: appDatabase.db }),
+      valueGroups: createValueGroupService(appDatabase.db),
       synthesis: createSynthesisService({
         db: appDatabase.db,
         engine,
@@ -110,7 +106,6 @@ void app
     };
 
     createWindow();
-
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
