@@ -32,12 +32,13 @@ from sdmetrics.reports import QualityReport  # noqa: E402,F401
 from sdv.single_table import GaussianCopulaSynthesizer  # noqa: E402,F401
 
 from evaluate import evaluate_result  # noqa: E402
-from generate import generate_candidates  # noqa: E402
+from generate import ShareCandidateSupport, generate_candidates  # noqa: E402
 from prepare import read_source, smoke_source, write_parquet  # noqa: E402
 from select import (  # noqa: E402
     ShareTarget,
     TargetInfeasible,
     plan_mean_support,
+    plan_share_support,
     select_for_targets,
 )
 
@@ -229,6 +230,8 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         raise ValueError("categorical_columns must not contain duplicates")
     if len({target.id for target in job.share_targets}) != len(job.share_targets):
         raise ValueError("share target ids must be unique")
+    if len(job.share_targets) > 1:
+        raise ValueError("M5 currently supports at most one share target per Run")
 
     reserved_columns = {job.id_column, job.mean_target.column}
     if job.timestamp_column is not None:
@@ -280,7 +283,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
     shares = _share_targets(job)
 
     try:
-        support = plan_mean_support(
+        mean_support = plan_mean_support(
             source,
             target_column=job.mean_target.column,
             final_count=job.final_count,
@@ -288,16 +291,33 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             target_min=job.mean_target.minimum,
             target_max=job.mean_target.maximum,
         )
+        share_supports = tuple(
+            plan_share_support(source, target=share, final_count=job.final_count)
+            for share in shares
+        )
+        generator_share_support = None
+        if shares:
+            share = shares[0]
+            support = share_supports[0]
+            generator_share_support = ShareCandidateSupport(
+                column=share.column,
+                member_values=share.member_values,
+                synthetic_member_count=support.synthetic_member_count,
+                synthetic_nonmember_count=additions - support.synthetic_member_count,
+            )
 
         emit(
             {
                 "type": "progress",
                 "stage": "generate_candidates",
                 "rows": additions,
-                "targetScores": support.score_counts,
+                "targetScores": mean_support.score_counts,
+                "targetShareMembers": (
+                    share_supports[0].synthetic_member_count if share_supports else None
+                ),
             }
         )
-        default_pool_size = max(additions * (50 if shares else 20), 1000 if shares else 200)
+        default_pool_size = max(additions * 20, 500 if shares else 200)
         pool_size = job.candidate_pool_size or default_pool_size
         pool = generate_candidates(
             source,
@@ -305,13 +325,14 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             target_column=job.mean_target.column,
             target_min=job.mean_target.minimum,
             target_max=job.mean_target.maximum,
-            target_score_counts=support.score_counts,
+            target_score_counts=mean_support.score_counts,
             pool_size=pool_size,
             seed=job.seed,
             categorical_columns=job.categorical_columns,
             timestamp_column=job.timestamp_column,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
+            share_support=generator_share_support,
         )
 
         emit({"type": "progress", "stage": "select", "candidateRows": len(pool.data)})
@@ -365,20 +386,27 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         expected_final_count=job.final_count,
     )
 
+    share_support_by_id = {support.id: support for support in share_supports}
     share_achieved: list[dict[str, object]] = []
     selection_by_id = {share.id: share for share in selection.shares}
     for target in job.share_targets:
         actual = float(final[target.column].isin(target.member_values).mean())
         selected = selection_by_id[target.id]
+        support = share_support_by_id[target.id]
         if abs(actual - selected.achieved_share) > 1e-9:
             raise RuntimeError(f"Share validation disagreed with MILP for target {target.id}")
+        actual_error = abs(actual - target.value)
+        if actual_error > support.absolute_error + 1e-9:
+            raise RuntimeError(f"Share validation exceeded theoretical support for target {target.id}")
         share_achieved.append(
             {
                 "id": target.id,
                 "value": target.value,
                 "share": actual,
-                "absoluteError": abs(actual - target.value),
-                "exact": abs(actual - target.value) <= 1e-9,
+                "absoluteError": actual_error,
+                "exact": actual_error <= 1e-9,
+                "bestPossibleShare": support.achieved_share,
+                "bestPossibleAbsoluteError": support.absolute_error,
             }
         )
 
@@ -407,13 +435,14 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             "mean": evaluation.achieved_mean,
             "absoluteError": evaluation.absolute_error,
             "exact": selection.mean_exact,
-            "bestPossibleMean": support.achieved_mean,
-            "bestPossibleAbsoluteError": support.absolute_error,
+            "bestPossibleMean": mean_support.achieved_mean,
+            "bestPossibleAbsoluteError": mean_support.absolute_error,
             "shares": share_achieved,
         },
         "validation": {
             "finalCount": True,
             "targetDomain": True,
+            "targetSupportOptimal": True,
             "categoricalSupport": True,
             "shareTargets": True,
             "duplicateRowCount": evaluation.duplicate_row_count,
