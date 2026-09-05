@@ -147,16 +147,16 @@ class MeanSelectionTest(unittest.TestCase):
         )
         population_candidates = pd.DataFrame(
             {
-                "score": [5] * 15,
-                "population": ["member"] * 15,
-                "checkbox": ["BC"] * 4 + ["B"] * 2 + ["C"] * 2 + ["none"] * 7,
+                "score": [5] * 20,
+                "population": ["member"] * 20,
+                "checkbox": ["BC"] * 4 + ["B"] * 2 + ["C"] * 2 + ["none"] * 12,
             }
         )
         outside_candidates = pd.DataFrame(
             {
-                "score": [5] * 80,
-                "population": ["other"] * 80,
-                "checkbox": ["none"] * 80,
+                "score": [5] * 95,
+                "population": ["other"] * 95,
+                "checkbox": ["none"] * 95,
             }
         )
         candidates = pd.concat([population_candidates, outside_candidates], ignore_index=True)
