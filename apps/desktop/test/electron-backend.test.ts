@@ -19,9 +19,9 @@ describe("Electron v2 backend shell", () => {
     ).resolves.toBeNull();
   });
 
-  it("rejects application methods that are not implemented yet", async () => {
+  it("rejects auth calls until the Electron auth service is initialized", async () => {
     await expect(
       handleBackendCall(serialize(createRequest("test_login", "auth.login", {}))),
-    ).rejects.toThrow("not implemented in the Electron v2 shell");
+    ).rejects.toThrow("Google authentication is not initialized");
   });
 });
