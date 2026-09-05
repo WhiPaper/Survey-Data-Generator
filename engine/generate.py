@@ -140,6 +140,22 @@ def _request_counts(
     }
 
 
+def _expanded_score_support(
+    model_data: pd.DataFrame,
+    *,
+    target_column: str,
+    target_min: int,
+    target_max: int,
+    target_score_counts: dict[int, int],
+) -> dict[int, int]:
+    counts = dict(target_score_counts)
+    valid = _valid_ordinal_rows(model_data, target_column, target_min, target_max)
+    observed = pd.to_numeric(model_data.loc[valid, target_column], errors="raise").round().astype(int)
+    for score in sorted(set(observed.tolist())):
+        counts.setdefault(score, 1)
+    return counts
+
+
 def _sample_condition(
     synthesizer: GaussianCopulaSynthesizer,
     *,
@@ -363,8 +379,16 @@ def generate_candidates(
     )
     synthesizer.fit(model_data)
 
+    candidate_score_counts = _expanded_score_support(
+        model_data,
+        target_column=target_column,
+        target_min=target_min,
+        target_max=target_max,
+        target_score_counts=target_score_counts,
+    )
+
     accepted: list[pd.DataFrame] = []
-    requested_by_score = _request_counts(target_score_counts, pool_size)
+    requested_by_score = _request_counts(candidate_score_counts, pool_size)
     for score, requested in requested_by_score.items():
         accepted.append(
             _sample_condition(
@@ -386,15 +410,21 @@ def generate_candidates(
         observed = allowed_values[share_support.column]
         member_values = share_support.member_values
         nonmember_values = observed - member_values
-        for score, required_score_count in target_score_counts.items():
+        for score, required_score_count in candidate_score_counts.items():
             state_requests = [
                 (
                     member_values,
-                    min(required_score_count, share_support.synthetic_member_count),
+                    max(
+                        min(required_score_count, share_support.synthetic_member_count),
+                        1 if member_values else 0,
+                    ),
                 ),
                 (
                     nonmember_values,
-                    min(required_score_count, share_support.synthetic_nonmember_count),
+                    max(
+                        min(required_score_count, share_support.synthetic_nonmember_count),
+                        1 if nonmember_values else 0,
+                    ),
                 ),
             ]
             for values, required_capacity in state_requests:
@@ -433,7 +463,7 @@ def generate_candidates(
             states.append(support.option_values)
         if support.target_value < 1:
             states.append(observed_options - support.option_values)
-        for score, required_score_count in target_score_counts.items():
+        for score, required_score_count in candidate_score_counts.items():
             directed_total = max(required_score_count * 3, 30)
             for option_values in states:
                 for conditions, requested in _weighted_joint_requests(
@@ -460,7 +490,7 @@ def generate_candidates(
                         )
                     )
 
-    if not accepted and target_score_counts:
+    if not accepted and candidate_score_counts:
         raise RuntimeError("SDV did not produce any target-directed candidates")
 
     data = pd.concat(accepted, ignore_index=True) if accepted else model_data.iloc[0:0].copy()
