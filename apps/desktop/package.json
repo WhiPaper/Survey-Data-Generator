@@ -8,7 +8,8 @@
     "start": "electron-vite preview",
     "build": "pnpm --filter @survey-synth/contracts build && pnpm run typecheck && electron-vite build",
     "typecheck": "pnpm --filter @survey-synth/contracts build && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
-    "test": "pnpm --filter @survey-synth/contracts build && vitest run test"
+    "test": "pnpm --filter @survey-synth/contracts build && vitest run test",
+    "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -18,9 +19,11 @@
     "@survey-synth/contracts": "workspace:*",
     "@survey-synth/domain": "workspace:*",
     "@tanstack/react-query": "^5.90.0",
+    "better-sqlite3": "13.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
+    "drizzle-orm": "0.45.2",
     "lucide-react": "^1.39.0",
     "react": "^19.1.1",
     "react-day-picker": "^10.0.1",
@@ -33,9 +36,11 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "@types/better-sqlite3": "9.6.0",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.2",
+    "drizzle-kit": "0.31.10",
     "electron": "44.2.0",
     "electron-vite": "5.0.0",
     "tailwindcss": "^4.3.3",
