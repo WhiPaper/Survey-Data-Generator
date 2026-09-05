@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 from sdv.metadata import Metadata
+from sdv.sampling import Condition
 from sdv.single_table import GaussianCopulaSynthesizer
 
 
@@ -105,6 +107,21 @@ def _build_metadata(
     return metadata, table_metadata
 
 
+def _request_counts(
+    target_score_counts: dict[int, int],
+    pool_size: int,
+) -> dict[int, int]:
+    required_total = sum(target_score_counts.values())
+    if required_total <= 0:
+        return {}
+
+    return {
+        score: max(required, math.ceil(pool_size * required / required_total))
+        for score, required in target_score_counts.items()
+        if required > 0
+    }
+
+
 def generate_candidates(
     source: pd.DataFrame,
     *,
@@ -112,6 +129,7 @@ def generate_candidates(
     target_column: str,
     target_min: int,
     target_max: int,
+    target_score_counts: dict[int, int],
     pool_size: int,
     seed: int,
     categorical_columns: list[str] | None = None,
@@ -125,6 +143,8 @@ def generate_candidates(
         raise ValueError(f"source is missing mean target column: {target_column}")
     if timestamp_column is not None and timestamp_column not in source.columns:
         raise ValueError(f"source is missing timestamp column: {timestamp_column}")
+    if any(score < target_min or score > target_max for score in target_score_counts):
+        raise ValueError("target score support contains a value outside the ordinal range")
 
     categorical_columns = categorical_columns or []
     missing_categorical = [column for column in categorical_columns if column not in source.columns]
@@ -154,39 +174,60 @@ def generate_candidates(
 
     random.seed(seed)
     np.random.seed(seed)
-    synthesizer = GaussianCopulaSynthesizer(metadata)
+    synthesizer = GaussianCopulaSynthesizer(
+        metadata,
+        enforce_min_max_values=False,
+    )
     synthesizer.fit(model_data)
 
+    requested_by_score = _request_counts(target_score_counts, pool_size)
     accepted: list[pd.DataFrame] = []
-    accepted_count = 0
-    batch_size = max(pool_size, 100)
 
-    for _ in range(5):
-        sampled = synthesizer.sample(num_rows=batch_size)
-        valid = _valid_ordinal_rows(sampled, target_column, target_min, target_max)
-        valid &= _valid_timestamp_rows(
-            sampled,
-            timestamp_column,
-            timestamp_start,
-            timestamp_end,
-        )
-        valid &= _valid_categorical_rows(sampled, allowed_values)
-        sampled = sampled.loc[valid].copy()
-        if sampled.empty:
-            continue
+    for score, requested in requested_by_score.items():
+        score_batches: list[pd.DataFrame] = []
+        accepted_count = 0
+        for _ in range(5):
+            missing = requested - accepted_count
+            if missing <= 0:
+                break
+            sample_count = max(missing * 2, 20)
+            try:
+                sampled = synthesizer.sample_from_conditions(
+                    [Condition(num_rows=sample_count, column_values={target_column: score})]
+                )
+            except Exception as error:  # SDV raises several sampling-specific exception classes.
+                raise RuntimeError(
+                    f"SDV could not generate candidates conditioned on target score {score}: {error}"
+                ) from error
 
-        sampled[target_column] = pd.to_numeric(sampled[target_column]).round().astype(int)
-        if timestamp_column is not None:
-            sampled[timestamp_column] = pd.to_datetime(sampled[timestamp_column], utc=True)
-        accepted.append(sampled)
-        accepted_count += len(sampled)
-        if accepted_count >= pool_size:
-            break
+            numeric = pd.to_numeric(sampled[target_column], errors="coerce")
+            valid = _valid_ordinal_rows(sampled, target_column, target_min, target_max)
+            valid &= np.isclose(numeric, score, atol=1e-9)
+            valid &= _valid_timestamp_rows(
+                sampled,
+                timestamp_column,
+                timestamp_start,
+                timestamp_end,
+            )
+            valid &= _valid_categorical_rows(sampled, allowed_values)
+            sampled = sampled.loc[valid].copy()
+            if sampled.empty:
+                continue
 
-    if accepted_count < pool_size:
-        raise RuntimeError(
-            f"SDV produced only {accepted_count} structurally valid candidates; required {pool_size}"
-        )
+            sampled[target_column] = score
+            if timestamp_column is not None:
+                sampled[timestamp_column] = pd.to_datetime(sampled[timestamp_column], utc=True)
+            score_batches.append(sampled)
+            accepted_count += len(sampled)
 
-    data = pd.concat(accepted, ignore_index=True).iloc[:pool_size].copy()
+        if accepted_count < requested:
+            raise RuntimeError(
+                f"SDV produced only {accepted_count} valid candidates for target score {score}; required {requested}"
+            )
+        accepted.append(pd.concat(score_batches, ignore_index=True).iloc[:requested].copy())
+
+    if not accepted and target_score_counts:
+        raise RuntimeError("SDV did not produce any target-directed candidates")
+
+    data = pd.concat(accepted, ignore_index=True) if accepted else model_data.iloc[0:0].copy()
     return CandidatePool(data=data, metadata=quality_metadata)
