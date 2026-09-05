@@ -56,6 +56,7 @@ export const loadGoogleOAuthConfig = async ({
   const candidates = [
     ...(configuredPath ? [configuredPath] : []),
     join(appPath, "google_oauth.local.json"),
+    join(appPath, "..", "..", "google_oauth.local.json"),
     join(process.cwd(), "google_oauth.local.json"),
   ];
 
