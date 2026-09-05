@@ -6,9 +6,7 @@ export const BuildVersionsSchema = z
     appVersion: z.string().min(1),
     protocolVersion: z.number().int().positive(),
     databaseSchemaVersion: z.number().int().nonnegative(),
-    domainSchemaVersion: z.number().int().nonnegative(),
     engineVersion: z.number().int().nonnegative(),
-    profilerVersion: z.number().int().nonnegative(),
   })
   .strict();
 
