@@ -1,114 +1,62 @@
 # Domain Model Contract
 
-The domain package is pure TypeScript and has no React, Tauri, Google, SQLite or solver dependency.
+Domain types describe product meaning and remain independent of Electron, Google SDKs, SQLite rows, SDV objects, SciPy matrices, and export libraries.
 
-## Branded IDs
+## Core IDs
 
-```ts
-type Brand<T, B extends string> = T & { readonly __brand: B }
-
-type FormId = Brand<string, "FormId">
-type SectionId = Brand<string, "SectionId">
-type QuestionId = Brand<string, "QuestionId">
-type GroupId = Brand<string, "GroupId">
-type OptionKey = Brand<string, "OptionKey">
-type ResponseId = Brand<string, "ResponseId">
-type ProjectId = Brand<string, "ProjectId">
-type RunId = Brand<string, "RunId">
-type GoogleAccountId = Brand<string, "GoogleAccountId">
-type SourceRevisionId = Brand<string, "SourceRevisionId">
-```
-
-## Form snapshot
-
-A project uses an immutable local Form snapshot with a local `schemaHash`.
-
-Do not treat a Google Forms revision field as the permanent project version.
-
-A normalized Form contains:
-
-- `formId`
-- title/description
-- capturedAt
-- schemaHash
-- sections
-- questions
-- groups
-- logic
-
-## Question model
-
-Normalize to domain types:
+Use branded/string IDs for stable product entities such as:
 
 ```text
-SingleChoiceQuestion
-MultiChoiceQuestion
-OrdinalQuestion
-TextQuestion
-DateQuestion
-TimeQuestion
-FileQuestion
-UnsupportedQuestion
+ProjectId
+GoogleAccountId
+FormId
+QuestionId
+ResponseId
+SourceRevisionId
+RunId
+ValueGroupId
+TargetId
 ```
 
-### Single choice
+## Source revision
 
-Radio and dropdown share one engine:
+A `SourceRevision` is an immutable snapshot of the imported Form structure and response set.
 
 ```ts
-presentation: "radio" | "dropdown"
+interface SourceRevision {
+  id: SourceRevisionId
+  projectId: ProjectId
+  formSnapshotId: string
+  responseCount: number
+  responseSetHash: string
+  capturedAt: string
+}
 ```
 
-Options have app-generated stable `OptionKey`.
+Imported observations are never overwritten.
 
-Option value and branch destination are separate data.
+## Source scope
 
-### Multi-choice / checkbox
-
-Preserve option marginals, selection-count behavior and important co-occurrence.
-
-### Ordinal
-
-Linear scale and rating share one ordinal engine:
+All run-time analysis and synthesis is scoped explicitly.
 
 ```ts
-presentation:
-  | "linear_scale"
-  | "rating_star"
-  | "rating_heart"
-  | "rating_thumb_up"
+type SourceScope = {
+  revisionId: SourceRevisionId
+  filter:
+    | { kind: "all" }
+    | { kind: "submitted_between"; start: string; end: string }
+}
+
+interface FrozenSourceScope {
+  scope: SourceScope
+  responseCount: number
+  responseSetHash: string
+}
 ```
 
-Do not assume high score means positive sentiment.
-
-### Text
-
-```ts
-type ShortTextSemanticType =
-  | "numeric"
-  | "categorical"
-  | "identifier"
-  | "personal_identifier"
-  | "formatted_string"
-  | "free_text"
-  | "unknown"
-```
-
-Semantic inference is advisory and may be overridden.
-
-### Grid
-
-Do not create a special solver row type.
-
-Each grid row remains a normal SingleChoice/MultiChoice question with `groupId`.
-
-`QuestionGroup` owns shared title, columns and presentation.
-
-The UI treats a grid group as one adjustable item.
+The scope must be frozen into the Run. Historical results must never be silently recalculated against the current project selection.
 
 ## Answer state
-
-This distinction is mandatory:
 
 ```ts
 type AnswerSlot =
@@ -118,104 +66,134 @@ type AnswerSlot =
   | { state: "indeterminate" }
 ```
 
-Meaning:
+Do not collapse these internally.
 
-- `answered` — value exists.
-- `skipped` — confirmed reached, optional/unanswered.
-- `not_reached` — evidence proves the question could not have been reached.
-- `indeterminate` — value absent and the API evidence cannot prove skipped vs not reached.
+## ValueGroup
 
-Never collapse these states in analysis.
-
-General exports may render all absence states as blank cells, but internal analysis keeps them distinct.
-
-## NormalizedResponse
-
-Internal response model includes:
-
-- responseId
-- createdAt
-- lastSubmittedAt
-- `answers: Record<QuestionId, AnswerSlot>`
-- internal `origin: "original" | "synthetic"`
-- optional templateResponseId for synthetic rows
-
-Origin is required internally but excluded from default CSV/XLSX.
-
-## Profile base
+`ValueGroup` is a user-defined grouping of raw values from one question. It is not an automatic semantic classifier.
 
 ```ts
-interface ProfileBase {
+interface ValueGroup {
+  id: ValueGroupId
   questionId: QuestionId
-
-  answeredCount: number
-  skippedCount: number
-  notReachedCount: number
-  indeterminateCount: number
-
-  confirmedEligibleCount: number // answered + skipped
-  responseRate: number // answered / (answered + skipped)
+  name: string
+  members: string[]
 }
 ```
 
-Indeterminate is excluded from the confirmed-eligible denominator and reduces reliability.
+Groups may overlap. Group membership compiles to boolean derived features.
 
-## Project targets
+Structured Form options do not require `ValueGroup` unless the user intentionally groups multiple options into one metric.
 
-```ts
-interface ProjectTargets {
-  targetResponseCount: number
+## DerivedFeature
 
-  questions: Partial<Record<QuestionId, QuestionTarget>>
-  groups: Partial<Record<GroupId, GroupTarget>>
+A derived feature is an internal numeric/boolean value used for target compilation and evaluation.
 
-  detailedGoals: ConditionalGoal[]
-
-  timestamp?: TimestampTarget
-  advanced?: AdvancedProjectTargets
-}
-```
-
-Unmentioned fields are preserved automatically.
-
-## AllocationConstraint
+Initial families:
 
 ```text
-auto
-ratio
-count
-ratio_range
-count_range
+structural: reached / answered / skipped
+option indicator
+checkbox option indicator
+ordinal score
+numeric parsed value
+ValueGroup membership
+time/date bucket when needed
 ```
 
-`count` is exact/hard.
+Derived features are internal compute representation, not a public plugin/registry API.
 
-A ratio is a target percentage and is realized at the nearest representable integer result.
+## Targets
 
-## Free text strategy
+Initial public target kinds:
 
 ```ts
-type FreeTextStrategy =
-  | { mode: "blank" }
-  | { mode: "reuse" }
-  | { mode: "phrase_pool"; /* ... */ }
-  | { mode: "ai"; /* ... */ }
-  | { mode: "exclude" }
+type Target =
+  | CountTarget
+  | ShareTarget
+  | MeanTarget
+  | ConditionalShareTarget
 ```
 
-Default: `blank`.
+Targets store explicit semantics. Examples:
 
-## Project/run
+```text
+final share = 0.25
+delta percentage points = +0.05
+relative change = +5%
+exact count = 40
+mean = 4.7
+```
 
-A synthesis run freezes:
+Never store an ambiguous request such as `+5%` without resolving its meaning in the UI.
 
-- source revision
-- target revision
-- target snapshot
-- seed
-- engine version
-- profiler version
-- app version
-- optional AI metadata
+A target may reference normal question features or `ValueGroup` features.
 
-Past runs are not silently reprocessed when algorithms change.
+## Metric model
+
+Internally, most targets compile to numerator/denominator contributions.
+
+Examples:
+
+```text
+Likert mean:
+  numerator = score
+  denominator = answered
+
+Busan share:
+  numerator = is_busan
+  denominator = eligible/all rows
+
+Busan residents selecting bus:
+  numerator = is_busan AND selected_bus
+  denominator = is_busan AND transport_eligible
+```
+
+Keep this internal representation small. Do not create a general-purpose user scripting DSL.
+
+## EditPlan
+
+Imported source observations remain immutable, but a final dataset may replace selected original-derived rows when the user explicitly approves the plan.
+
+```ts
+interface EditPlan {
+  status: "not_required" | "available" | "impossible"
+  replacementCount: number
+  proposedReplacements: ProposedReplacement[]
+  appendOnlyOutcome: TargetOutcome
+  replacementOutcome?: TargetOutcome
+}
+```
+
+A proposed replacement is a complete plausible row in v2. Cell-level mutation is not required initially.
+
+## RunSpec
+
+A run freezes at least:
+
+```text
+FrozenSourceScope
+final response count
+target snapshot
+ValueGroup snapshot
+seed
+approved EditPlan, if any
+compute engine version
+app version
+```
+
+A saved Run is immutable.
+
+## Result rows
+
+The persisted/imported source row and the run's final output row are distinct concepts.
+
+The final dataset consists of:
+
+```text
+kept source-derived rows
++ approved replacement rows
++ requested synthetic additions
+```
+
+Internal provenance may exist for validation/debugging but is not included in normal CSV/XLSX export.
