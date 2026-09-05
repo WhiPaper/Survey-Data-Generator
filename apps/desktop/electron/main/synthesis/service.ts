@@ -214,8 +214,11 @@ export const createSynthesisService = ({
       }
       const members = parseMembers(row.membersJson);
       const question = form.questions.find((candidate) => candidate.id === row.questionId);
-      if (!question || question.kind !== "single_choice") {
-        throw backendFailure("VALIDATION_FAILED", "M5 share targets require a single-choice ValueGroup");
+      if (!question || (question.kind !== "single_choice" && question.kind !== "text")) {
+        throw backendFailure(
+          "VALIDATION_FAILED",
+          "M5 share targets require a single-choice or text ValueGroup",
+        );
       }
       const column = plan.questionColumns.get(row.questionId as QuestionId);
       if (!column) {
