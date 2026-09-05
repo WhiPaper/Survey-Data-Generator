@@ -110,19 +110,35 @@ describe("shared RPC contracts", () => {
     ).toEqual({ items: [{ formId: "form-1", title: "Customer survey" }] });
     expect(
       parseRpcResult("forms.import", {
-        importId: "import-1",
+        projectId: "project-1",
+        sourceRevisionId: "revision-1",
         formId: "form-1",
         title: "Customer survey",
         responseCount: 2,
         questionCount: 5,
       }),
-    ).toMatchObject({ formId: "form-1", responseCount: 2 });
+    ).toMatchObject({
+      projectId: "project-1",
+      sourceRevisionId: "revision-1",
+      formId: "form-1",
+      responseCount: 2,
+    });
     expect(() =>
       parseRpcResult("forms.import", {
-        importId: "import-1",
+        projectId: "project-1",
+        sourceRevisionId: "revision-1",
         formId: "form-1",
         title: "Customer survey",
         responseCount: -1,
+        questionCount: 5,
+      }),
+    ).toThrow();
+    expect(() =>
+      parseRpcResult("forms.import", {
+        importId: "legacy-import-id",
+        formId: "form-1",
+        title: "Customer survey",
+        responseCount: 2,
         questionCount: 5,
       }),
     ).toThrow();
