@@ -4,7 +4,8 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import Bounds, LinearConstraint, milp
+
+from selection_solver import ConditionalMetric, solve_binary_selection
 
 
 class TargetInfeasible(Exception):
@@ -403,19 +404,18 @@ def select_for_targets(
         for share in share_targets
     )
     source_scores = _source_scores(source, target_column)
-
     additions = final_count - source_count
     source_sum = float(source_scores.sum())
-    source_memberships = [support.source_member_count for support in share_supports]
+    source_member_counts = [support.source_member_count for support in share_supports]
     source_conditional = [
         _conditional_vectors(source, target) for target in conditional_share_targets
     ]
     conditional_groups = _group_conditional_targets(conditional_share_targets)
 
-    share_support_by_population: dict[tuple[str, frozenset[str]], ShareSupportPlan] = {}
-    for share, support in zip(share_targets, share_supports, strict=True):
-        share_support_by_population[(share.column, share.member_values)] = support
-
+    share_support_by_population = {
+        (share.column, share.member_values): support
+        for share, support in zip(share_targets, share_supports, strict=True)
+    }
     conditional_support_plans = {
         key: plan_conditional_support(
             source,
@@ -477,7 +477,6 @@ def select_for_targets(
             "candidate_support",
             f"Candidate pool contains {len(candidates)} rows but {additions} additions are required",
         )
-
     candidate_scores = pd.to_numeric(candidates[target_column], errors="coerce")
     if candidate_scores.isna().any():
         raise TargetInfeasible(
@@ -485,12 +484,12 @@ def select_for_targets(
             "Candidate pool contains unanswered or invalid target scores",
         )
 
-    scores = candidate_scores.to_numpy(dtype=float)
+    candidate_score_values = candidate_scores.to_numpy(dtype=float)
+    source_memberships = [_membership(source, share) for share in share_targets]
     candidate_memberships = [_membership(candidates, share) for share in share_targets]
     candidate_conditional = [
         _conditional_vectors(candidates, target) for target in conditional_share_targets
     ]
-    candidate_count = len(candidates)
 
     group_denominators: dict[tuple[str, frozenset[str]], list[int]] = {}
     for key, targets in conditional_groups:
@@ -501,151 +500,50 @@ def select_for_targets(
         else:
             group_denominators[key] = list(range(source_population, source_population + additions + 1))
 
-    denominator_selector_count = sum(len(values) for values in group_denominators.values())
-    slack_count = 1 + len(share_targets) + len(conditional_share_targets)
-    variable_count = candidate_count + slack_count + denominator_selector_count
-    mean_slack_index = candidate_count
-    conditional_slack_start = candidate_count + 1 + len(share_targets)
-    selector_start = candidate_count + slack_count
-
-    objective = np.zeros(variable_count, dtype=float)
-    objective[mean_slack_index] = 1.0 / final_count
-    for index in range(len(share_targets)):
-        objective[candidate_count + 1 + index] = 1.0 / final_count
-    for index in range(len(conditional_share_targets)):
-        objective[conditional_slack_start + index] = 1.0
-
-    integrality = np.zeros(variable_count, dtype=int)
-    integrality[:candidate_count] = 1
-    integrality[selector_start:] = 1
-
-    lower_bounds = np.zeros(variable_count, dtype=float)
-    upper_bounds = np.ones(variable_count, dtype=float)
-    upper_bounds[mean_slack_index:selector_start] = np.inf
-
-    rows: list[np.ndarray] = []
-    lower: list[float] = []
-    upper: list[float] = []
-
-    count_row = np.zeros(variable_count, dtype=float)
-    count_row[:candidate_count] = 1.0
-    rows.append(count_row)
-    lower.append(float(additions))
-    upper.append(float(additions))
-
-    mean_rhs = target_mean * final_count - source_sum
-    mean_upper = np.zeros(variable_count, dtype=float)
-    mean_upper[:candidate_count] = scores
-    mean_upper[mean_slack_index] = -1.0
-    rows.append(mean_upper)
-    lower.append(-np.inf)
-    upper.append(mean_rhs)
-
-    mean_lower = np.zeros(variable_count, dtype=float)
-    mean_lower[:candidate_count] = scores
-    mean_lower[mean_slack_index] = 1.0
-    rows.append(mean_lower)
-    lower.append(mean_rhs)
-    upper.append(np.inf)
-
-    for index, (share, source_member, membership) in enumerate(
-        zip(share_targets, source_memberships, candidate_memberships, strict=True)
-    ):
-        slack_index = candidate_count + 1 + index
-        share_rhs = share.value * final_count - source_member
-
-        share_upper = np.zeros(variable_count, dtype=float)
-        share_upper[:candidate_count] = membership
-        share_upper[slack_index] = -1.0
-        rows.append(share_upper)
-        lower.append(-np.inf)
-        upper.append(share_rhs)
-
-        share_lower = np.zeros(variable_count, dtype=float)
-        share_lower[:candidate_count] = membership
-        share_lower[slack_index] = 1.0
-        rows.append(share_lower)
-        lower.append(share_rhs)
-        upper.append(np.inf)
-
-    selector_indices: dict[tuple[str, frozenset[str]], list[tuple[int, int]]] = {}
-    next_selector = selector_start
-    for key, denominators in group_denominators.items():
-        selector_indices[key] = []
-        selector_sum = np.zeros(variable_count, dtype=float)
-        for denominator in denominators:
-            selector_indices[key].append((denominator, next_selector))
-            selector_sum[next_selector] = 1.0
-            next_selector += 1
-        rows.append(selector_sum)
-        lower.append(1.0)
-        upper.append(1.0)
-
-        group_targets = dict(conditional_groups)[key]
-        population = _conditional_vectors(candidates, group_targets[0])[0]
-        source_population = int(_conditional_vectors(source, group_targets[0])[0].sum())
-        denominator_row = np.zeros(variable_count, dtype=float)
-        denominator_row[:candidate_count] = population
-        for denominator, selector_index in selector_indices[key]:
-            denominator_row[selector_index] = -float(denominator)
-        rows.append(denominator_row)
-        lower.append(float(-source_population))
-        upper.append(float(-source_population))
-
-    big_m = float(final_count)
-    conditional_index_by_id = {
-        target.id: index for index, target in enumerate(conditional_share_targets)
-    }
-    for key, targets in conditional_groups:
-        for target in targets:
-            target_index = conditional_index_by_id[target.id]
-            source_population, source_numerator = _conditional_vectors(source, target)
-            candidate_population, candidate_numerator = _conditional_vectors(candidates, target)
-            source_numerator_count = int(source_numerator.sum())
-            slack_index = conditional_slack_start + target_index
-
-            for denominator, selector_index in selector_indices[key]:
-                upper_row = np.zeros(variable_count, dtype=float)
-                upper_row[:candidate_count] = candidate_numerator
-                upper_row[slack_index] = -float(denominator)
-                upper_row[selector_index] = big_m
-                upper_rhs = target.value * denominator - source_numerator_count + big_m
-                rows.append(upper_row)
-                lower.append(-np.inf)
-                upper.append(upper_rhs)
-
-                lower_row = np.zeros(variable_count, dtype=float)
-                lower_row[:candidate_count] = -candidate_numerator
-                lower_row[slack_index] = -float(denominator)
-                lower_row[selector_index] = big_m
-                lower_rhs = source_numerator_count - target.value * denominator + big_m
-                rows.append(lower_row)
-                lower.append(-np.inf)
-                upper.append(lower_rhs)
-
-    result = milp(
-        c=objective,
-        integrality=integrality,
-        bounds=Bounds(lower_bounds, upper_bounds),
-        constraints=LinearConstraint(
-            np.vstack(rows),
-            lb=np.asarray(lower, dtype=float),
-            ub=np.asarray(upper, dtype=float),
+    solution = solve_binary_selection(
+        scores=np.concatenate([source_scores.to_numpy(dtype=float), candidate_score_values]),
+        final_count=final_count,
+        target_mean=target_mean,
+        source_count=source_count,
+        fix_source=True,
+        share_memberships=tuple(
+            np.concatenate([source_membership, candidate_membership])
+            for source_membership, candidate_membership in zip(
+                source_memberships, candidate_memberships, strict=True
+            )
         ),
+        share_values=tuple(target.value for target in share_targets),
+        conditionals=tuple(
+            ConditionalMetric(
+                population_key=_population_key(target),
+                value=target.value,
+                population=np.concatenate([source_vectors[0], candidate_vectors[0]]),
+                numerator=np.concatenate([source_vectors[1], candidate_vectors[1]]),
+            )
+            for target, source_vectors, candidate_vectors in zip(
+                conditional_share_targets,
+                source_conditional,
+                candidate_conditional,
+                strict=True,
+            )
+        ),
+        group_denominators=group_denominators,
     )
-    if not result.success or result.x is None:
+    if solution is None:
         raise TargetInfeasible(
             "solver_infeasible",
-            result.message or "SciPy MILP could not select a feasible candidate set",
+            "SciPy MILP could not select a feasible candidate set",
         )
 
-    selected = np.flatnonzero(result.x[:candidate_count] > 0.5)
+    selected = solution.selected_indices[solution.selected_indices >= source_count] - source_count
     if len(selected) != additions:
         raise RuntimeError(
             f"MILP selected {len(selected)} rows but {additions} additions were required"
         )
 
-    achieved_mean = float((source_sum + float(scores[selected].sum())) / final_count)
+    achieved_mean = float(
+        (source_sum + float(candidate_score_values[selected].sum())) / final_count
+    )
     mean_error = abs(achieved_mean - target_mean)
     if mean_error > mean_support.absolute_error + 1e-9:
         raise TargetInfeasible(
@@ -666,7 +564,7 @@ def select_for_targets(
             ),
         )
         for share, source_member, membership in zip(
-            share_targets, source_memberships, candidate_memberships, strict=True
+            share_targets, source_member_counts, candidate_memberships, strict=True
         )
     )
     for achieved, support in zip(share_results, share_supports, strict=True):
@@ -715,7 +613,7 @@ def select_for_targets(
             raise TargetInfeasible(
                 "candidate_target_support",
                 (
-                    f"Candidate pool can only reach total conditional share error "
+                    "Candidate pool can only reach total conditional share error "
                     f"{actual_total_error:.6f}, but immutable source counts can reach "
                     f"{support.total_absolute_error:.6f} with population denominator "
                     f"{support.denominator_count}"

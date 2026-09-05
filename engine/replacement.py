@@ -5,14 +5,17 @@ from typing import Literal
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import Bounds, LinearConstraint, milp
 
+from selection_solver import ConditionalMetric, solve_binary_selection
 from select import (
     ConditionalShareAchievement,
     ConditionalShareTarget,
     ShareAchievement,
     ShareTarget,
     TargetSelection,
+    _conditional_vectors,
+    _membership,
+    _population_key,
     select_for_targets,
 )
 
@@ -40,19 +43,6 @@ class _ReplacementSolve:
     target_objective: float
 
 
-def _membership(data: pd.DataFrame, column: str, values: frozenset[str]) -> np.ndarray:
-    return data[column].isin(values).to_numpy(dtype=float)
-
-
-def _conditional_vectors(
-    data: pd.DataFrame,
-    target: ConditionalShareTarget,
-) -> tuple[np.ndarray, np.ndarray]:
-    population = _membership(data, target.population_column, target.population_member_values)
-    option = _membership(data, target.option_column, target.option_values)
-    return population, population * option
-
-
 def _selection_error(selection: TargetSelection) -> float:
     return (
         selection.mean_absolute_error
@@ -73,10 +63,7 @@ def _evaluate_selection(
     conditional_share_targets: tuple[ConditionalShareTarget, ...],
 ) -> TargetSelection:
     final = pd.concat(
-        [
-            source.iloc[keep_source_indices],
-            candidates.iloc[selected_candidate_indices],
-        ],
+        [source.iloc[keep_source_indices], candidates.iloc[selected_candidate_indices]],
         ignore_index=True,
     )
     scores = pd.to_numeric(final[target_column], errors="coerce")
@@ -84,18 +71,17 @@ def _evaluate_selection(
         raise RuntimeError("Replacement selection produced an invalid target score")
 
     achieved_mean = float(scores.mean())
-    mean_error = abs(achieved_mean - target_mean)
-    shares = tuple(
-        ShareAchievement(
-            id=target.id,
-            value=target.value,
-            achieved_share=float(final[target.column].isin(target.member_values).mean()),
-            absolute_error=abs(
-                float(final[target.column].isin(target.member_values).mean()) - target.value
-            ),
+    shares: list[ShareAchievement] = []
+    for target in share_targets:
+        achieved_share = float(final[target.column].isin(target.member_values).mean())
+        shares.append(
+            ShareAchievement(
+                id=target.id,
+                value=target.value,
+                achieved_share=achieved_share,
+                absolute_error=abs(achieved_share - target.value),
+            )
         )
-        for target in share_targets
-    )
 
     conditional_results: list[ConditionalShareAchievement] = []
     for target in conditional_share_targets:
@@ -117,12 +103,13 @@ def _evaluate_selection(
             )
         )
 
+    mean_error = abs(achieved_mean - target_mean)
     return TargetSelection(
         selected_indices=selected_candidate_indices,
         achieved_mean=achieved_mean,
         mean_absolute_error=mean_error,
         mean_exact=mean_error <= 1e-9,
-        shares=shares,
+        shares=tuple(shares),
         conditional_shares=tuple(conditional_results),
     )
 
@@ -140,159 +127,65 @@ def _solve_replacement_selection(
     minimize_replacements: bool = False,
 ) -> _ReplacementSolve | None:
     source_count = len(source)
-    candidate_count = len(candidates)
     source_scores = pd.to_numeric(source[target_column], errors="coerce").to_numpy(dtype=float)
     candidate_scores = pd.to_numeric(candidates[target_column], errors="coerce").to_numpy(
         dtype=float
     )
+    source_memberships = [_membership(source, target) for target in share_targets]
+    candidate_memberships = [_membership(candidates, target) for target in share_targets]
+    source_conditional = [
+        _conditional_vectors(source, target) for target in conditional_share_targets
+    ]
+    candidate_conditional = [
+        _conditional_vectors(candidates, target) for target in conditional_share_targets
+    ]
 
     conditional_groups: dict[tuple[str, frozenset[str]], list[ConditionalShareTarget]] = {}
     for target in conditional_share_targets:
-        key = (target.population_column, target.population_member_values)
-        conditional_groups.setdefault(key, []).append(target)
+        conditional_groups.setdefault(_population_key(target), []).append(target)
 
-    row_count = source_count + candidate_count
-    mean_slack_index = row_count
-    share_slack_start = mean_slack_index + 1
-    conditional_slack_start = share_slack_start + len(share_targets)
-    selector_start = conditional_slack_start + len(conditional_share_targets)
-    selector_count = final_count * len(conditional_groups)
-    variable_count = selector_start + selector_count
-
-    target_objective = np.zeros(variable_count, dtype=float)
-    target_objective[mean_slack_index] = 1.0 / final_count
-    target_objective[share_slack_start:conditional_slack_start] = 1.0 / final_count
-    target_objective[conditional_slack_start:selector_start] = 1.0
-
-    objective = target_objective.copy()
-    if minimize_replacements:
-        objective[:] = 0.0
-        objective[:source_count] = -1.0
-
-    integrality = np.zeros(variable_count, dtype=int)
-    integrality[:row_count] = 1
-    integrality[selector_start:] = 1
-
-    lower_bounds = np.zeros(variable_count, dtype=float)
-    upper_bounds = np.ones(variable_count, dtype=float)
-    upper_bounds[mean_slack_index:selector_start] = np.inf
-
-    rows: list[np.ndarray] = []
-    lower: list[float] = []
-    upper: list[float] = []
-
-    def constrain(coefficients: np.ndarray, minimum: float, maximum: float) -> None:
-        rows.append(coefficients)
-        lower.append(minimum)
-        upper.append(maximum)
-
-    final_count_row = np.zeros(variable_count, dtype=float)
-    final_count_row[:row_count] = 1.0
-    constrain(final_count_row, float(final_count), float(final_count))
-
-    mean_rhs = target_mean * final_count
-    mean_upper = np.zeros(variable_count, dtype=float)
-    mean_upper[:source_count] = source_scores
-    mean_upper[source_count:row_count] = candidate_scores
-    mean_upper[mean_slack_index] = -1.0
-    constrain(mean_upper, -np.inf, mean_rhs)
-
-    mean_lower = np.zeros(variable_count, dtype=float)
-    mean_lower[:source_count] = source_scores
-    mean_lower[source_count:row_count] = candidate_scores
-    mean_lower[mean_slack_index] = 1.0
-    constrain(mean_lower, mean_rhs, np.inf)
-
-    for index, target in enumerate(share_targets):
-        source_membership = _membership(source, target.column, target.member_values)
-        candidate_membership = _membership(candidates, target.column, target.member_values)
-        slack_index = share_slack_start + index
-        share_rhs = target.value * final_count
-
-        share_upper = np.zeros(variable_count, dtype=float)
-        share_upper[:source_count] = source_membership
-        share_upper[source_count:row_count] = candidate_membership
-        share_upper[slack_index] = -1.0
-        constrain(share_upper, -np.inf, share_rhs)
-
-        share_lower = np.zeros(variable_count, dtype=float)
-        share_lower[:source_count] = source_membership
-        share_lower[source_count:row_count] = candidate_membership
-        share_lower[slack_index] = 1.0
-        constrain(share_lower, share_rhs, np.inf)
-
-    selector_indices: dict[tuple[str, frozenset[str]], list[tuple[int, int]]] = {}
-    next_selector = selector_start
-    for key, targets in conditional_groups.items():
-        selector_indices[key] = []
-        selector_sum = np.zeros(variable_count, dtype=float)
-        for denominator in range(1, final_count + 1):
-            selector_indices[key].append((denominator, next_selector))
-            selector_sum[next_selector] = 1.0
-            next_selector += 1
-        constrain(selector_sum, 1.0, 1.0)
-
-        source_population = _conditional_vectors(source, targets[0])[0]
-        candidate_population = _conditional_vectors(candidates, targets[0])[0]
-        denominator_row = np.zeros(variable_count, dtype=float)
-        denominator_row[:source_count] = source_population
-        denominator_row[source_count:row_count] = candidate_population
-        for denominator, selector_index in selector_indices[key]:
-            denominator_row[selector_index] = -float(denominator)
-        constrain(denominator_row, 0.0, 0.0)
-
-    big_m = float(final_count)
-    for index, target in enumerate(conditional_share_targets):
-        key = (target.population_column, target.population_member_values)
-        source_numerator = _conditional_vectors(source, target)[1]
-        candidate_numerator = _conditional_vectors(candidates, target)[1]
-        slack_index = conditional_slack_start + index
-
-        for denominator, selector_index in selector_indices[key]:
-            conditional_upper = np.zeros(variable_count, dtype=float)
-            conditional_upper[:source_count] = source_numerator
-            conditional_upper[source_count:row_count] = candidate_numerator
-            conditional_upper[slack_index] = -float(denominator)
-            conditional_upper[selector_index] = big_m
-            constrain(
-                conditional_upper,
-                -np.inf,
-                target.value * denominator + big_m,
+    solution = solve_binary_selection(
+        scores=np.concatenate([source_scores, candidate_scores]),
+        final_count=final_count,
+        target_mean=target_mean,
+        source_count=source_count,
+        fix_source=False,
+        share_memberships=tuple(
+            np.concatenate([source_membership, candidate_membership])
+            for source_membership, candidate_membership in zip(
+                source_memberships, candidate_memberships, strict=True
             )
-
-            conditional_lower = np.zeros(variable_count, dtype=float)
-            conditional_lower[:source_count] = -source_numerator
-            conditional_lower[source_count:row_count] = -candidate_numerator
-            conditional_lower[slack_index] = -float(denominator)
-            conditional_lower[selector_index] = big_m
-            constrain(
-                conditional_lower,
-                -np.inf,
-                -target.value * denominator + big_m,
-            )
-
-    if target_limit is not None:
-        constrain(target_objective.copy(), -np.inf, target_limit)
-
-    result = milp(
-        c=objective,
-        integrality=integrality,
-        bounds=Bounds(lower_bounds, upper_bounds),
-        constraints=LinearConstraint(
-            np.vstack(rows),
-            lb=np.asarray(lower, dtype=float),
-            ub=np.asarray(upper, dtype=float),
         ),
+        share_values=tuple(target.value for target in share_targets),
+        conditionals=tuple(
+            ConditionalMetric(
+                population_key=_population_key(target),
+                value=target.value,
+                population=np.concatenate([source_vectors[0], candidate_vectors[0]]),
+                numerator=np.concatenate([source_vectors[1], candidate_vectors[1]]),
+            )
+            for target, source_vectors, candidate_vectors in zip(
+                conditional_share_targets,
+                source_conditional,
+                candidate_conditional,
+                strict=True,
+            )
+        ),
+        group_denominators={
+            key: list(range(1, final_count + 1)) for key in conditional_groups
+        },
+        target_limit=target_limit,
+        minimize_replacements=minimize_replacements,
     )
-    if not result.success or result.x is None:
+    if solution is None:
         return None
 
-    keep_source = np.flatnonzero(result.x[:source_count] > 0.5)
-    selected_candidates = np.flatnonzero(result.x[source_count:row_count] > 0.5)
+    keep_source = solution.selected_indices[solution.selected_indices < source_count]
+    selected_candidates = solution.selected_indices[solution.selected_indices >= source_count] - source_count
     return _ReplacementSolve(
         keep_source_indices=keep_source,
         selected_candidate_indices=selected_candidates,
-        target_objective=float(np.dot(target_objective, result.x)),
+        target_objective=solution.target_objective,
     )
 
 
