@@ -134,7 +134,7 @@ describe("v2 RPC contracts", () => {
       parseRpcRequest({
         v: VERSIONS.protocolVersion,
         type: "request",
-        id: "synth-m6",
+        id: "synth-m7",
         method: "synthesis.start",
         params: {
           projectId: "project-1",
@@ -181,7 +181,54 @@ describe("v2 RPC contracts", () => {
     ).toThrow();
   });
 
-  it("validates frozen ValueGroup snapshots in Run results", () => {
+  it("requires explicit resolution for available original replacement plans", () => {
+    const outcome = {
+      mean: 4,
+      absoluteError: 0.5,
+      exact: false,
+      shares: [],
+      conditionalShares: [],
+    };
+    expect(
+      parseRpcResult("synthesis.start", {
+        status: "approval_required",
+        planId: "plan-1",
+        editPlan: {
+          status: "available",
+          replacementCount: 1,
+          proposedReplacements: [
+            {
+              sourceResponseId: "source-1",
+              replacementResponseId: "replacement:42:1",
+            },
+          ],
+          appendOnlyOutcome: outcome,
+          replacementOutcome: { ...outcome, mean: 4.5, absoluteError: 0, exact: true },
+        },
+      }),
+    ).toMatchObject({ status: "approval_required", planId: "plan-1" });
+
+    expect(
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "resolve-plan",
+        method: "synthesis.resolveEditPlan",
+        params: { planId: "plan-1", choice: "replacement" },
+      }),
+    ).toMatchObject({ method: "synthesis.resolveEditPlan" });
+    expect(() =>
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "bad-plan-choice",
+        method: "synthesis.resolveEditPlan",
+        params: { planId: "plan-1", choice: "automatic" },
+      }),
+    ).toThrow();
+  });
+
+  it("validates frozen ValueGroup and approved EditPlan snapshots in Run results", () => {
     expect(
       parseRpcResult("runs.get", {
         runId: "run-1",
@@ -215,10 +262,38 @@ describe("v2 RPC contracts", () => {
               },
             },
           ],
+          editPlan: {
+            status: "available",
+            replacementCount: 1,
+            proposedReplacements: [
+              {
+                sourceResponseId: "source-1",
+                replacementResponseId: "replacement:42:1",
+              },
+            ],
+            appendOnlyOutcome: {
+              mean: 4.2,
+              absoluteError: 0.1,
+              exact: false,
+              shares: [],
+              conditionalShares: [],
+            },
+            replacementOutcome: {
+              mean: 4.3,
+              absoluteError: 0,
+              exact: true,
+              shares: [],
+              conditionalShares: [],
+            },
+          },
         },
         validation: {},
         finalResponseCount: 120,
       }),
-    ).toMatchObject({ runId: "run-1", finalResponseCount: 120 });
+    ).toMatchObject({
+      runId: "run-1",
+      finalResponseCount: 120,
+      targetSnapshot: { editPlan: { replacementCount: 1 } },
+    });
   });
 });
