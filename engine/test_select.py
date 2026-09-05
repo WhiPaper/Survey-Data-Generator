@@ -142,7 +142,7 @@ class MeanSelectionTest(unittest.TestCase):
             {
                 "score": [4] * 5,
                 "population": ["member"] * 5,
-                "checkbox": ["ABC", "A", "ABC", "AB", "A"],
+                "checkbox": ["ABC", "A", "C", "AB", "A"],
             }
         )
         population_candidates = pd.DataFrame(
