@@ -4,7 +4,7 @@ Google is the only identity provider. Do not create a generic provider abstracti
 
 ## Account identity
 
-Use Google OpenID Connect `sub` as the stable identity. Email, display name, and picture are display metadata only.
+Use Google OpenID Connect `sub` as the stable identity. Email, display name, and picture are display metadata only. Because v2 is Google-only, `GoogleAccountId` may use the `sub` value directly rather than persisting a second duplicate provider identifier.
 
 ## OAuth
 
@@ -15,6 +15,8 @@ Electron Main owns installed-app OAuth:
 - PKCE S256
 - state validation
 - one-shot callback listener
+
+Use Google's maintained `google-auth-library` for PKCE generation, authorization-code token exchange, access-token refresh, ID-token verification, and revocation. Survey Synth should only own the desktop-specific browser/loopback choreography and local session persistence around that library.
 
 Refresh tokens live in OS-appropriate secure credential storage. Access tokens live in Electron Main memory. Renderer never receives either.
 
