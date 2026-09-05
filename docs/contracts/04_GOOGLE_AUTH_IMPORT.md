@@ -1,184 +1,53 @@
 # Google Authentication & Form Import Contract
 
-## Account model
-
 Google is the only identity provider. Do not create a generic provider abstraction.
 
-```ts
-interface GoogleAccount {
-  id: GoogleAccountId;
-  subject: string; // Google OAuth `sub`, stable identity
-  email: string;
-  displayName?: string;
-  avatarUrl?: string; // HTTPS URL from Google userinfo `picture`
-  createdAt: string;
-  lastUsedAt: string;
-}
-```
+## Account identity
 
-The identity key is Google `sub`, not email.
-
-Projects reference `google_account_id`.
-
-Local table name: `google_accounts`.
+Use Google OpenID Connect `sub` as the stable identity. Email, display name, and picture are display metadata only.
 
 ## OAuth
 
-Desktop installed-app OAuth:
+Electron Main owns installed-app OAuth:
 
 - system browser
-- loopback callback `127.0.0.1:<random-port>`
-- random ephemeral port
+- loopback callback on `127.0.0.1` random port
 - PKCE S256
 - state validation
-- callback processed once, then listener stops
+- one-shot callback listener
 
-Installed-app client secret is not treated as a meaningful secret/security boundary.
+Refresh tokens live in OS-appropriate secure credential storage. Access tokens live in Electron Main memory. Renderer never receives either.
 
-The user already has a Google OAuth installed-app client.
+On API 401, force one refresh and retry once. `invalid_grant` becomes `REAUTH_REQUIRED` while local projects remain available.
 
-Likely scope set:
+## Form listing
 
-```ts
-[
-  "openid",
-  "email",
-  "profile",
-  "https://www.googleapis.com/auth/drive.metadata.readonly",
-  "https://www.googleapis.com/auth/forms.body.readonly",
-  "https://www.googleapis.com/auth/forms.responses.readonly",
-];
-```
+Use Drive metadata APIs to list accessible Google Forms. Do not fetch response counts for every list item.
 
-Scope policy must be rechecked against current Google Cloud verification requirements before public release.
+## Import
 
-`drive.metadata.readonly` is intentionally accepted because the product requirement is an in-app browser of accessible Forms. A narrower Picker/`drive.file` design would conflict with that requirement.
-
-The `profile` scope also permits reading the standard Google OpenID Connect `picture` claim. When present and HTTPS, it is stored as account metadata and exposed as `avatarUrl` in `GoogleAccountView`/`SessionView`. It is not a credential and is never used for account identity; Google `sub` remains authoritative. Missing or invalid picture values are omitted and the UI uses an initials fallback.
-
-## Tokens
+After Form selection, fetch Form structure and all paginated responses, then normalize them into a `FormSnapshot` and response observations.
 
 ```text
-refresh token → SecureSecretStore
-access token  → TS sidecar memory only
-account metadata → encrypted SQLite
+Google Form + Responses
+→ normalization
+→ evidence-aware Form routing
+→ immutable SourceRevision
+→ local SQLite
 ```
 
-React never receives tokens.
+Do not run a custom relationship analyzer during import.
 
-```ts
-interface GoogleTokenStore {
-  getRefreshToken(subject: string): Promise<string | null>;
-  setRefreshToken(subject: string, token: string): Promise<void>;
-  deleteRefreshToken(subject: string): Promise<void>;
-}
-```
+## Refresh
 
-```ts
-interface GoogleAccessTokenProvider {
-  getAccessToken(accountId: GoogleAccountId): Promise<string>;
-}
-```
+Project opening uses local data. Google refresh is explicit.
 
-Use a refresh safety margin.
+A refresh creates a new immutable `SourceRevision`; it does not mutate previous revisions. The current target draft may need revalidation against the new Form/source, but there is no pre-release database compatibility requirement.
 
-Refresh is single-flight per Google account.
+## Rules
 
-API 401:
-
-1. force refresh
-2. retry the API call exactly once
-
-Refresh failure such as `invalid_grant`:
-
-- delete invalid local refresh token
-- report `REAUTH_REQUIRED`
-- keep projects intact
-
-## Account actions
-
-```ts
-interface GoogleAuthService {
-  getSession(): Promise<SessionView | null>;
-  login(): Promise<SessionView>;
-  addAccount(): Promise<SessionView>;
-  switchAccount(id: GoogleAccountId): Promise<SessionView>;
-  logout(): Promise<void>;
-  revokeAccess(id: GoogleAccountId): Promise<void>;
-  getAccounts(): Promise<GoogleAccountView[]>;
-}
-```
-
-Semantics:
-
-- switch account — retain tokens and projects
-- logout — remove local active account token/session, preserve project data and Google grant
-- revoke access — explicitly revoke Google grant/token; consequential action
-- same `sub` on OAuth login activates existing account rather than creating a duplicate
-
-## Startup
-
-```text
-last_account_id
-→ refresh token
-→ access token refresh
-→ projects
-
-missing/invalid token
-→ login
-```
-
-Do not add a long auth splash.
-
-## Form list
-
-Use Drive to list:
-
-- MIME: `application/vnd.google-apps.form`
-- `trashed=false`
-- narrow fields
-- Shared Drive support direction via `supportsAllDrives` / `includeItemsFromAllDrives`
-- search and recent ordering
-
-Do not call Forms Responses merely to show a response count beside every Form.
-
-## Form import
-
-After selection, fetch in parallel:
-
-```text
-forms.get(formId)
-forms.responses.list(formId)
-```
-
-Paginate through all responses.
-
-Then:
-
-```text
-Google Raw Form
-  → GoogleFormNormalizer
-  → FormSnapshot
-
-Google Raw Responses
-  → GoogleResponseNormalizer
-  → NormalizedResponse[]
-```
-
-Then:
-
-```text
-PathResolver
-→ Profiler
-→ RelationshipAnalyzer
-→ encrypted SQLite transaction
-→ Target Editor
-```
-
-Rules:
-
-- React never calls Google APIs directly.
-- 0-response Form cannot create an augmentation project.
-- permission errors are short and actionable.
-- unknown future Google question type becomes `UnsupportedQuestion`, never an app crash.
-- file-upload content bytes are not downloaded for this product.
+- Renderer never calls Google APIs directly.
+- Unknown Google question types become unsupported normalized questions rather than crashing import.
+- File-upload bytes are not downloaded.
+- A source revision with zero usable responses cannot be synthesized without an explicit future generation policy; v2 should block it.
+- Google API permission failures must be concise and actionable.
