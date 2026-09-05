@@ -143,6 +143,85 @@ export type SourceResponseInput = {
   response: unknown;
 };
 
+export type CreateImportedProjectInput = {
+  projectId?: string;
+  revisionId?: string;
+  formSnapshotId?: string;
+  name: string;
+  googleAccountId: string;
+  googleFormId: string;
+  formSnapshot: {
+    title: string;
+    schema: unknown;
+    schemaHash: string;
+    capturedAtMs: number;
+  };
+  responseSetHash: string;
+  responses: SourceResponseInput[];
+  importedAtMs?: number;
+};
+
+export const createImportedProject = (
+  db: SurveyDatabase,
+  input: CreateImportedProjectInput,
+): { project: ProjectRecord; revision: SourceRevisionRecord } => {
+  const importedAtMs = input.importedAtMs ?? Date.now();
+  const projectId = input.projectId ?? randomUUID();
+  const formSnapshotId = input.formSnapshotId ?? randomUUID();
+  const revisionId = input.revisionId ?? randomUUID();
+
+  const project: typeof projects.$inferInsert = {
+    id: projectId,
+    name: input.name,
+    googleAccountId: input.googleAccountId,
+    googleFormId: input.googleFormId,
+    currentSourceRevisionId: revisionId,
+    createdAtMs: importedAtMs,
+    updatedAtMs: importedAtMs,
+  };
+  const revision: typeof sourceRevisions.$inferInsert = {
+    id: revisionId,
+    projectId,
+    formSnapshotId,
+    responseCount: input.responses.length,
+    responseSetHash: input.responseSetHash,
+    importedAtMs,
+  };
+
+  db.transaction((tx) => {
+    tx.insert(projects).values(project).run();
+    tx.insert(formSnapshots)
+      .values({
+        id: formSnapshotId,
+        projectId,
+        googleFormId: input.googleFormId,
+        title: input.formSnapshot.title,
+        schemaJson: JSON.stringify(input.formSnapshot.schema),
+        schemaHash: input.formSnapshot.schemaHash,
+        capturedAtMs: input.formSnapshot.capturedAtMs,
+      })
+      .run();
+    tx.insert(sourceRevisions).values(revision).run();
+    if (input.responses.length > 0) {
+      tx.insert(sourceResponses)
+        .values(
+          input.responses.map((response) => ({
+            revisionId,
+            responseId: response.responseId,
+            submittedAtMs: response.submittedAtMs,
+            responseJson: JSON.stringify(response.response),
+          })),
+        )
+        .run();
+    }
+  });
+
+  return {
+    project: project as ProjectRecord,
+    revision: revision as SourceRevisionRecord,
+  };
+};
+
 export type CreateSourceRevisionInput = {
   projectId: string;
   formSnapshot: {
