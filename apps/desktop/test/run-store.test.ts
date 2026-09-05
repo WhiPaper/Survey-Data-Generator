@@ -82,6 +82,18 @@ describe("synthesis run persistence", () => {
               members: ["festival"],
             },
           },
+          {
+            kind: "conditional_share",
+            value: 0.6,
+            valueGroup: {
+              id: "group-1",
+              questionId: "q-choice",
+              name: "행사 관심",
+              members: ["festival"],
+            },
+            questionId: "q-checkbox",
+            optionKey: "music",
+          },
         ],
       },
       seed: 42,
@@ -120,6 +132,13 @@ describe("synthesis run persistence", () => {
       targets: [
         { kind: "mean", questionId: "q-score", value: 4.7 },
         { kind: "share", valueGroup: { id: "group-1", members: ["festival"] } },
+        {
+          kind: "conditional_share",
+          value: 0.6,
+          valueGroup: { id: "group-1", members: ["festival"] },
+          questionId: "q-checkbox",
+          optionKey: "music",
+        },
       ],
     });
     expect(listPersistedRunRows(database.db, "run-1")).toEqual([
