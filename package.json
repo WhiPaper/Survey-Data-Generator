@@ -16,7 +16,7 @@
     "test": "pnpm run build:packages && pnpm --filter @survey-synth/domain test && pnpm --filter @survey-synth/contracts test && pnpm --filter @survey-synth/desktop test",
     "db:generate": "pnpm --filter @survey-synth/desktop db:generate",
     "engine:install": "python -m pip install -r engine/requirements.txt -r engine/requirements-build.txt",
-    "engine:test": "python -m unittest engine/test_engine.py",
+    "engine:test": "python -m unittest discover -s engine -p \"test_*.py\"",
     "engine:smoke": "python engine/main.py selftest --work-dir .local-engine-smoke",
     "engine:electron-smoke": "pnpm --filter @survey-synth/desktop exec vitest run test/python-engine-real.test.ts",
     "engine:build": "cd engine && python -m PyInstaller survey-synth-engine.spec --noconfirm --clean",
