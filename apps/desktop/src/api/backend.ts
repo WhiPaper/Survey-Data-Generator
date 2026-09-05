@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import {
   BackendErrorSchema,
   type FormId,
@@ -38,8 +37,13 @@ export class BackendClientError extends Error {
   }
 }
 
-const tauriInvoker: BackendInvoker = {
-  invoke: <T>(command: string, args?: Record<string, unknown>) => invoke<T>(command, args),
+const electronInvoker: BackendInvoker = {
+  invoke: async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
+    if (command !== "backend_call") throw new Error(`Unsupported desktop command: ${command}`);
+    const request = args?.request;
+    if (typeof request !== "string") throw new Error("Desktop backend request must be serialized JSON");
+    return (await window.surveySynth.backendCall(request)) as T;
+  },
 };
 
 let requestSequence = 0;
@@ -66,7 +70,7 @@ const normalizeError = (value: unknown): BackendError => {
 export const callBackend = async <M extends RpcMethod>(
   method: M,
   params: BackendRpc[M]["input"],
-  backend: BackendInvoker = tauriInvoker,
+  backend: BackendInvoker = electronInvoker,
 ): Promise<BackendRpc[M]["output"]> => {
   let request: ReturnType<typeof createRequest<M>>;
   try {
