@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { GoogleAccountId } from "@survey-synth/contracts";
 
-import { accountsQueryKey, formsQueryKey, sessionQueryKey } from "../src/App";
+import { accountsQueryKey, formsQueryKey, sessionQueryKey } from "../src/lib/query-keys";
 
 describe("desktop backend query keys", () => {
   it("keeps session, account, and form data in separate query domains", () => {
