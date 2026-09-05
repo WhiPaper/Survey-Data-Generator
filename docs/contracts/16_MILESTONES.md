@@ -72,20 +72,25 @@ This is the first synthesis go/no-go gate.
 Scenario:
 
 ```text
-short-text values
-user defines ValueGroup
-final/delta share target
+single-choice options or observed text values
+user defines ValueGroup membership explicitly
+final share target
 ```
 
 Deliver:
 
 - observed-value frequency/search UI
 - reusable ValueGroup
+- exact user-selected membership; no semantic classifier
 - group snapshot in Run
 - share target compilation
-- append-only infeasibility diagnostics
+- target-directed candidate support for mean + share
+- mean and share solved in one SciPy MILP
+- append-only infeasibility / nearest-representable diagnostics
 
-No automatic semantic classifier.
+M5 supports one ordinal mean and at most one unconditional share target per Run. Checkbox contribution and conditional denominators belong to M6.
+
+A structured Form option may appear in the ValueGroup UI with zero observations. If every member of a target group has zero observations in the selected SourceScope, M5 reports explicit candidate-support infeasibility rather than inventing text or silently changing membership. Unseen-option generation is an edge case to benchmark in M8.
 
 ## M6 — Scenario 3: conditional checkbox share
 
@@ -126,7 +131,9 @@ Deliver scenario coverage for:
 - branching/required questions
 - candidate support regeneration
 - duplicate/concentration diagnostics
+- source-clone diagnostics on larger real datasets
 - datetime distribution sanity
+- zero-observed structured option generation benchmarks
 - low-cardinality vs high-cardinality text behavior
 - numeric/date deterministic parsing where needed
 - cancellation/partial-file cleanup
