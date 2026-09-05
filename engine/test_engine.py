@@ -67,6 +67,64 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn('"kind": "validation"', result.stderr)
 
+    def test_synthesize_does_not_infer_unique_categorical_column_as_primary_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work_dir = Path(directory)
+            source_path = work_dir / "source.parquet"
+            scores = [1, 2, 3, 4, 5, 1, 2, 3, 4]
+            source = pd.DataFrame(
+                {
+                    "response_id": [f"source-{index + 1}" for index in range(9)],
+                    "submitted_at": pd.date_range(
+                        "2026-09-05T17:09:00Z", periods=9, freq="1min"
+                    ),
+                    "score": scores,
+                    "q_2": [json.dumps({"state": "answered", "value": index}) for index in range(9)],
+                }
+            )
+            source.to_parquet(source_path, index=False)
+
+            job_path = work_dir / "job.json"
+            job_path.write_text(
+                json.dumps(
+                    {
+                        "protocol_version": 1,
+                        "kind": "synthesize",
+                        "source_parquet": "source.parquet",
+                        "result_parquet": "result.parquet",
+                        "report_json": "report.json",
+                        "final_count": 9,
+                        "mean_target": {
+                            "column": "score",
+                            "value": sum(scores) / len(scores),
+                            "minimum": 1,
+                            "maximum": 5,
+                        },
+                        "seed": 42,
+                        "categorical_columns": ["q_2"],
+                        "timestamp_column": "submitted_at",
+                        "candidate_pool_size": 40,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(MAIN), "synthesize", "--job", str(job_path)],
+                cwd=ENGINE_DIR,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("SingleTableMetadata", result.stderr)
+            report = json.loads((work_dir / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "success")
+            self.assertEqual(report["sourceCount"], 9)
+            self.assertEqual(report["finalCount"], 9)
+            self.assertTrue(report["validation"]["categoricalSupport"])
+
     def test_synthesize_reaches_final_count_and_exact_mean(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             work_dir = Path(directory)
