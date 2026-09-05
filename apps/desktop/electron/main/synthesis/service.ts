@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 
 import type {
+  FrozenRunTarget,
+  RunTargetSnapshot,
   RunsGetResult,
+  SourceScope,
   SynthesisStartParams,
   SynthesisStartResult,
 } from "@survey-synth/contracts";
@@ -15,7 +18,7 @@ import type { PythonEngine } from "../compute/python-engine";
 import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
 import { getRunRecord, persistRun } from "../persistence/run-store";
-import { formSnapshots } from "../persistence/schema";
+import { formSnapshots, valueGroups } from "../persistence/schema";
 import {
   getProject,
   getSourceRevision,
@@ -28,6 +31,7 @@ import {
   RESPONSE_ID_COLUMN,
   TARGET_SCORE_COLUMN,
   TIMESTAMP_COLUMN,
+  valueGroupMemberCells,
   writeSourceParquet,
 } from "./flat-table";
 
@@ -45,6 +49,7 @@ export interface SynthesisService {
 
 type FrozenScope = {
   revisionId: string;
+  sourceScope: SourceScope;
   kind: "all" | "submitted_between";
   startMs?: number;
   endMs?: number;
@@ -87,11 +92,13 @@ const freezeScope = (
   revisionId: string,
   revisionHash: string,
   responses: StoredSourceResponse[],
-  timestampRange: SynthesisStartParams["timestampRange"],
+  requested: SourceScope | undefined,
 ): FrozenScope => {
-  if (!timestampRange) {
+  const sourceScope = requested ?? { kind: "all" as const };
+  if (sourceScope.kind === "all") {
     return {
       revisionId,
+      sourceScope,
       kind: "all",
       responseCount: responses.length,
       responseSetHash: revisionHash,
@@ -99,8 +106,8 @@ const freezeScope = (
     };
   }
 
-  const startMs = parseTimestamp(timestampRange.start, "Start");
-  const endMs = parseTimestamp(timestampRange.end, "End");
+  const startMs = parseTimestamp(sourceScope.start, "Start");
+  const endMs = parseTimestamp(sourceScope.end, "End");
   if (startMs > endMs) {
     throw backendFailure("VALIDATION_FAILED", "SourceScope start must not be after end");
   }
@@ -109,6 +116,11 @@ const freezeScope = (
   );
   return {
     revisionId,
+    sourceScope: {
+      kind: "submitted_between",
+      start: new Date(startMs).toISOString(),
+      end: new Date(endMs).toISOString(),
+    },
     kind: "submitted_between",
     startMs,
     endMs,
@@ -116,23 +128,6 @@ const freezeScope = (
     responseSetHash: subsetHash(revisionId, selected),
     responses: selected,
   };
-};
-
-const meanTarget = (params: SynthesisStartParams): {
-  questionId: QuestionId;
-  value: number;
-} => {
-  if (params.targets.detailedGoals && params.targets.detailedGoals.length > 0) {
-    throw backendFailure("VALIDATION_FAILED", "M4 supports one unconditional ordinal mean target only");
-  }
-  if (params.targets.questionTargets.length !== 1) {
-    throw backendFailure("VALIDATION_FAILED", "M4 requires exactly one ordinal mean target");
-  }
-  const target = params.targets.questionTargets[0];
-  if (!target || target.kind !== "mean" || target.target.kind !== "mean") {
-    throw backendFailure("VALIDATION_FAILED", "M4 supports ordinal mean targets only");
-  }
-  return { questionId: target.questionId as QuestionId, value: target.target.value };
 };
 
 const loadForm = (db: SurveyDatabase, formSnapshotId: string): FormSnapshot => {
@@ -143,6 +138,14 @@ const loadForm = (db: SurveyDatabase, formSnapshotId: string): FormSnapshot => {
     .get();
   if (!snapshot) throw backendFailure("INTERNAL", "Source revision Form snapshot is missing");
   return parseFormSnapshot(snapshot.schemaJson);
+};
+
+const parseMembers = (membersJson: string): string[] => {
+  const parsed = JSON.parse(membersJson) as unknown;
+  if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string" || !value)) {
+    throw backendFailure("INTERNAL", "Stored ValueGroup members are invalid");
+  }
+  return parsed;
 };
 
 const jsonRecord = (value: unknown): Record<string, unknown> =>
@@ -166,12 +169,11 @@ export const createSynthesisService = ({
     if (!revision || revision.projectId !== project.id) {
       throw backendFailure("INTERNAL", "Project source revision is invalid");
     }
-    const allResponses = listSourceResponses(db, revision.id);
     const scope = freezeScope(
       revision.id,
       revision.responseSetHash,
-      allResponses,
-      params.timestampRange,
+      listSourceResponses(db, revision.id),
+      params.sourceScope,
     );
     if (scope.responses.length === 0) {
       return {
@@ -180,13 +182,74 @@ export const createSynthesisService = ({
       };
     }
 
-    const target = meanTarget(params);
+    const means = params.targets.filter((target) => target.kind === "mean");
+    if (means.length !== 1) {
+      throw backendFailure("VALIDATION_FAILED", "M5 requires exactly one ordinal mean target");
+    }
+    const mean = means[0]!;
     const form = loadForm(db, revision.formSnapshotId);
-    const question = form.questions.find((candidate) => candidate.id === target.questionId);
-    if (!question) throw backendFailure("VALIDATION_FAILED", "Mean target question was not found");
-    if (question.kind !== "ordinal") {
+    const meanQuestion = form.questions.find((question) => question.id === mean.questionId);
+    if (!meanQuestion || meanQuestion.kind !== "ordinal") {
       throw backendFailure("VALIDATION_FAILED", "Mean target question is not ordinal");
     }
+
+    const plan = createFlatTablePlan(form, mean.questionId as QuestionId);
+    const shareJobTargets: Array<{
+      id: string;
+      column: string;
+      member_values: string[];
+      value: number;
+    }> = [];
+    const frozenTargets: FrozenRunTarget[] = [{ ...mean }];
+
+    for (const share of params.targets.filter((target) => target.kind === "share")) {
+      const row = db.select().from(valueGroups).where(eq(valueGroups.id, share.valueGroupId)).get();
+      if (!row || row.projectId !== project.id) {
+        throw backendFailure("VALIDATION_FAILED", "Share target ValueGroup was not found in this project");
+      }
+      const members = parseMembers(row.membersJson);
+      const question = form.questions.find((candidate) => candidate.id === row.questionId);
+      if (!question || question.kind !== "single_choice") {
+        throw backendFailure("VALIDATION_FAILED", "M5 share targets require a single-choice ValueGroup");
+      }
+      const column = plan.questionColumns.get(row.questionId as QuestionId);
+      if (!column) {
+        throw backendFailure("INTERNAL", "ValueGroup question is not available in the synthesis table");
+      }
+      const memberValues = valueGroupMemberCells(
+        scope.responses,
+        row.questionId as QuestionId,
+        members,
+      );
+      if (memberValues.length === 0) {
+        return {
+          status: "infeasible",
+          issues: [
+            {
+              code: "share_member_support",
+              message: `ValueGroup “${row.name}” has no observed member values in this SourceScope`,
+            },
+          ],
+        };
+      }
+      shareJobTargets.push({ id: row.id, column, member_values: memberValues, value: share.value });
+      frozenTargets.push({
+        kind: "share",
+        value: share.value,
+        valueGroup: {
+          id: row.id,
+          questionId: row.questionId,
+          name: row.name,
+          members,
+        },
+      });
+    }
+
+    const targetSnapshot: RunTargetSnapshot = {
+      finalCount: params.finalCount,
+      sourceScope: scope.sourceScope,
+      targets: frozenTargets,
+    };
 
     const operationId = params.operationId ?? `synthesis-${randomUUID()}`;
     const workDir = join(workRoot, operationId.replaceAll(/[^a-zA-Z0-9._-]/g, "_"));
@@ -194,7 +257,6 @@ export const createSynthesisService = ({
     const resultPath = join(workDir, "result.parquet");
     const reportPath = join(workDir, "report.json");
     const jobPath = join(workDir, "job.json");
-    const plan = createFlatTablePlan(form, target.questionId);
 
     await mkdir(workDir, { recursive: true });
     try {
@@ -208,13 +270,14 @@ export const createSynthesisService = ({
             source_parquet: "source.parquet",
             result_parquet: "result.parquet",
             report_json: "report.json",
-            final_count: params.targets.targetResponseCount,
+            final_count: params.finalCount,
             mean_target: {
               column: TARGET_SCORE_COLUMN,
-              value: target.value,
-              minimum: question.min,
-              maximum: question.max,
+              value: mean.value,
+              minimum: meanQuestion.min,
+              maximum: meanQuestion.max,
             },
+            share_targets: shareJobTargets,
             seed: params.seed,
             id_column: RESPONSE_ID_COLUMN,
             categorical_columns: [...plan.questionColumns.values()],
@@ -238,7 +301,7 @@ export const createSynthesisService = ({
       }
 
       const rows = await readResultParquet(resultPath, form, scope.responses, plan);
-      if (rows.length !== report.finalCount || rows.length !== params.targets.targetResponseCount) {
+      if (rows.length !== report.finalCount || rows.length !== params.finalCount) {
         throw backendFailure("INTERNAL", "Synthesis result row count does not match the frozen target");
       }
 
@@ -255,7 +318,7 @@ export const createSynthesisService = ({
           responseSetHash: scope.responseSetHash,
         },
         finalResponseCount: report.finalCount,
-        target: params.targets,
+        target: targetSnapshot,
         seed: params.seed,
         engineReport: report,
         rows,
@@ -277,15 +340,12 @@ export const createSynthesisService = ({
   getRun: async (runId) => {
     const run = getRunRecord(db, runId);
     if (!run) throw backendFailure("NOT_FOUND", "Run was not found");
-    const targetSnapshot = JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"];
-    const engineReport = JSON.parse(run.engineReportJson) as unknown;
     return {
       runId: run.id,
       projectId: run.projectId,
       sourceRevisionId: run.sourceRevisionId,
-      targetSnapshot,
-      targetRevision: 0,
-      validation: jsonRecord(engineReport),
+      targetSnapshot: JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"],
+      validation: jsonRecord(JSON.parse(run.engineReportJson) as unknown),
       finalResponseCount: run.finalResponseCount,
     };
   },
