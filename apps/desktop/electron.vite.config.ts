@@ -31,6 +31,11 @@ export default defineConfig({
         "@": resolve(root, "src"),
       },
     },
+    build: {
+      rollupOptions: {
+        input: resolve(root, "index.html"),
+      },
+    },
     plugins: [react(), tailwindcss()],
   },
 });
