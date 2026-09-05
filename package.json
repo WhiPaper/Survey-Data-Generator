@@ -6,15 +6,20 @@
   "scripts": {
     "dev": "pnpm --filter @survey-synth/desktop dev",
     "check": "node scripts/check.mjs",
-    "format": "prettier --write \"apps/desktop/**/*.{ts,tsx,css,html,json}\" \"packages/{domain,contracts}/**/*.{ts,json}\" \"scripts/check.mjs\" \"*.{json,yaml,yml,ts,mjs}\"",
-    "format:check": "prettier --check \"apps/desktop/**/*.{ts,tsx,css,html,json}\" \"packages/{domain,contracts}/**/*.{ts,json}\" \"scripts/check.mjs\" \"*.{json,yaml,yml,ts,mjs}\"",
+    "format": "prettier --write \"apps/desktop/**/*.{ts,tsx,css,html,json}\" \"packages/{domain,contracts}/**/*.{ts,json}\" \"scripts/*.mjs\" \"*.{json,yaml,yml,ts,mjs}\"",
+    "format:check": "prettier --check \"apps/desktop/**/*.{ts,tsx,css,html,json}\" \"packages/{domain,contracts}/**/*.{ts,json}\" \"scripts/*.mjs\" \"*.{json,yaml,yml,ts,mjs}\"",
     "lint": "eslint apps/desktop packages/domain packages/contracts --max-warnings=0",
     "typecheck": "pnpm run build:packages && pnpm --filter @survey-synth/desktop typecheck",
     "build": "pnpm run build:packages && pnpm --filter @survey-synth/desktop build",
     "build:desktop": "pnpm --filter @survey-synth/desktop build",
     "build:packages": "pnpm --filter @survey-synth/domain build && pnpm --filter @survey-synth/contracts build",
     "test": "pnpm run build:packages && pnpm --filter @survey-synth/domain test && pnpm --filter @survey-synth/contracts test && pnpm --filter @survey-synth/desktop test",
-    "db:generate": "pnpm --filter @survey-synth/desktop db:generate"
+    "db:generate": "pnpm --filter @survey-synth/desktop db:generate",
+    "engine:install": "python -m pip install -r engine/requirements.txt -r engine/requirements-build.txt",
+    "engine:test": "python -m unittest engine/test_engine.py",
+    "engine:smoke": "python engine/main.py selftest --work-dir .local-engine-smoke",
+    "engine:build": "cd engine && python -m PyInstaller survey-synth-engine.spec --noconfirm --clean",
+    "engine:binary-smoke": "node scripts/engine-binary-smoke.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
