@@ -18,7 +18,7 @@ A dedicated production support contact has not yet been published. Before public
 
 Node.js and Python are not required for installed users.
 
-The Linux package target is configured, but representative Linux desktop acceptance is currently deferred. GitHub-hosted Linux packaged smoke is automated evidence only and does not establish representative device acceptance, secure `safeStorage` backend acceptance, or launcher/taskbar association.
+The Linux package target and updater are configured, but representative Linux desktop acceptance is currently deferred. GitHub-hosted Linux packaged smoke is automated evidence only and does not establish representative device acceptance, secure `safeStorage` backend acceptance, launcher/taskbar association, or a manual AppImage update acceptance.
 
 ## Frequently asked questions
 
@@ -28,13 +28,13 @@ Projects, imported source revisions, targets, runs, and local results are stored
 
 ### Does Survey Synth upload survey data?
 
-No. Survey data is processed locally. Network access is limited to Google OAuth and Google Drive/Forms requests required by the selected import workflow plus, on packaged Windows builds, GitHub Release requests used to check for and download application updates. Update requests do not contain survey data. There is no developer backend, telemetry, cloud synchronization, or AI/LLM transfer path.
+No. Survey data is processed locally. Network access is limited to Google OAuth and Google Drive/Forms requests required by the selected import workflow plus, on packaged Windows and Linux builds, GitHub Release requests used to check for and download application updates. Update requests do not contain survey data. There is no developer backend, telemetry, cloud synchronization, or AI/LLM transfer path.
 
 ### How do updates work?
 
-Packaged Windows builds check the private repository's latest non-prerelease GitHub Release. When a newer stable version exists, Survey Synth downloads the NSIS installer, verifies the SHA-256 digest reported by GitHub, and asks whether to restart. Choosing to restart launches the per-user installer silently and starts the updated application. Users do not enter a GitHub credential.
+Packaged Windows and Linux builds check the repository's latest non-prerelease GitHub Release. When a newer stable version exists, Survey Synth downloads the platform artifact and verifies the SHA-256 digest and size reported by GitHub before asking whether to restart. Users do not enter a GitHub credential.
 
-Linux automatic updating is not enabled in the current release plan; distribute a new AppImage manually when Linux distribution resumes.
+On Windows, choosing to restart launches the per-user NSIS installer silently. On Linux AppImage, the verified replacement is staged beside the running AppImage; after the current process exits, a detached helper replaces the original AppImage path, preserves executable permissions, and relaunches the application.
 
 ### How do I delete data?
 

@@ -32,16 +32,22 @@ describe("M10 release hardening", () => {
 
     expect(updateTokenDefine).toBeGreaterThanOrEqual(0);
     expect(updateTokenDefine).toBeLessThan(preloadOffset);
-    expect(config.slice(rendererOffset)).not.toContain("__SURVEY_SYNTH_UPDATE_GITHUB_TOKEN__");
+    expect(config.slice(rendererOffset)).not.toContain(
+      "__SURVEY_SYNTH_UPDATE_GITHUB_TOKEN__",
+    );
     expect(updater).toContain('const UPDATE_OWNER = "WhiPaper";');
     expect(updater).toContain('const UPDATE_REPOSITORY = "Survey-Data-Generator";');
     expect(updater).toContain("Authorization: `Bearer ${token}`");
-    expect(updater).toContain('digest?.trim().toLowerCase()');
+    expect(updater).toContain("digest?.trim().toLowerCase()");
     expect(updater).toContain('["--updated", "/S", "--force-run"]');
+    expect(updater).toContain("process.env.APPIMAGE?.trim()");
+    expect(updater).toContain("/\\.AppImage$/i");
+    expect(updater).toContain('"/bin/sh"');
     expect(updater).not.toContain("process.env.GH_TOKEN");
     expect(updater).not.toContain("process.env.GITHUB_TOKEN");
-    expect(workflow).toContain("Require Windows updater credential");
+    expect(workflow).toContain("Require packaged build credentials");
     expect(workflow).toContain("secrets.SURVEY_SYNTH_UPDATE_GITHUB_TOKEN");
+    expect(workflow).toContain("Build Electron app with packaged credentials");
     expect(workflow).toContain("if: ${{ inputs.publish_release }}");
     expect(workflow).toContain("contents: write");
     expect(builder.nsis?.perMachine).toBe(false);
@@ -114,7 +120,7 @@ describe("M10 release hardening", () => {
     expect(config.slice(rendererOffset)).not.toContain("__SURVEY_SYNTH_GOOGLE_CLIENT_SECRET__");
     expect(authConfig).toContain("buildClientId");
     expect(authConfig).toContain("buildClientSecret");
-    expect(workflow).toContain("Require Google OAuth build credentials");
+    expect(workflow).toContain("Require packaged build credentials");
     expect(workflow).toContain("secrets.SURVEY_SYNTH_GOOGLE_CLIENT_ID");
     expect(workflow).toContain("secrets.SURVEY_SYNTH_GOOGLE_CLIENT_SECRET");
   });

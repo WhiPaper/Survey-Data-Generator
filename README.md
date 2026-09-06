@@ -13,7 +13,7 @@ Electron Main
     ├─ Google integration
     ├─ SQLite + Drizzle
     ├─ projects / sources / runs / export
-    ├─ Windows private GitHub Release updater
+    ├─ Windows/Linux GitHub Release updater
     └─ packaged Python compute process
           ├─ pandas / PyArrow
           ├─ SDV
@@ -57,9 +57,9 @@ pnpm run package:desktop:artifact
 
 Initial artifact targets are Windows x64 NSIS and Linux x64 AppImage. Local artifacts are validation outputs. The packaged-artifacts workflow keeps normal builds unpublished; its explicit `publish_release` input creates a GitHub Release only after both configured artifact jobs succeed.
 
-Official Windows packaged builds require `SURVEY_SYNTH_UPDATE_GITHUB_TOKEN`, a fine-grained token limited to this repository with `Contents: Read-only`. It is injected into Electron Main only. Because a desktop binary can be inspected, this updater credential is treated as extractable rather than confidential; it must never have write permission. Linux builds do not receive the updater credential.
+Official packaged Windows and Linux builds require `SURVEY_SYNTH_UPDATE_GITHUB_TOKEN`, a fine-grained token limited to this repository with `Contents: Read-only`. It is injected into Electron Main only. Because a desktop binary can be inspected, this updater credential is treated as extractable rather than confidential; it must never have write permission.
 
-The Windows packaged app checks the repository's latest non-prerelease GitHub Release, downloads a newer NSIS installer, verifies the SHA-256 digest reported by GitHub, and asks the user whether to restart. Approval launches the per-user installer silently. Linux automatic updating is not enabled in the current release plan.
+Packaged apps check the repository's latest non-prerelease GitHub Release, download the platform artifact, and verify the SHA-256 digest and size reported by GitHub before offering a restart. Windows launches the per-user NSIS installer silently. Linux AppImage builds stage the verified replacement beside the running AppImage, wait for the current process to exit, replace the original AppImage path, preserve executable permissions, and relaunch it. Users do not enter GitHub credentials.
 
 ## Google OAuth development
 

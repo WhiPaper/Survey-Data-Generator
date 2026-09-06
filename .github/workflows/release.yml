@@ -43,30 +43,18 @@ jobs:
       - run: pnpm run engine:test
       - run: pnpm run engine:build
       - run: pnpm run engine:binary-smoke
-      - name: Require Google OAuth build credentials
-        env:
-          SURVEY_SYNTH_GOOGLE_CLIENT_ID: ${{ secrets.SURVEY_SYNTH_GOOGLE_CLIENT_ID }}
-          SURVEY_SYNTH_GOOGLE_CLIENT_SECRET: ${{ secrets.SURVEY_SYNTH_GOOGLE_CLIENT_SECRET }}
-        run: >-
-          node -e "for (const name of ['SURVEY_SYNTH_GOOGLE_CLIENT_ID','SURVEY_SYNTH_GOOGLE_CLIENT_SECRET']) { if (!process.env[name]?.trim()) { console.error(name + ' GitHub Actions secret is required for packaged builds'); process.exit(1); } }"
-      - name: Require Windows updater credential
-        if: runner.os == 'Windows'
-        env:
-          SURVEY_SYNTH_UPDATE_GITHUB_TOKEN: ${{ secrets.SURVEY_SYNTH_UPDATE_GITHUB_TOKEN }}
-        run: >-
-          node -e "if (!process.env.SURVEY_SYNTH_UPDATE_GITHUB_TOKEN?.trim()) { console.error('SURVEY_SYNTH_UPDATE_GITHUB_TOKEN GitHub Actions secret is required for Windows packaged builds'); process.exit(1); }"
-      - name: Build Windows Electron app with packaged credentials
-        if: runner.os == 'Windows'
+      - name: Require packaged build credentials
         env:
           SURVEY_SYNTH_GOOGLE_CLIENT_ID: ${{ secrets.SURVEY_SYNTH_GOOGLE_CLIENT_ID }}
           SURVEY_SYNTH_GOOGLE_CLIENT_SECRET: ${{ secrets.SURVEY_SYNTH_GOOGLE_CLIENT_SECRET }}
           SURVEY_SYNTH_UPDATE_GITHUB_TOKEN: ${{ secrets.SURVEY_SYNTH_UPDATE_GITHUB_TOKEN }}
-        run: pnpm run build
-      - name: Build Linux Electron app with Google OAuth client
-        if: runner.os == 'Linux'
+        run: >-
+          node -e "for (const name of ['SURVEY_SYNTH_GOOGLE_CLIENT_ID','SURVEY_SYNTH_GOOGLE_CLIENT_SECRET','SURVEY_SYNTH_UPDATE_GITHUB_TOKEN']) { if (!process.env[name]?.trim()) { console.error(name + ' GitHub Actions secret is required for packaged builds'); process.exit(1); } }"
+      - name: Build Electron app with packaged credentials
         env:
           SURVEY_SYNTH_GOOGLE_CLIENT_ID: ${{ secrets.SURVEY_SYNTH_GOOGLE_CLIENT_ID }}
           SURVEY_SYNTH_GOOGLE_CLIENT_SECRET: ${{ secrets.SURVEY_SYNTH_GOOGLE_CLIENT_SECRET }}
+          SURVEY_SYNTH_UPDATE_GITHUB_TOKEN: ${{ secrets.SURVEY_SYNTH_UPDATE_GITHUB_TOKEN }}
         run: pnpm run build
       - name: Shorten pnpm dlx cache path on Windows
         if: runner.os == 'Windows'

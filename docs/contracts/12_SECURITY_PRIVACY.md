@@ -11,7 +11,7 @@ Electron Main
    ├─ local SQLite
    ├─ local export
    ├─ packaged local Python compute job
-   └─ Windows update check/download → private GitHub Releases
+   └─ application update check/download → GitHub Releases
 ```
 
 There is no LLM/AI data transfer path in v2.
@@ -20,12 +20,12 @@ There is no LLM/AI data transfer path in v2.
 
 - Google refresh token: OS-appropriate secure credential storage
 - Google access token: Electron Main memory
-- Windows updater credential: repository-scoped read-only GitHub credential injected into packaged Electron Main
+- updater credential: repository-scoped read-only GitHub credential injected into packaged Electron Main on Windows and Linux
 - renderer: never receives OAuth tokens or updater credentials
 
 Do not store Google refresh tokens in SQLite or logs.
 
-The Windows updater credential exists only to read release metadata/assets from the selected private repository. Treat it as extractable from the distributed desktop binary rather than as a confidential secret. It must be limited to the release repository with read-only contents access and must never have repository write, administration, workflow, or release-mutation authority.
+The updater credential exists only to read release metadata/assets from the selected repository. Treat it as extractable from the distributed desktop binary rather than as a confidential secret. It must be limited to the release repository with read-only contents access and must never have repository write, administration, workflow, or release-mutation authority.
 
 Do not place the updater credential in `GH_TOKEN`, `GITHUB_TOKEN`, renderer/preload configuration, logs, SQLite, or Python job environment variables.
 

@@ -33,9 +33,9 @@ The v2 product does not promise database encryption or secure deletion. Users sh
 Application network traffic is limited to:
 
 - Google OAuth and Google Drive/Forms endpoints required by the selected import workflow; and
-- on Windows packaged builds, GitHub Release API/download endpoints used to check for and download application updates.
+- on packaged Windows and Linux builds, GitHub Release API/download endpoints used to check for and download application updates.
 
-No survey response, imported Form content, project database, synthesis result, or export is sent to GitHub as part of update checking. The Windows updater uses a repository-scoped read-only credential embedded in Electron Main so users do not need to enter a GitHub credential. A distributed desktop binary can be inspected, so this value is treated as extractable and is not claimed to be confidential or to provide repository write authority.
+No survey response, imported Form content, project database, synthesis result, or export is sent to GitHub as part of update checking. The updater uses a repository-scoped read-only credential embedded in Electron Main so users do not need to enter a GitHub credential. A distributed desktop binary can be inspected, so this value is treated as extractable and is not claimed to be confidential or to provide repository write authority.
 
 There is no telemetry, advertising SDK, analytics service, cloud synchronization, or AI/LLM transfer path.
 

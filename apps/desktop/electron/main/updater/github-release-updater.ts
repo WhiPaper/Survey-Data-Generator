@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { rm, stat } from "node:fs/promises";
+import { chmod, rm, stat } from "node:fs/promises";
 import { request } from "node:https";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 
 import { app, dialog } from "electron";
@@ -18,6 +18,15 @@ const GITHUB_API_VERSION = "2022-11-28";
 const UPDATE_CHECK_DELAY_MS = 10_000;
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 30_000;
+
+const LINUX_REPLACE_SCRIPT = `set -eu
+parent_pid="$1"
+current="$2"
+staged="$3"
+while kill -0 "$parent_pid" 2>/dev/null; do sleep 0.2; done
+mv -f -- "$staged" "$current"
+"$current" --updated >/dev/null 2>&1 &
+`;
 
 type ReleaseAsset = {
   id: number;
@@ -34,10 +43,21 @@ type LatestRelease = {
   assets: ReleaseAsset[];
 };
 
+type PreparedUpdate = {
+  filename: string;
+  version: string;
+};
+
 const getBuildUpdateToken = (): string =>
   typeof __SURVEY_SYNTH_UPDATE_GITHUB_TOKEN__ === "string"
     ? __SURVEY_SYNTH_UPDATE_GITHUB_TOKEN__.trim()
     : "";
+
+const getCurrentAppImage = (): string | null => {
+  if (process.platform !== "linux") return null;
+  const current = process.env.APPIMAGE?.trim();
+  return current ? current : null;
+};
 
 const githubHeaders = (token: string, accept: string): Record<string, string> => ({
   Accept: accept,
@@ -100,7 +120,7 @@ const expectedSha256 = (asset: ReleaseAsset): string | null => {
   return /^[a-f0-9]{64}$/.test(value) ? value : null;
 };
 
-const cachedInstallerIsValid = async (
+const cachedAssetIsValid = async (
   filename: string,
   asset: ReleaseAsset,
   expectedDigest: string,
@@ -173,26 +193,46 @@ const downloadToFile = async (
   });
 };
 
-const chooseWindowsInstaller = (assets: ReleaseAsset[]): ReleaseAsset | null => {
-  const candidates = assets.filter(
-    (asset) => asset.state === "uploaded" && asset.size > 0 && /\.exe$/i.test(asset.name),
-  );
-  if (candidates.length === 1) return candidates[0]!;
-  return candidates.find((asset) => /setup/i.test(asset.name)) ?? null;
+const choosePlatformAsset = (assets: ReleaseAsset[]): ReleaseAsset | null => {
+  const uploaded = assets.filter((asset) => asset.state === "uploaded" && asset.size > 0);
+
+  if (process.platform === "win32") {
+    const candidates = uploaded.filter((asset) => /\.exe$/i.test(asset.name));
+    if (candidates.length === 1) return candidates[0]!;
+    return candidates.find((asset) => /setup/i.test(asset.name)) ?? null;
+  }
+
+  if (process.platform === "linux") {
+    const candidates = uploaded.filter((asset) => /\.AppImage$/i.test(asset.name));
+    if (candidates.length === 1) return candidates[0]!;
+    return candidates.find((asset) => /(x86_64|x64)/i.test(asset.name)) ?? null;
+  }
+
+  return null;
 };
 
-const prepareInstaller = async (
+const getStagingFilename = (): string | null => {
+  if (process.platform === "win32") {
+    return join(app.getPath("temp"), "survey-synth-update.exe");
+  }
+
+  const currentAppImage = getCurrentAppImage();
+  if (!currentAppImage) return null;
+  return join(dirname(currentAppImage), `.${basename(currentAppImage)}.update`);
+};
+
+const prepareUpdate = async (
   release: LatestRelease,
   token: string,
-): Promise<{ filename: string; version: string } | null> => {
-  const asset = chooseWindowsInstaller(release.assets);
-  if (!asset) return null;
+): Promise<PreparedUpdate | null> => {
+  const asset = choosePlatformAsset(release.assets);
+  const filename = getStagingFilename();
+  if (!asset || !filename) return null;
+
   const digest = expectedSha256(asset);
   if (!digest) return null;
 
-  const version = release.tag_name.replace(/^v/, "");
-  const filename = join(app.getPath("temp"), `survey-synth-update-${version}.exe`);
-  if (!(await cachedInstallerIsValid(filename, asset, digest))) {
+  if (!(await cachedAssetIsValid(filename, asset, digest))) {
     await rm(filename, { force: true });
     await downloadToFile(
       new URL(
@@ -203,14 +243,18 @@ const prepareInstaller = async (
     );
   }
 
-  if (!(await cachedInstallerIsValid(filename, asset, digest))) {
+  if (!(await cachedAssetIsValid(filename, asset, digest))) {
     await rm(filename, { force: true });
     throw new Error("Downloaded update failed integrity verification");
   }
-  return { filename, version };
+
+  return {
+    filename,
+    version: release.tag_name.replace(/^v/, ""),
+  };
 };
 
-const launchInstaller = async (filename: string): Promise<void> => {
+const launchWindowsUpdate = async (filename: string): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(filename, ["--updated", "/S", "--force-run"], {
       detached: true,
@@ -225,6 +269,49 @@ const launchInstaller = async (filename: string): Promise<void> => {
   });
 };
 
+const launchLinuxUpdate = async (filename: string): Promise<void> => {
+  const currentAppImage = getCurrentAppImage();
+  if (!currentAppImage) throw new Error("Linux AppImage path is unavailable");
+
+  const currentDetails = await stat(currentAppImage);
+  await chmod(filename, currentDetails.mode & 0o777);
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      "/bin/sh",
+      [
+        "-c",
+        LINUX_REPLACE_SCRIPT,
+        "survey-synth-updater",
+        String(process.pid),
+        currentAppImage,
+        filename,
+      ],
+      {
+        detached: true,
+        stdio: "ignore",
+      },
+    );
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+};
+
+const launchPreparedUpdate = async (filename: string): Promise<void> => {
+  if (process.platform === "win32") {
+    await launchWindowsUpdate(filename);
+    return;
+  }
+  if (process.platform === "linux") {
+    await launchLinuxUpdate(filename);
+    return;
+  }
+  throw new Error(`Unsupported update platform: ${process.platform}`);
+};
+
 const checkForUpdate = async (token: string): Promise<void> => {
   const release = await requestJson<LatestRelease>(
     `/repos/${UPDATE_OWNER}/${UPDATE_REPOSITORY}/releases/latest`,
@@ -233,13 +320,13 @@ const checkForUpdate = async (token: string): Promise<void> => {
   if (!release || release.draft || release.prerelease) return;
   if (!isNewerStableVersion(release.tag_name, app.getVersion())) return;
 
-  const installer = await prepareInstaller(release, token);
-  if (!installer) return;
+  const update = await prepareUpdate(release, token);
+  if (!update) return;
 
   const result = await dialog.showMessageBox({
     type: "info",
     title: "Survey Synth 업데이트",
-    message: `Survey Synth ${installer.version} 업데이트가 준비되었습니다.`,
+    message: `Survey Synth ${update.version} 업데이트가 준비되었습니다.`,
     detail: "지금 재시작하면 업데이트가 자동으로 설치됩니다.",
     buttons: ["지금 재시작", "나중에"],
     defaultId: 0,
@@ -248,14 +335,18 @@ const checkForUpdate = async (token: string): Promise<void> => {
   });
   if (result.response !== 0) return;
 
-  await launchInstaller(installer.filename);
+  await launchPreparedUpdate(update.filename);
   app.quit();
 };
 
 export const schedulePrivateGitHubUpdateCheck = (): void => {
-  if (!app.isPackaged || process.platform !== "win32") return;
+  if (!app.isPackaged) return;
+  if (process.platform !== "win32" && process.platform !== "linux") return;
+  if (process.platform === "linux" && !getCurrentAppImage()) return;
+
   const token = getBuildUpdateToken();
   if (!token) return;
+
   setTimeout(() => {
     void checkForUpdate(token).catch(() => {
       console.warn("Survey Synth update check failed");
