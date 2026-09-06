@@ -6,7 +6,7 @@ The repository is pre-release. Existing development DB schemas are not compatibi
 
 ## Clean v2 schema
 
-Start from a new `0001` migration. Do not build a legacy importer or preserve historical v1 migration chains.
+Start from a new initial Drizzle migration and let Drizzle Kit own migration filenames and numbering. Do not build a legacy importer or preserve historical v1 migration chains.
 
 Initial logical tables may include:
 

@@ -231,7 +231,6 @@
     @apply flex flex-col gap-3 border-b py-4;
   }
   .target-row-head,
-  .ai-actions,
   .export-actions {
     @apply flex flex-wrap items-center gap-2;
   }

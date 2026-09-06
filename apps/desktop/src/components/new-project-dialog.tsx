@@ -131,11 +131,7 @@ export function NewProjectDialog({
               {cancelPending ? "가져오기 취소 중…" : "가져오기 취소"}
             </Button>
           )}
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={importBusy}
-          >
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={importBusy}>
             취소
           </Button>
         </DialogFooter>
@@ -143,4 +139,3 @@ export function NewProjectDialog({
     </Dialog>
   );
 }
-

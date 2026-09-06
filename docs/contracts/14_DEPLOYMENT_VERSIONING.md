@@ -76,10 +76,16 @@ Native dependency packaging failures block release of that target.
 
 Do not design a separate compute-engine update channel. Application and compute engine ship together.
 
-A future app updater may be added using the Electron packaging stack chosen by implementation. Do not build update-channel complexity before the packaged application itself is reliable.
+The current Windows and Linux release process may check `WhiPaper/Survey-Data-Generator` for the latest non-prerelease application Release. Packaged builds may contain a fine-grained repository credential limited to `Contents: Read-only` so end users do not need GitHub credentials. Treat this value as extractable from the desktop binary and never grant it write authority.
+
+Update checks and downloads run in Electron Main only. The renderer and preload do not receive the updater credential or direct update capability. The updater must not pass that credential through `GH_TOKEN`, `GITHUB_TOKEN`, or Python child-process environment variables.
+
+A downloaded update must match a newer stable app version and be verified against GitHub's reported SHA-256 release-asset digest and size before installation is offered. Installation is user-approved: ask whether to restart, then use the platform update path. Do not force-restart the application during active work.
+
+Windows uses the per-user NSIS silent installer path. Linux AppImage builds stage the verified replacement beside the running AppImage, wait for the current process to exit, atomically replace the original AppImage path, preserve executable permissions, and relaunch the updated AppImage. If the current AppImage directory is not writable, the update must fail without damaging the running installation.
 
 ## CI
 
 Use native target runners where practical. Build and smoke-test actual artifacts on supported OSes.
 
-Release automation should stay minimal until signing/publishing credentials and a real release process exist.
+Normal package jobs keep electron-builder publishing disabled. GitHub Release publication must be an explicit workflow-dispatch choice, run only after configured artifact jobs succeed, use job-scoped write authority, and refuse to replace an existing release automatically.

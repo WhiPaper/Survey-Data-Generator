@@ -21,12 +21,7 @@ export type AuthLoginScreenProps = {
   readonly error?: string;
 };
 
-export function AuthLoginScreen({
-  onLogin,
-  loginPending,
-  busy,
-  error,
-}: AuthLoginScreenProps) {
+export function AuthLoginScreen({ onLogin, loginPending, busy, error }: AuthLoginScreenProps) {
   return (
     <main className="auth-shell">
       <section className="auth-panel" aria-labelledby="auth-title">
@@ -41,4 +36,3 @@ export function AuthLoginScreen({
     </main>
   );
 }
-

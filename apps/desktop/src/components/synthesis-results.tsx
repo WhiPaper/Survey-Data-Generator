@@ -2,7 +2,6 @@ import type { FormSnapshot } from "@survey-synth/domain";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -35,9 +34,6 @@ export type RunDetailView = {
     readonly metrics?: readonly ValidationMetricView[];
     readonly errors?: readonly string[];
   };
-  readonly aiMetadata?: {
-    readonly generatedCount: number;
-  };
 };
 
 export type SynthesisResultsViewProps = {
@@ -48,12 +44,6 @@ export type SynthesisResultsViewProps = {
   };
   readonly form: FormSnapshot;
   readonly runData: RunDetailView | undefined;
-  readonly aiEnabled: boolean;
-  readonly aiPending: boolean;
-  readonly aiFeedback?: string;
-  readonly aiError?: string;
-  readonly onStartAi: () => void;
-  readonly onCancelAi: () => void;
   readonly onExport: (format: "csv" | "xlsx") => void;
   readonly exportPending: boolean;
   readonly exportFeedback?: string;
@@ -83,10 +73,7 @@ export const formatRequestedTarget = (metric: ValidationMetricView): string => {
   return `${metric.requested.value?.toFixed(2) ?? "-"}`;
 };
 
-export const validationMetricLabel = (
-  form: FormSnapshot,
-  metric: ValidationMetricView,
-): string => {
+export const validationMetricLabel = (form: FormSnapshot, metric: ValidationMetricView): string => {
   const question = form.questions.find((item) => item.id === metric.metric.questionId);
   if (question === undefined) return "삭제된 문항";
   if (metric.metric.optionKey !== undefined) {
@@ -104,12 +91,6 @@ export function SynthesisResultsView({
   completedRun,
   form,
   runData,
-  aiEnabled,
-  aiPending,
-  aiFeedback,
-  aiError,
-  onStartAi,
-  onCancelAi,
   onExport,
   exportPending,
   exportFeedback,
@@ -137,15 +118,10 @@ export function SynthesisResultsView({
             </TableHeader>
             <TableBody>
               {(runData.validation.metrics ?? []).map((metric, index) => (
-                <TableRow
-                  key={index}
-                  data-state={metric.satisfied ? undefined : "selected"}
-                >
+                <TableRow key={index} data-state={metric.satisfied ? undefined : "selected"}>
                   <TableCell>{validationMetricLabel(form, metric)}</TableCell>
                   <TableCell>{formatRequestedTarget(metric)}</TableCell>
-                  <TableCell>
-                    {formatMetricValue(metric.metric.kind, metric.actual)}
-                  </TableCell>
+                  <TableCell>{formatMetricValue(metric.metric.kind, metric.actual)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -168,50 +144,13 @@ export function SynthesisResultsView({
                   <dd data-numeric>{runData.validation.originalMutationCount}</dd>
                 </div>
               </dl>
-              {Array.isArray(runData.validation.errors) &&
-                runData.validation.errors.length > 0 && (
-                  <FieldError className="mx-4">
-                    {runData.validation.errors.join(" ")}
-                  </FieldError>
-                )}
+              {Array.isArray(runData.validation.errors) && runData.validation.errors.length > 0 && (
+                <FieldError className="mx-4">{runData.validation.errors.join(" ")}</FieldError>
+              )}
             </SheetContent>
           </Sheet>
         </>
       )}
-      <div className="ai-actions">
-        {aiEnabled &&
-          (runData?.aiMetadata ? (
-            <span>
-              AI 텍스트 채움 완료 ({runData.aiMetadata.generatedCount}개 항목)
-            </span>
-          ) : (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onStartAi}
-                disabled={aiPending || exportPending}
-              >
-                텍스트도 자연스럽게 채우기
-              </Button>
-              {aiPending && (
-                <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Spinner aria-hidden="true" />
-                  텍스트 채우는 중…
-                  <Button variant="ghost" size="sm" onClick={onCancelAi}>
-                    취소
-                  </Button>
-                </span>
-              )}
-              {aiFeedback && (
-                <p role="status" className="text-sm text-muted-foreground">
-                  {aiFeedback}
-                </p>
-              )}
-              {aiError && <FieldError>{aiError}</FieldError>}
-            </>
-          ))}
-      </div>
       <div className="export-actions">
         <Button
           variant="outline"
@@ -237,15 +176,9 @@ export function SynthesisResultsView({
         )}
         {exportError && <FieldError>{exportError}</FieldError>}
       </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onRegenerate}
-        disabled={regeneratePending}
-      >
+      <Button variant="ghost" size="sm" onClick={onRegenerate} disabled={regeneratePending}>
         결과 다시 만들기
       </Button>
     </section>
   );
 }
-

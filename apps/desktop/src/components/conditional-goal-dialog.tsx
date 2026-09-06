@@ -240,8 +240,7 @@ export function ConditionalGoalDialog({
                 <ToggleGroup
                   value={[conditionalUnit]}
                   onValueChange={(value) => {
-                    if (value[0] === "ratio" || value[0] === "count")
-                      setConditionalUnit(value[0]);
+                    if (value[0] === "ratio" || value[0] === "count") setConditionalUnit(value[0]);
                   }}
                   aria-label="조건부 목표 단위"
                   size="sm"
@@ -328,4 +327,3 @@ export function ConditionalGoalDialog({
     </Dialog>
   );
 }
-

@@ -4,16 +4,16 @@ import { glob } from "node:fs/promises";
 
 const root = resolve(import.meta.dirname, "..");
 const noInternalPackageSource = /^@survey-synth\/[^/]+\/src(?:\/|$)/;
-const noRelativeInternalSource = /^(?:\.\.\/)+(?:apps|packages|src-tauri)\/[^/]+\/src(?:\/|$)/;
+const noRelativeInternalSource = /^(?:\.\.\/)+(?:apps|packages)\/[^/]+\/src(?:\/|$)/;
 const noNodeRuntime = /^node:/;
 const packageRules = [
   {
     name: "domain",
     files: "packages/domain/src/**/*.ts",
     forbidden: [
-      /^@survey-synth\/(contracts|statistics|synthesis-core|test-support)/,
-      /^(react|react-dom|zod|tauri|@tauri\/)/,
-      /(^|\/)(apps|src-tauri)\//,
+      /^@survey-synth\/contracts/,
+      /^(react|react-dom|zod)/,
+      /(^|\/)apps\//,
       noInternalPackageSource,
       noNodeRuntime,
       /(google|sqlite|highs|solver)/i,
@@ -23,52 +23,26 @@ const packageRules = [
     name: "contracts",
     files: "packages/contracts/src/**/*.ts",
     forbidden: [
-      /^@survey-synth\/(statistics|synthesis-core|test-support)/,
       noInternalPackageSource,
       noNodeRuntime,
-      /^(react|react-dom|tauri|@tauri\/)/,
-      /(^|\/)(apps|src-tauri)\//,
+      /^(react|react-dom)/,
+      /(^|\/)apps\//,
       /(google|sqlite|highs|solver)/i,
     ],
   },
   {
-    name: "statistics",
-    files: "packages/statistics/src/**/*.ts",
-    forbidden: [
-      /^@survey-synth\/(contracts|synthesis-core|test-support)/,
-      noInternalPackageSource,
-      noNodeRuntime,
-      /^(react|react-dom|tauri|@tauri\/)/,
-      /(^|\/)(apps|src-tauri)\//,
-      /(google|sqlite|highs|solver|sidecar)/i,
-    ],
-  },
-  {
-    name: "synthesis-core",
-    files: "packages/synthesis-core/src/**/*.ts",
-    forbidden: [
-      /^@survey-synth\/(contracts|test-support)/,
-      noInternalPackageSource,
-      noNodeRuntime,
-      /^(react|react-dom|tauri|@tauri\/)/,
-      /(^|\/)(apps|src-tauri)\//,
-      /(google|sqlite|highs|solver)/i,
-    ],
-  },
-  {
-    name: "desktop",
+    name: "desktop-renderer",
     files: "apps/desktop/src/**/*.{ts,tsx}",
     forbidden: [
-      /^@survey-synth\/(sidecar|statistics|synthesis-core|test-support)/,
       noInternalPackageSource,
       /^(node:|fs$|fs\/|path$|path\/)/,
       /(google|sqlite|highs|solver)/i,
-      /(^|\/)src-tauri\//,
+      /(^|\/)electron\//,
     ],
   },
   {
     name: "tests",
-    files: "tests/**/*.{ts,tsx}",
+    files: "apps/desktop/test/**/*.{ts,tsx}",
     forbidden: [noInternalPackageSource, noRelativeInternalSource],
   },
 ];

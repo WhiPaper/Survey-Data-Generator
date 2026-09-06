@@ -4,6 +4,26 @@
 
 Generate a plausible candidate pool from the selected source data, then select rows that satisfy the user's final-dataset targets. Keep application-owned synthesis code thin.
 
+## Process boundary
+
+Python is a job-per-process compute engine, not an application backend or daemon.
+
+Electron Main launches either the development Python 3.12 entrypoint or the packaged `survey-synth-engine` executable. Each job owns a directory containing JSON control data and Parquet row data. Cancellation terminates the child process; do not introduce reverse RPC or a long-lived Python service.
+
+Initial boundary:
+
+```text
+job.json + source.parquet
+        ↓
+survey-synth-engine <command> --job job.json
+        ↓
+result.parquet + report.json
+```
+
+`job.json` is validated by Pydantic and rejects unknown fields. Relative file paths are resolved from the job file directory. Source, result, and report paths must be distinct.
+
+The M3 `smoke` command only proves the process/data boundary and dependency loading. It round-trips source Parquet to result Parquet and verifies that pandas, PyArrow, SDV `GaussianCopulaSynthesizer`, SciPy `milp`, and SDMetrics `QualityReport` load successfully. It is not a synthesis implementation.
+
 ## Canonical v2 flow
 
 ```text

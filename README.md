@@ -1,45 +1,71 @@
 # Survey Synth
 
-M0 establishes the desktop process boundary:
+Survey Synth is a local-first Electron desktop application that imports Google Form responses and produces a larger final dataset that satisfies user-defined statistical targets while preserving structural and statistical plausibility.
+
+## Architecture
 
 ```text
-React → Tauri invoke → Rust host → NDJSON → TypeScript sidecar
+React Renderer
+    ↓
+Preload / contextBridge
+    ↓
+Electron Main
+    ├─ Google integration
+    ├─ SQLite + Drizzle
+    ├─ projects / sources / runs / export
+    ├─ Windows/Linux GitHub Release updater
+    └─ packaged Python compute process
+          ├─ pandas / PyArrow
+          ├─ SDV
+          ├─ scipy.optimize.milp
+          └─ SDMetrics
 ```
+
+The renderer never accesses SQLite, Google APIs, filesystem primitives, OAuth tokens, update credentials, or Python directly. The Python executable runs one job and exits; it is not a daemon or application backend.
 
 ## Development
 
-Requirements: Node.js, pnpm, and Rust.
-
-```text
-pnpm install
-pnpm check
-pnpm tauri dev
-```
-
-The sidecar uses local Node tooling in M0. Its production replacement is staged through
-`src-tauri/binaries/` without changing the NDJSON protocol.
-
-### Google OAuth development configuration
-
-By default, development reads `google_oauth.local.json` from the repository root. To
-override it for the current PowerShell session:
+Installed users do not need Node.js or Python. Development requires Node.js `24.20.0`, pnpm `11.19.0`, and Python `3.12`.
 
 ```powershell
-$env:SURVEY_SYNTH_GOOGLE_OAUTH_CONFIG = "$PWD\google_oauth.local.json"
-pnpm tauri dev
+pnpm install
+pnpm run check
+pnpm run dev
 ```
 
-Alternatively, set `SURVEY_SYNTH_GOOGLE_CLIENT_ID` and, when required,
-`SURVEY_SYNTH_GOOGLE_CLIENT_SECRET` in the environment before starting Tauri. Do not
-commit credentials or place them in frontend-exposed Vite variables.
+For the Python engine:
 
-## Google authentication
+```powershell
+pnpm run engine:install
+pnpm run engine:test
+pnpm run engine:build
+pnpm run engine:binary-smoke
+```
 
-The sidecar reads an installed-app OAuth client from `google_oauth.local.json` by default.
-That file is ignored by Git. Production/dev environments may instead set
-`SURVEY_SYNTH_GOOGLE_CLIENT_ID`, optional `SURVEY_SYNTH_GOOGLE_CLIENT_SECRET`, or
-`SURVEY_SYNTH_GOOGLE_OAUTH_CONFIG`.
+`engine:install` keeps the complete upstream SDV dependency graph for general development. The packaged-artifact workflow instead uses `engine:install:packaged`, which installs the SDV 1.38.0 Gaussian Copula runtime without the unused CTGAN/DeepEcho neural dependency branch and verifies that Torch/CUDA distributions are absent before packaging.
 
-M1 stores account metadata in a sidecar-owned local state file until encrypted project
-SQLite arrives. Refresh tokens use the host OS credential store; access tokens remain
-sidecar memory only and never cross into React.
+## Packaging
+
+Build the renderer/Main bundle and package the supported targets:
+
+```powershell
+pnpm run build
+pnpm run package:desktop:dir
+pnpm run package:desktop:smoke
+pnpm run package:desktop:artifact
+```
+
+Initial artifact targets are Windows x64 NSIS and Linux x64 AppImage. Local artifacts are validation outputs. The packaged-artifacts workflow keeps normal builds unpublished; its explicit `publish_release` input creates a GitHub Release only after both configured artifact jobs succeed.
+
+Official packaged Windows and Linux builds require `SURVEY_SYNTH_UPDATE_GITHUB_TOKEN`, a fine-grained token limited to this repository with `Contents: Read-only`. It is injected into Electron Main only. Because a desktop binary can be inspected, this updater credential is treated as extractable rather than confidential; it must never have write permission.
+
+Packaged apps check the repository's latest non-prerelease GitHub Release, download the platform artifact, and verify the SHA-256 digest and size reported by GitHub before offering a restart. Windows launches the per-user NSIS installer silently. Linux AppImage builds stage the verified replacement beside the running AppImage, wait for the current process to exit, replace the original AppImage path, preserve executable permissions, and relaunch it. Users do not enter GitHub credentials.
+
+## Google OAuth development
+
+Provide OAuth configuration through `google_oauth.local.json` or environment variables:
+
+- `SURVEY_SYNTH_GOOGLE_CLIENT_ID`
+- `SURVEY_SYNTH_GOOGLE_CLIENT_SECRET` when required
+
+Never commit credentials or expose them through renderer build-time variables.

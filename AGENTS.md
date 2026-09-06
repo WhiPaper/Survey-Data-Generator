@@ -147,7 +147,7 @@ Start with complete-row replacement. Do not build cell-level mutation or semanti
 
 The project is pre-release. Do not preserve the existing development DB schema for compatibility.
 
-- Start the v2 schema cleanly with Drizzle migrations from `0001`.
+- Start the v2 schema cleanly with a Drizzle Kit-generated initial migration and let Drizzle own migration filenames and numbering.
 - No legacy importer is required.
 - No encrypted SQLite requirement in v2.
 - Use OS-appropriate secure credential storage for Google refresh tokens.
