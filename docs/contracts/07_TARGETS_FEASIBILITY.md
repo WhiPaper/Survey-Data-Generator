@@ -158,4 +158,28 @@ This separation means later draft edits do not rewrite historical Run intent.
 
 The backend may compile public targets to a more generic internal metric representation, for example a solver-facing `CompiledMetric[]`. That representation is not a public formula DSL and should not leak into renderer contracts.
 
-Phase 1 deliberately avoids a large solver generalization. It aligns identity, subject modeling, structured option support, frozen snapshots, issues, and outcomes while preserving the current solver execution shape. Phase 2 can arrayize categorical targets and count metrics behind the same public contract. Phase 3 can then arrayize mean metrics without another public-contract rewrite.
+The implementation may evolve this internal representation without widening the public target union. Internal genericity is an implementation boundary, not an extension point for clients.
+
+## Phase 5 boundary: demand-gated extensions
+
+Phase 5 is a deliberate non-implementation phase for v2. The following capabilities are not accepted by the public RPC contract and must not be smuggled through optional fields, untyped payloads, renderer-only conventions, or solver-specific escape hatches:
+
+- arbitrary `AND` / `OR` population expressions
+- nested conditional depth 3 or greater
+- custom denominator expressions
+- custom formulas
+- user-defined target weights or priorities
+- metric plugins
+- target scripting or a generic target DSL
+
+Unknown target kinds and unknown fields on the four supported target shapes are rejected at the contract boundary. In particular, adding fields such as `formula`, `denominator`, `weight`, `priority`, `plugin`, `script`, or arbitrary condition trees to an otherwise supported target does not opt into an experimental capability.
+
+`conditional_share` remains exactly `ValueGroup population + checkbox option`. A request that needs a compound population such as `Q1=A AND Q2=B` is outside v2 even if the solver could theoretically encode it.
+
+These features are reconsidered only after repeated product scenarios establish a concrete need. Such a change requires an explicit contract revision covering public semantics, validation, freezing, candidate support, feasibility, replacement, outcomes, migration/compatibility, and tests. It must not be introduced solely by generalizing `CompiledMetric`.
+
+The regression suite contains negative public-contract tests for these Phase 5 shapes so future solver refactors cannot accidentally expand the v2 API surface.
+
+## Implementation sequencing
+
+Phase 1 aligned identity, subject modeling, structured option support, frozen snapshots, issues, and outcomes. Phase 2 arrayized categorical targets and added exact count metrics. Phase 3 arrayized mean metrics. Phase 4 added authoritative SourceScope profiling, persisted drafts, and server-side intent resolution. Phase 5 freezes the public boundary above until demonstrated product demand justifies a separate contract change.
