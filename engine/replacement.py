@@ -20,7 +20,9 @@ from candidate_selection import (
     _conditional_group_key,
     _conditional_vectors,
     _membership,
+    _share_vectors,
     _count_membership,
+    _mean_vectors,
     select_for_targets,
 )
 
@@ -48,10 +50,20 @@ class _ReplacementSolve:
     target_objective: float
 
 
-def _selection_error(selection: TargetSelection) -> float:
+def _selection_error(
+    selection: TargetSelection,
+    mean_targets: tuple[MeanTarget, ...],
+) -> float:
+    if any(target.absolute_error > 0 for target in selection.counts):
+        return float("inf")
+    mean_by_id = {target.id: target for target in mean_targets}
+    mean_error = 0.0
+    for achieved in selection.means:
+        spec = mean_by_id.get(achieved.id)
+        allowed_range = float(spec.maximum - spec.minimum) if spec is not None else 1.0
+        mean_error += achieved.absolute_error / max(allowed_range, 1.0)
     return (
-        sum(target.absolute_error for target in selection.means)
-        + sum(target.absolute_error for target in selection.counts)
+        mean_error
         + sum(target.absolute_error for target in selection.shares)
         + sum(target.absolute_error for target in selection.conditional_shares)
     )
@@ -65,6 +77,8 @@ def _evaluate_selection(
     selected_candidate_indices: np.ndarray,
     target_column: str,
     target_mean: float,
+    target_min: int,
+    target_max: int,
     count_targets: tuple[CountTarget, ...],
     share_targets: tuple[ShareTarget, ...],
     conditional_share_targets: tuple[ConditionalShareTarget, ...],
@@ -75,9 +89,21 @@ def _evaluate_selection(
         [source.iloc[keep_source_indices], candidates.iloc[selected_candidate_indices]],
         ignore_index=True,
     )
-    mean_specs = (MeanTarget(primary_mean_id, target_column, target_mean, 0, 0), *extra_mean_targets)
-    mean_results = tuple(MeanAchievement(target.id, target.value, float(pd.to_numeric(final[target.column], errors="raise").mean()), abs(float(pd.to_numeric(final[target.column], errors="raise").mean()) - target.value)) for target in mean_specs)
-    achieved_mean = mean_results[0].achieved_mean
+    mean_specs = (
+        MeanTarget(primary_mean_id, target_column, target_mean, target_min, target_max),
+        *extra_mean_targets,
+    )
+    mean_results: list[MeanAchievement] = []
+    for target in mean_specs:
+        values, denominator = _mean_vectors(final, target.column)
+        denominator_count = int(denominator.sum())
+        if denominator_count <= 0:
+            raise RuntimeError(f"Mean target {target.id} ended with an empty answered denominator")
+        achieved = float(values.sum()) / denominator_count
+        mean_results.append(
+            MeanAchievement(target.id, target.value, achieved, abs(achieved - target.value))
+        )
+
     counts = tuple(
         CountAchievement(
             target.id,
@@ -89,13 +115,20 @@ def _evaluate_selection(
     )
     shares: list[ShareAchievement] = []
     for target in share_targets:
-        achieved_share = float(final[target.column].isin(target.member_values).mean())
+        denominator, numerator = _share_vectors(final, target)
+        denominator_count = int(denominator.sum())
+        if denominator_count <= 0:
+            raise RuntimeError(f"Share target {target.id} ended with an empty eligible denominator")
+        numerator_count = int(numerator.sum())
+        achieved_share = numerator_count / denominator_count
         shares.append(
             ShareAchievement(
                 id=target.id,
                 value=target.value,
                 achieved_share=achieved_share,
                 absolute_error=abs(achieved_share - target.value),
+                numerator_count=numerator_count,
+                denominator_count=denominator_count,
             )
         )
 
@@ -118,16 +151,16 @@ def _evaluate_selection(
             )
         )
 
-    mean_error = mean_results[0].absolute_error
+    primary = mean_results[0]
     return TargetSelection(
         selected_indices=selected_candidate_indices,
-        achieved_mean=achieved_mean,
-        mean_absolute_error=mean_error,
-        mean_exact=mean_error <= 1e-9,
+        achieved_mean=primary.achieved_mean,
+        mean_absolute_error=primary.absolute_error,
+        mean_exact=primary.absolute_error <= 1e-9,
         counts=counts,
         shares=tuple(shares),
         conditional_shares=tuple(conditional_results),
-        means=mean_results,
+        means=tuple(mean_results),
     )
 
 
@@ -138,18 +171,35 @@ def _solve_replacement_selection(
     target_column: str,
     final_count: int,
     target_mean: float,
+    target_min: int,
+    target_max: int,
     count_targets: tuple[CountTarget, ...],
     share_targets: tuple[ShareTarget, ...],
     conditional_share_targets: tuple[ConditionalShareTarget, ...],
     extra_mean_targets: tuple[MeanTarget, ...] = (),
+    primary_mean_id: str = "mean",
     target_limit: float | None = None,
     minimize_replacements: bool = False,
 ) -> _ReplacementSolve | None:
     source_count = len(source)
-    mean_columns = (target_column, *(target.column for target in extra_mean_targets))
-    score_matrix = np.column_stack(tuple(np.concatenate([pd.to_numeric(source[column], errors="raise").to_numpy(dtype=float), pd.to_numeric(candidates[column], errors="raise").to_numpy(dtype=float)]) for column in mean_columns))
-    source_memberships = [_membership(source, target) for target in share_targets]
-    candidate_memberships = [_membership(candidates, target) for target in share_targets]
+    mean_targets = (
+        MeanTarget(primary_mean_id, target_column, target_mean, target_min, target_max),
+        *extra_mean_targets,
+    )
+    score_columns: list[np.ndarray] = []
+    mean_denominators: list[np.ndarray] = []
+    for target in mean_targets:
+        source_values, source_denominator = _mean_vectors(source, target.column)
+        candidate_values, candidate_denominator = _mean_vectors(candidates, target.column)
+        score_columns.append(
+            np.concatenate(
+                [source_values.to_numpy(dtype=float), candidate_values.to_numpy(dtype=float)]
+            )
+        )
+        mean_denominators.append(np.concatenate([source_denominator, candidate_denominator]))
+
+    source_share_vectors = [_share_vectors(source, target) for target in share_targets]
+    candidate_share_vectors = [_share_vectors(candidates, target) for target in share_targets]
     source_count_memberships = [_count_membership(source, target) for target in count_targets]
     candidate_count_memberships = [_count_membership(candidates, target) for target in count_targets]
     source_conditional = [
@@ -164,21 +214,31 @@ def _solve_replacement_selection(
         conditional_groups.setdefault(_conditional_group_key(target), []).append(target)
 
     solution = solve_binary_selection(
-        scores=score_matrix,
+        scores=np.column_stack(tuple(score_columns)),
         final_count=final_count,
-        target_means=(target_mean, *(target.value for target in extra_mean_targets)),
+        target_means=tuple(target.value for target in mean_targets),
+        mean_denominators=tuple(mean_denominators),
+        mean_ranges=tuple(float(target.maximum - target.minimum) for target in mean_targets),
         source_count=source_count,
         fix_source=False,
         share_memberships=tuple(
-            np.concatenate([source_membership, candidate_membership])
-            for source_membership, candidate_membership in zip(
-                source_memberships, candidate_memberships, strict=True
+            np.concatenate([source_vectors[1], candidate_vectors[1]])
+            for source_vectors, candidate_vectors in zip(
+                source_share_vectors, candidate_share_vectors, strict=True
+            )
+        ),
+        share_denominators=tuple(
+            np.concatenate([source_vectors[0], candidate_vectors[0]])
+            for source_vectors, candidate_vectors in zip(
+                source_share_vectors, candidate_share_vectors, strict=True
             )
         ),
         share_values=tuple(target.value for target in share_targets),
         count_memberships=tuple(
             np.concatenate([source_membership, candidate_membership])
-            for source_membership, candidate_membership in zip(source_count_memberships, candidate_count_memberships, strict=True)
+            for source_membership, candidate_membership in zip(
+                source_count_memberships, candidate_count_memberships, strict=True
+            )
         ),
         count_values=tuple(target.value for target in count_targets),
         conditionals=tuple(
@@ -229,6 +289,10 @@ def plan_replacements(
     extra_mean_targets: tuple[MeanTarget, ...] = (),
     primary_mean_id: str = "mean",
 ) -> EditPlanSelection:
+    mean_targets = (
+        MeanTarget(primary_mean_id, target_column, target_mean, target_min, target_max),
+        *extra_mean_targets,
+    )
     append_only = append_only_outcome
     if append_only is None:
         append_only = select_for_targets(
@@ -245,7 +309,7 @@ def plan_replacements(
             extra_mean_targets=extra_mean_targets,
             primary_mean_id=primary_mean_id,
         )
-    append_error = _selection_error(append_only)
+    append_error = _selection_error(append_only, mean_targets)
 
     best = _solve_replacement_selection(
         source,
@@ -253,10 +317,13 @@ def plan_replacements(
         target_column=target_column,
         final_count=final_count,
         target_mean=target_mean,
+        target_min=target_min,
+        target_max=target_max,
         count_targets=count_targets,
         share_targets=share_targets,
         conditional_share_targets=conditional_share_targets,
         extra_mean_targets=extra_mean_targets,
+        primary_mean_id=primary_mean_id,
     )
     if best is None:
         return EditPlanSelection(
@@ -275,13 +342,15 @@ def plan_replacements(
         selected_candidate_indices=best.selected_candidate_indices,
         target_column=target_column,
         target_mean=target_mean,
+        target_min=target_min,
+        target_max=target_max,
         count_targets=count_targets,
         share_targets=share_targets,
         conditional_share_targets=conditional_share_targets,
         extra_mean_targets=extra_mean_targets,
         primary_mean_id=primary_mean_id,
     )
-    if _selection_error(best_outcome) >= append_error - 1e-9:
+    if _selection_error(best_outcome, mean_targets) >= append_error - 1e-9:
         return EditPlanSelection(
             status="not_required",
             replacement_count=0,
@@ -297,10 +366,13 @@ def plan_replacements(
         target_column=target_column,
         final_count=final_count,
         target_mean=target_mean,
+        target_min=target_min,
+        target_max=target_max,
         count_targets=count_targets,
         share_targets=share_targets,
         conditional_share_targets=conditional_share_targets,
         extra_mean_targets=extra_mean_targets,
+        primary_mean_id=primary_mean_id,
         target_limit=best.target_objective + 1e-9,
         minimize_replacements=True,
     )
@@ -337,6 +409,8 @@ def plan_replacements(
         selected_candidate_indices=minimal.selected_candidate_indices,
         target_column=target_column,
         target_mean=target_mean,
+        target_min=target_min,
+        target_max=target_max,
         count_targets=count_targets,
         share_targets=share_targets,
         conditional_share_targets=conditional_share_targets,
