@@ -21,8 +21,6 @@ export type AccountNavUserProps = {
   readonly onAddAccount: () => void;
   readonly onLogout: () => void;
   readonly onRevoke: () => void;
-  readonly onClearAiCredentials: () => void;
-  readonly showAiClear: boolean;
   readonly onDeleteData: (id: GoogleAccountId) => void;
 };
 
@@ -34,8 +32,6 @@ export function AccountNavUser({
   onAddAccount,
   onLogout,
   onRevoke,
-  onClearAiCredentials,
-  showAiClear,
   onDeleteData,
 }: AccountNavUserProps) {
   const name =
@@ -88,15 +84,6 @@ export function AccountNavUser({
               <DropdownMenuItem onClick={onRevoke} disabled={busy}>
                 Google 접근 권한 해제
               </DropdownMenuItem>
-              {showAiClear && (
-                <DropdownMenuItem
-                  variant="destructive"
-                  onClick={onClearAiCredentials}
-                  disabled={busy}
-                >
-                  AI 키 제거
-                </DropdownMenuItem>
-              )}
               {accounts.map((account) => (
                 <DropdownMenuItem
                   key={`${account.id}-delete`}

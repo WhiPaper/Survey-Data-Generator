@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm --filter @survey-synth/desktop dev",
     "check": "node scripts/check.mjs",
+    "check:versions": "node scripts/check-versions.mjs",
     "format": "prettier --write \"apps/desktop/**/*.{ts,tsx,css,html,json}\" \"packages/{domain,contracts}/**/*.{ts,json}\" \"scripts/*.mjs\" \"*.{json,yaml,yml,ts,mjs}\"",
     "format:check": "prettier --check \"apps/desktop/**/*.{ts,tsx,css,html,json}\" \"packages/{domain,contracts}/**/*.{ts,json}\" \"scripts/*.mjs\" \"*.{json,yaml,yml,ts,mjs}\"",
     "lint": "eslint apps/desktop packages/domain packages/contracts --max-warnings=0",

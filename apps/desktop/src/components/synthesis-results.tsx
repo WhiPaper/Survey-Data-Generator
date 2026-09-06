@@ -2,7 +2,6 @@ import type { FormSnapshot } from "@survey-synth/domain";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -35,9 +34,6 @@ export type RunDetailView = {
     readonly metrics?: readonly ValidationMetricView[];
     readonly errors?: readonly string[];
   };
-  readonly aiMetadata?: {
-    readonly generatedCount: number;
-  };
 };
 
 export type SynthesisResultsViewProps = {
@@ -48,12 +44,6 @@ export type SynthesisResultsViewProps = {
   };
   readonly form: FormSnapshot;
   readonly runData: RunDetailView | undefined;
-  readonly aiEnabled: boolean;
-  readonly aiPending: boolean;
-  readonly aiFeedback?: string;
-  readonly aiError?: string;
-  readonly onStartAi: () => void;
-  readonly onCancelAi: () => void;
   readonly onExport: (format: "csv" | "xlsx") => void;
   readonly exportPending: boolean;
   readonly exportFeedback?: string;
@@ -101,12 +91,6 @@ export function SynthesisResultsView({
   completedRun,
   form,
   runData,
-  aiEnabled,
-  aiPending,
-  aiFeedback,
-  aiError,
-  onStartAi,
-  onCancelAi,
   onExport,
   exportPending,
   exportFeedback,

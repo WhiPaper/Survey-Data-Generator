@@ -13,16 +13,14 @@ apps/
 packages/
   domain/
   contracts/
-  test-support/
 
 engine/
   main.py
   prepare.py
   generate.py
-  select.py
+  candidate_selection.py
   evaluate.py
 
-tests/
 scripts/
 ```
 
@@ -37,7 +35,7 @@ Owns pure product meaning:
 - SourceRevision / SourceScope
 - ValueGroup
 - Target
-- RunSpec / EditPlan / RunResult contracts
+- RunSpec / EditPlan / RunResult
 - small pure target/domain helpers
 
 Aim for near-zero runtime dependencies.
@@ -71,11 +69,11 @@ Python compute engine. Keep it small and function-oriented.
 Initial responsibility split:
 
 ```text
-main.py      CLI / job I/O
-prepare.py   dataframe + metadata + derived features
-generate.py  SDV candidate generation
-select.py    target compilation + SciPy MILP
-evaluate.py  hard checks + SDMetrics
+main.py                 CLI / job I/O
+prepare.py              dataframe + metadata + derived features
+generate.py             SDV candidate generation
+candidate_selection.py  target compilation + SciPy MILP
+evaluate.py             hard checks + SDMetrics
 ```
 
 Do not create `services/`, `repositories/`, `providers/`, `plugins/`, `calibration/`, `repair/`, `temporal/`, or `relationships/` directories without a demonstrated requirement.
@@ -89,19 +87,18 @@ src-tauri/
 apps/sidecar/
 packages/statistics/
 packages/synthesis-core/
+packages/test-support/
 ```
 
 Existing useful code may be selectively moved, but these architectural boundaries should not be preserved for compatibility.
 
 ## Dependency-first rule
 
-Python scientific libraries own general-purpose computation. TypeScript application code should not duplicate their algorithms.
-
-Do not wrap dependencies merely to rename their API. Add a wrapper/function when it expresses Survey Synth product semantics, stabilizes a real boundary, or simplifies testing.
+Enforce dependency-backed responsibilities at their real boundary. Do not wrap dependencies merely to rename their API. Add a wrapper/function when it expresses Survey Synth product semantics, stabilizes a real boundary, or simplifies testing.
 
 ## Boundary enforcement
 
-Enforce only meaningful rules, for example:
+Enforce only meaningful rules:
 
 ```text
 domain cannot import apps/infrastructure
