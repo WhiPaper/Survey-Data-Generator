@@ -13,6 +13,8 @@ import {
   type ProjectDetailView,
   type ProjectSummaryView,
   type RpcMethod,
+  type RunExportFormat,
+  type RunsExportResult,
   type RunsGetResult,
   type SessionView,
   type SynthesisStartParams,
@@ -186,3 +188,8 @@ export const cancelSynthesis = (
 ): Promise<{ ok: true }> => callBackend("synthesis.cancel", { operationId }, backend);
 export const getRun = (runId: string, backend?: BackendInvoker): Promise<RunsGetResult> =>
   callBackend("runs.get", { runId }, backend);
+export const exportRun = (
+  runId: string,
+  format: RunExportFormat,
+  backend?: BackendInvoker,
+): Promise<RunsExportResult> => callBackend("runs.export", { runId, format }, backend);

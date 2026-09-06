@@ -355,6 +355,22 @@ export const RunsGetResultSchema = z
   .strict();
 export type RunsGetResult = z.infer<typeof RunsGetResultSchema>;
 
+export const RunExportFormatSchema = z.enum(["csv", "xlsx"]);
+export type RunExportFormat = z.infer<typeof RunExportFormatSchema>;
+
+export const RunsExportParamsSchema = z
+  .object({
+    runId: z.string().min(1),
+    format: RunExportFormatSchema,
+  })
+  .strict();
+export type RunsExportParams = z.infer<typeof RunsExportParamsSchema>;
+
+export const RunsExportResultSchema = z
+  .object({ status: z.enum(["saved", "cancelled"]) })
+  .strict();
+export type RunsExportResult = z.infer<typeof RunsExportResultSchema>;
+
 const EmptyParamsSchema = z.object({}).strict();
 const AccountIdParamsSchema = z.object({ id: GoogleAccountIdSchema }).strict();
 const ProjectParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
@@ -413,6 +429,7 @@ export interface BackendRpc {
   };
   "synthesis.cancel": { input: z.infer<typeof SynthesisCancelParamsSchema>; output: ActionResult };
   "runs.get": { input: z.infer<typeof RunParamsSchema>; output: RunsGetResult };
+  "runs.export": { input: RunsExportParams; output: RunsExportResult };
 }
 
 export type RpcMethod = keyof BackendRpc;
@@ -441,6 +458,7 @@ const rpcMethods = [
   "synthesis.resolveEditPlan",
   "synthesis.cancel",
   "runs.get",
+  "runs.export",
 ] as const satisfies readonly RpcMethod[];
 
 const RpcMethodSchema = z.enum(rpcMethods);
@@ -480,6 +498,7 @@ const rpcParamSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "synthesis.resolveEditPlan": SynthesisResolveEditPlanParamsSchema,
   "synthesis.cancel": SynthesisCancelParamsSchema,
   "runs.get": RunParamsSchema,
+  "runs.export": RunsExportParamsSchema,
 };
 
 const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
@@ -506,6 +525,7 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "synthesis.resolveEditPlan": SynthesisSuccessResultSchema,
   "synthesis.cancel": ActionResultSchema,
   "runs.get": RunsGetResultSchema,
+  "runs.export": RunsExportResultSchema,
 };
 
 export const parseRpcRequest = (input: unknown): RequestEnvelope => {

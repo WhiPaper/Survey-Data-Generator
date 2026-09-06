@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
 import { loadGoogleOAuthConfig } from "./auth/config";
 import { createElectronRefreshTokenStore } from "./auth/electron-credentials";
@@ -9,6 +9,7 @@ import { createGoogleAuthService } from "./auth/service";
 import { handleBackendCall, type BackendServices } from "./backend";
 import { createPythonEngine, resolveEngineLaunch } from "./compute/python-engine";
 import { normalizeBackendError } from "./errors";
+import { createRunExportService } from "./export/service";
 import { createGoogleFormsClient } from "./forms/google-client";
 import { createFormsService } from "./forms/service";
 import { createJobRegistry } from "./jobs";
@@ -87,6 +88,7 @@ void app
         resourcesPath: process.resourcesPath,
       }),
     });
+    const runExports = createRunExportService(appDatabase.db);
 
     backendServices = {
       auth,
@@ -103,6 +105,20 @@ void app
         engine,
         workRoot: join(userDataPath, "compute-jobs"),
       }),
+      runExports,
+      pickRunExportDestination: async ({ format }) => {
+        const isCsv = format === "csv";
+        const result = await dialog.showSaveDialog({
+          title: isCsv ? "CSV 내보내기" : "XLSX 내보내기",
+          defaultPath: `survey-synth-result.${format}`,
+          filters: [
+            isCsv
+              ? { name: "CSV", extensions: ["csv"] }
+              : { name: "Excel Workbook", extensions: ["xlsx"] },
+          ],
+        });
+        return result.canceled ? null : (result.filePath ?? null);
+      },
     };
 
     createWindow();

@@ -14,6 +14,7 @@ import {
   cancelSynthesis,
   createValueGroup,
   deleteValueGroup,
+  exportRun,
   getRun,
   listValueGroups,
   listValueGroupValues,
@@ -245,6 +246,8 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   const [groupBusy, setGroupBusy] = useState(false);
   const [operationId, setOperationId] = useState<string | null>(null);
   const [planBusy, setPlanBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [result, setResult] = useState<SynthesisStartResult | null>(null);
   const [run, setRun] = useState<RunsGetResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -279,6 +282,8 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     setConditionalDrafts([]);
     setOperationId(null);
     setPlanBusy(false);
+    setExportBusy(false);
+    setExportMessage(null);
     setResult(null);
     setRun(null);
     setError(null);
@@ -456,6 +461,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     setOperationId(nextOperationId);
     setResult(null);
     setRun(null);
+    setExportMessage(null);
     setError(null);
     try {
       const next = await startSynthesis({
@@ -483,6 +489,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
       const resolved = await resolveSynthesisEditPlan(result.planId, choice);
       setResult(resolved);
       setRun(await getRun(resolved.runId));
+      setExportMessage(null);
     } catch (cause: unknown) {
       setError(errorMessage(cause));
     } finally {
@@ -496,6 +503,25 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
       await cancelSynthesis(operationId);
     } catch (cause: unknown) {
       setError(errorMessage(cause));
+    }
+  };
+
+  const handleExport = async (format: "csv" | "xlsx"): Promise<void> => {
+    if (result?.status !== "success") return;
+    setExportBusy(true);
+    setExportMessage(null);
+    setError(null);
+    try {
+      const exported = await exportRun(result.runId, format);
+      setExportMessage(
+        exported.status === "saved"
+          ? `${format.toUpperCase()} 저장 완료`
+          : `${format.toUpperCase()} 저장 취소`,
+      );
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
+    } finally {
+      setExportBusy(false);
     }
   };
 
@@ -843,6 +869,23 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
               <p style={{ margin: "4px 0 0" }}>
                 합성 {result.syntheticResponseCount}개 · 최종 {result.finalResponseCount}개
               </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                <button
+                  type="button"
+                  disabled={exportBusy}
+                  onClick={() => void handleExport("csv")}
+                >
+                  {exportBusy ? "저장 중…" : "CSV 내보내기"}
+                </button>
+                <button
+                  type="button"
+                  disabled={exportBusy}
+                  onClick={() => void handleExport("xlsx")}
+                >
+                  {exportBusy ? "저장 중…" : "XLSX 내보내기"}
+                </button>
+                {exportMessage ? <span role="status">{exportMessage}</span> : null}
+              </div>
               {metrics && run ? (
                 <>
                   <p style={{ margin: "4px 0 0" }}>

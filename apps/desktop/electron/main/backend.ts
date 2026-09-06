@@ -4,16 +4,20 @@ import {
   type FormsImportParams,
   type FormsListParams,
   type GoogleAccountId,
+  type RunsExportParams,
   type SynthesisResolveEditPlanParams,
   type SynthesisStartParams,
 } from "@survey-synth/contracts";
 
 import type { GoogleAuthService } from "./auth/service";
 import { backendFailure } from "./errors";
+import type { RunExportService } from "./export/service";
 import type { FormsService } from "./forms/service";
 import type { ProjectService } from "./projects/service";
 import type { SynthesisService } from "./synthesis/service";
 import type { ValueGroupService } from "./value-groups/service";
+
+export type RunExportDestinationPicker = (params: RunsExportParams) => Promise<string | null>;
 
 export type BackendServices = {
   auth?: GoogleAuthService;
@@ -21,6 +25,8 @@ export type BackendServices = {
   projects?: ProjectService;
   valueGroups?: ValueGroupService;
   synthesis?: SynthesisService;
+  runExports?: RunExportService;
+  pickRunExportDestination?: RunExportDestinationPicker;
 };
 
 const requireAuth = (services: BackendServices): GoogleAuthService => {
@@ -47,6 +53,18 @@ const requireSynthesis = (services: BackendServices): SynthesisService => {
   if (!services.synthesis)
     throw backendFailure("BACKEND_UNAVAILABLE", "Synthesis engine is not initialized");
   return services.synthesis;
+};
+const requireRunExports = (services: BackendServices): RunExportService => {
+  if (!services.runExports)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Run export is not initialized");
+  return services.runExports;
+};
+const requireRunExportDestinationPicker = (
+  services: BackendServices,
+): RunExportDestinationPicker => {
+  if (!services.pickRunExportDestination)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Run export dialog is not initialized");
+  return services.pickRunExportDestination;
 };
 
 export const handleBackendCall = async (
@@ -122,5 +140,13 @@ export const handleBackendCall = async (
       return { ok: true };
     case "runs.get":
       return requireSynthesis(services).getRun((request.params as { runId: string }).runId);
+    case "runs.export": {
+      const params = request.params as RunsExportParams;
+      const exports = requireRunExports(services);
+      const destination = await requireRunExportDestinationPicker(services)(params);
+      if (destination === null) return { status: "cancelled" };
+      await exports.exportTo(params.runId, params.format, destination);
+      return { status: "saved" };
+    }
   }
 };
