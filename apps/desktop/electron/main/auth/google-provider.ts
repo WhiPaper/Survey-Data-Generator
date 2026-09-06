@@ -209,8 +209,14 @@ export const createGoogleProvider = ({
 
       const callback = waitForOAuthCode(server, state, timeoutMs);
       stopWaiting = callback.stop;
+      const codePromise = callback.promise.then(
+        (code) => ({ ok: true as const, code }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
       await openExternal(authorizationUrl);
-      const code = await callback.promise;
+      const callbackResult = await codePromise;
+      if (!callbackResult.ok) throw callbackResult.error;
+      const code = callbackResult.code;
 
       let tokens;
       try {
