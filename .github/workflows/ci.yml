@@ -29,25 +29,36 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
-      - name: Repair target outcome typing
+      - name: Repair target contract checks
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path("apps/desktop/electron/main/synthesis/service.ts")
-          text = path.read_text(encoding="utf-8")
+          service = Path("apps/desktop/electron/main/synthesis/service.ts")
+          text = service.read_text(encoding="utf-8")
           old = 'targets: targets.flatMap((target) => {'
           new = 'targets: targets.flatMap<TargetSetOutcome["targets"][number]>((target) => {'
           if old in text:
               text = text.replace(old, new, 1)
           elif new not in text:
               raise SystemExit("targetSetOutcome flatMap site was not found")
-          path.write_text(text, encoding="utf-8")
+          service.write_text(text, encoding="utf-8")
+
+          test = Path("apps/desktop/test/synthesis-service.test.ts")
+          test_text = test.read_text(encoding="utf-8")
+          old_message = "Single-choice option targets exceed the final response count"
+          new_message = "Single-choice share targets exceed 100%"
+          if old_message in test_text:
+              test_text = test_text.replace(old_message, new_message, 1)
+          elif new_message not in test_text:
+              raise SystemExit("single-choice conflict expectation was not found")
+          test.write_text(test_text, encoding="utf-8")
           PY
       - run: >-
           pnpm exec prettier --write
           apps/desktop/electron/main/synthesis/service.ts
           apps/desktop/electron/main/targets/service.ts
+          apps/desktop/test/synthesis-service.test.ts
       - run: pnpm run check
       - run: python -m pip install -r engine/requirements.txt
       - run: pnpm run engine:test
@@ -90,7 +101,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/desktop/electron/main/synthesis/service.ts apps/desktop/electron/main/targets/service.ts .github/workflows/ci.yml
+          git add apps/desktop/electron/main/synthesis/service.ts apps/desktop/electron/main/targets/service.ts apps/desktop/test/synthesis-service.test.ts .github/workflows/ci.yml
           if git diff --cached --quiet; then
             exit 0
           fi
