@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import type { FormId, GoogleAccountId } from "@survey-synth/domain";
+import type { FormId, GoogleAccountId, TargetId } from "@survey-synth/domain";
 import { VERSIONS } from "./version.js";
 
-export type { FormId, GoogleAccountId } from "@survey-synth/domain";
+export type { FormId, GoogleAccountId, TargetId } from "@survey-synth/domain";
 
 export const BackendErrorCodeSchema = z.enum([
   "UNAUTHENTICATED",
@@ -38,6 +38,10 @@ export const FormIdSchema = z
   .string()
   .min(1)
   .transform((value) => value as FormId);
+export const TargetIdSchema = z
+  .string()
+  .min(1)
+  .transform((value) => value as TargetId);
 
 export const GoogleAccountViewSchema = z
   .object({
@@ -173,199 +177,208 @@ export const ValueGroupObservedValueSchema = z
   .strict();
 export type ValueGroupObservedValue = z.infer<typeof ValueGroupObservedValueSchema>;
 
-export const MeanTargetSchema = z
-  .object({
-    kind: z.literal("mean"),
-    questionId: z.string().min(1),
-    value: z.number().finite(),
-  })
-  .strict();
-export type MeanTarget = z.infer<typeof MeanTargetSchema>;
+export const TargetSubjectSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("option"), questionId: z.string().min(1), optionKey: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("checkbox_option"), questionId: z.string().min(1), optionKey: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("value_group"), valueGroupId: z.string().min(1) }).strict(),
+]);
+export type TargetSubject = z.infer<typeof TargetSubjectSchema>;
 
-export const ShareTargetSchema = z
-  .object({
-    kind: z.literal("share"),
-    valueGroupId: z.string().min(1),
-    value: z.number().min(0).max(1),
-  })
-  .strict();
+export const CountTargetSchema = z.object({
+  id: TargetIdSchema,
+  kind: z.literal("count"),
+  subject: TargetSubjectSchema,
+  value: z.number().int().nonnegative(),
+}).strict();
+export type CountTarget = z.infer<typeof CountTargetSchema>;
+
+export const ShareTargetSchema = z.object({
+  id: TargetIdSchema,
+  kind: z.literal("share"),
+  subject: TargetSubjectSchema,
+  value: z.number().min(0).max(1),
+}).strict();
 export type ShareTarget = z.infer<typeof ShareTargetSchema>;
 
-export const ConditionalShareTargetSchema = z
-  .object({
-    kind: z.literal("conditional_share"),
-    valueGroupId: z.string().min(1),
-    questionId: z.string().min(1),
-    optionKey: z.string().min(1),
-    value: z.number().min(0).max(1),
-  })
-  .strict();
+export const MeanTargetSchema = z.object({
+  id: TargetIdSchema,
+  kind: z.literal("mean"),
+  questionId: z.string().min(1),
+  value: z.number().finite(),
+}).strict();
+export type MeanTarget = z.infer<typeof MeanTargetSchema>;
+
+export const ConditionalShareTargetSchema = z.object({
+  id: TargetIdSchema,
+  kind: z.literal("conditional_share"),
+  population: z.object({ kind: z.literal("value_group"), valueGroupId: z.string().min(1) }).strict(),
+  questionId: z.string().min(1),
+  optionKey: z.string().min(1),
+  value: z.number().min(0).max(1),
+}).strict();
 export type ConditionalShareTarget = z.infer<typeof ConditionalShareTargetSchema>;
 
 export const SynthesisTargetSchema = z.discriminatedUnion("kind", [
-  MeanTargetSchema,
+  CountTargetSchema,
   ShareTargetSchema,
+  MeanTargetSchema,
   ConditionalShareTargetSchema,
 ]);
 export type SynthesisTarget = z.infer<typeof SynthesisTargetSchema>;
 
-export const SynthesisStartParamsSchema = z
-  .object({
-    projectId: ProjectIdSchema,
-    finalCount: z.number().int().positive(),
-    targets: z.array(SynthesisTargetSchema).min(1),
-    sourceScope: SourceScopeSchema.optional(),
-    seed: z.number().int(),
-    operationId: z.string().min(1).max(200).optional(),
-  })
-  .strict();
+export const SynthesisStartParamsSchema = z.object({
+  projectId: ProjectIdSchema,
+  finalCount: z.number().int().positive(),
+  targets: z.array(SynthesisTargetSchema).min(1),
+  sourceScope: SourceScopeSchema.optional(),
+  seed: z.number().int(),
+  operationId: z.string().min(1).max(200).optional(),
+}).strict().superRefine((value, context) => {
+  const seen = new Set<string>();
+  value.targets.forEach((target, index) => {
+    const id = String(target.id);
+    if (seen.has(id)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["targets", index, "id"], message: "TargetId must be unique within a Run" });
+    }
+    seen.add(id);
+  });
+});
 export type SynthesisStartParams = z.infer<typeof SynthesisStartParamsSchema>;
 
-export const EditPlanShareOutcomeSchema = z
-  .object({
-    id: z.string().min(1),
-    value: z.number().min(0).max(1),
-    share: z.number().min(0).max(1),
-    absoluteError: z.number().nonnegative(),
-    exact: z.boolean(),
-  })
-  .strict();
-
-export const EditPlanConditionalOutcomeSchema = EditPlanShareOutcomeSchema.extend({
-  numeratorCount: z.number().int().nonnegative(),
-  denominatorCount: z.number().int().positive(),
+export const TargetOutcomeSchema = z.object({
+  targetId: TargetIdSchema,
+  kind: z.enum(["count", "share", "mean", "conditional_share"]),
+  requested: z.number().finite(),
+  achieved: z.number().finite(),
+  absoluteError: z.number().nonnegative(),
+  exact: z.boolean(),
+  numeratorCount: z.number().int().nonnegative().optional(),
+  denominatorCount: z.number().int().nonnegative().optional(),
 }).strict();
+export type TargetOutcome = z.infer<typeof TargetOutcomeSchema>;
 
-export const EditPlanTargetOutcomeSchema = z
-  .object({
-    mean: z.number().finite(),
-    absoluteError: z.number().nonnegative(),
-    exact: z.boolean(),
-    shares: z.array(EditPlanShareOutcomeSchema),
-    conditionalShares: z.array(EditPlanConditionalOutcomeSchema),
-  })
-  .strict();
-export type EditPlanTargetOutcome = z.infer<typeof EditPlanTargetOutcomeSchema>;
+export const TargetSetOutcomeSchema = z.object({ targets: z.array(TargetOutcomeSchema) }).strict();
+export type TargetSetOutcome = z.infer<typeof TargetSetOutcomeSchema>;
+export const EditPlanTargetOutcomeSchema = TargetSetOutcomeSchema;
+export type EditPlanTargetOutcome = TargetSetOutcome;
 
-export const ProposedReplacementSchema = z
-  .object({
-    sourceResponseId: z.string().min(1),
-    replacementResponseId: z.string().min(1),
-  })
-  .strict();
+export const ProposedReplacementSchema = z.object({
+  sourceResponseId: z.string().min(1),
+  replacementResponseId: z.string().min(1),
+}).strict();
 export type ProposedReplacement = z.infer<typeof ProposedReplacementSchema>;
 
-export const EditPlanPreviewSchema = z
-  .object({
-    status: z.literal("available"),
-    replacementCount: z.number().int().positive(),
-    proposedReplacements: z.array(ProposedReplacementSchema).min(1),
-    appendOnlyOutcome: EditPlanTargetOutcomeSchema,
-    replacementOutcome: EditPlanTargetOutcomeSchema,
-  })
-  .strict();
+export const EditPlanPreviewSchema = z.object({
+  status: z.literal("available"),
+  replacementCount: z.number().int().positive(),
+  proposedReplacements: z.array(ProposedReplacementSchema).min(1),
+  appendOnlyOutcome: TargetSetOutcomeSchema,
+  replacementOutcome: TargetSetOutcomeSchema,
+}).strict();
 export type EditPlanPreview = z.infer<typeof EditPlanPreviewSchema>;
 
-export const SynthesisSuccessResultSchema = z
-  .object({
-    status: z.literal("success"),
-    runId: z.string().min(1),
-    syntheticResponseCount: z.number().int().nonnegative(),
-    finalResponseCount: z.number().int().nonnegative(),
-  })
-  .strict();
+export const TargetIssueCodeSchema = z.enum([
+  "out_of_range",
+  "invalid_subject",
+  "immutable_source_conflict",
+  "zero_denominator",
+  "target_conflict",
+  "candidate_support",
+  "domain_unsupported",
+]);
+export type TargetIssueCode = z.infer<typeof TargetIssueCodeSchema>;
+export const TargetIssueSchema = z.object({
+  targetIds: z.array(TargetIdSchema),
+  code: TargetIssueCodeSchema,
+  message: z.string().min(1),
+}).strict();
+export type TargetIssue = z.infer<typeof TargetIssueSchema>;
+
+export const SynthesisSuccessResultSchema = z.object({
+  status: z.literal("success"),
+  runId: z.string().min(1),
+  syntheticResponseCount: z.number().int().nonnegative(),
+  finalResponseCount: z.number().int().nonnegative(),
+}).strict();
 export type SynthesisSuccessResult = z.infer<typeof SynthesisSuccessResultSchema>;
 
 export const SynthesisStartResultSchema = z.discriminatedUnion("status", [
   SynthesisSuccessResultSchema,
-  z
-    .object({
-      status: z.literal("approval_required"),
-      planId: z.string().min(1),
-      editPlan: EditPlanPreviewSchema,
-    })
-    .strict(),
-  z
-    .object({
-      status: z.literal("infeasible"),
-      issues: z.array(z.object({ code: z.string(), message: z.string() }).strict()),
-    })
-    .strict(),
+  z.object({
+    status: z.literal("approval_required"),
+    planId: z.string().min(1),
+    editPlan: EditPlanPreviewSchema,
+  }).strict(),
+  z.object({
+    status: z.literal("infeasible"),
+    issues: z.array(TargetIssueSchema),
+  }).strict(),
 ]);
 export type SynthesisStartResult = z.infer<typeof SynthesisStartResultSchema>;
 
-export const SynthesisResolveEditPlanParamsSchema = z
-  .object({
-    planId: z.string().min(1),
-    choice: z.enum(["append_only", "replacement"]),
-  })
-  .strict();
+export const SynthesisResolveEditPlanParamsSchema = z.object({
+  planId: z.string().min(1),
+  choice: z.enum(["append_only", "replacement"]),
+}).strict();
 export type SynthesisResolveEditPlanParams = z.infer<typeof SynthesisResolveEditPlanParamsSchema>;
 
-export const FrozenValueGroupSchema = z
-  .object({
-    id: z.string().min(1),
-    questionId: z.string().min(1),
-    name: z.string().min(1),
-    members: z.array(z.string().min(1)),
-  })
-  .strict();
+export const FrozenValueGroupSchema = z.object({
+  id: z.string().min(1),
+  questionId: z.string().min(1),
+  name: z.string().min(1),
+  members: z.array(z.string().min(1)),
+}).strict();
 export type FrozenValueGroup = z.infer<typeof FrozenValueGroupSchema>;
 
+export const FrozenTargetSubjectSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("option"), questionId: z.string().min(1), optionKey: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("checkbox_option"), questionId: z.string().min(1), optionKey: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("value_group"), valueGroup: FrozenValueGroupSchema }).strict(),
+]);
+export type FrozenTargetSubject = z.infer<typeof FrozenTargetSubjectSchema>;
+
 export const FrozenRunTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ id: TargetIdSchema, kind: z.literal("count"), subject: FrozenTargetSubjectSchema, value: z.number().int().nonnegative() }).strict(),
+  z.object({ id: TargetIdSchema, kind: z.literal("share"), subject: FrozenTargetSubjectSchema, value: z.number().min(0).max(1) }).strict(),
   MeanTargetSchema,
-  z
-    .object({
-      kind: z.literal("share"),
-      value: z.number().min(0).max(1),
-      valueGroup: FrozenValueGroupSchema,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("conditional_share"),
-      value: z.number().min(0).max(1),
-      valueGroup: FrozenValueGroupSchema,
-      questionId: z.string().min(1),
-      optionKey: z.string().min(1),
-    })
-    .strict(),
+  z.object({
+    id: TargetIdSchema,
+    kind: z.literal("conditional_share"),
+    value: z.number().min(0).max(1),
+    population: z.object({ kind: z.literal("value_group"), valueGroup: FrozenValueGroupSchema }).strict(),
+    questionId: z.string().min(1),
+    optionKey: z.string().min(1),
+  }).strict(),
 ]);
 export type FrozenRunTarget = z.infer<typeof FrozenRunTargetSchema>;
 
-export const RunTargetSnapshotSchema = z
-  .object({
-    finalCount: z.number().int().positive(),
-    sourceScope: SourceScopeSchema,
-    targets: z.array(FrozenRunTargetSchema).min(1),
-    editPlan: EditPlanPreviewSchema.optional(),
-  })
-  .strict();
+export const RunTargetSnapshotSchema = z.object({
+  finalCount: z.number().int().positive(),
+  sourceScope: SourceScopeSchema,
+  targets: z.array(FrozenRunTargetSchema).min(1),
+  editPlan: EditPlanPreviewSchema.optional(),
+}).strict();
 export type RunTargetSnapshot = z.infer<typeof RunTargetSnapshotSchema>;
 
-export const RunsGetResultSchema = z
-  .object({
-    runId: z.string().min(1),
-    projectId: ProjectIdSchema,
-    sourceRevisionId: z.string().min(1),
-    targetSnapshot: RunTargetSnapshotSchema,
-    validation: z.record(z.string(), z.unknown()),
-    finalResponseCount: z.number().int().nonnegative(),
-    appVersion: z.string().min(1),
-    engineVersion: z.number().int().nonnegative(),
-  })
-  .strict();
+export const RunsGetResultSchema = z.object({
+  runId: z.string().min(1),
+  projectId: ProjectIdSchema,
+  sourceRevisionId: z.string().min(1),
+  targetSnapshot: RunTargetSnapshotSchema,
+  validation: z.record(z.string(), z.unknown()),
+  finalResponseCount: z.number().int().nonnegative(),
+  appVersion: z.string().min(1),
+  engineVersion: z.number().int().nonnegative(),
+}).strict();
 export type RunsGetResult = z.infer<typeof RunsGetResultSchema>;
 
 export const RunExportFormatSchema = z.enum(["csv", "xlsx"]);
 export type RunExportFormat = z.infer<typeof RunExportFormatSchema>;
 
-export const RunsExportParamsSchema = z
-  .object({
-    runId: z.string().min(1),
-    format: RunExportFormatSchema,
-  })
-  .strict();
+export const RunsExportParamsSchema = z.object({
+  runId: z.string().min(1),
+  format: RunExportFormatSchema,
+}).strict();
 export type RunsExportParams = z.infer<typeof RunsExportParamsSchema>;
 
 export const RunsExportResultSchema = z.object({ status: z.enum(["saved", "cancelled"]) }).strict();
@@ -377,17 +390,13 @@ const ProjectParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
 const RunParamsSchema = z.object({ runId: z.string().min(1) }).strict();
 const SynthesisCancelParamsSchema = z.object({ operationId: z.string().min(1).max(200) }).strict();
 const ValueGroupsListParamsSchema = ProjectParamsSchema;
-const ValueGroupsValuesParamsSchema = z
-  .object({ projectId: ProjectIdSchema, questionId: z.string().min(1) })
-  .strict();
-const ValueGroupsCreateParamsSchema = z
-  .object({
-    projectId: ProjectIdSchema,
-    questionId: z.string().min(1),
-    name: z.string().min(1).max(120),
-    members: z.array(z.string().min(1)).min(1),
-  })
-  .strict();
+const ValueGroupsValuesParamsSchema = z.object({ projectId: ProjectIdSchema, questionId: z.string().min(1) }).strict();
+const ValueGroupsCreateParamsSchema = z.object({
+  projectId: ProjectIdSchema,
+  questionId: z.string().min(1),
+  name: z.string().min(1).max(120),
+  members: z.array(z.string().min(1)).min(1),
+}).strict();
 const ValueGroupsDeleteParamsSchema = z.object({ valueGroupId: z.string().min(1) }).strict();
 
 export interface BackendRpc {
@@ -406,27 +415,12 @@ export interface BackendRpc {
   "projects.list": { input: z.infer<typeof EmptyParamsSchema>; output: ProjectSummaryView[] };
   "projects.get": { input: z.infer<typeof ProjectParamsSchema>; output: ProjectDetailView | null };
   "projects.delete": { input: z.infer<typeof ProjectParamsSchema>; output: ActionResult };
-  "valueGroups.list": {
-    input: z.infer<typeof ValueGroupsListParamsSchema>;
-    output: ValueGroupView[];
-  };
-  "valueGroups.values": {
-    input: z.infer<typeof ValueGroupsValuesParamsSchema>;
-    output: ValueGroupObservedValue[];
-  };
-  "valueGroups.create": {
-    input: z.infer<typeof ValueGroupsCreateParamsSchema>;
-    output: ValueGroupView;
-  };
-  "valueGroups.delete": {
-    input: z.infer<typeof ValueGroupsDeleteParamsSchema>;
-    output: ActionResult;
-  };
+  "valueGroups.list": { input: z.infer<typeof ValueGroupsListParamsSchema>; output: ValueGroupView[] };
+  "valueGroups.values": { input: z.infer<typeof ValueGroupsValuesParamsSchema>; output: ValueGroupObservedValue[] };
+  "valueGroups.create": { input: z.infer<typeof ValueGroupsCreateParamsSchema>; output: ValueGroupView };
+  "valueGroups.delete": { input: z.infer<typeof ValueGroupsDeleteParamsSchema>; output: ActionResult };
   "synthesis.start": { input: SynthesisStartParams; output: SynthesisStartResult };
-  "synthesis.resolveEditPlan": {
-    input: SynthesisResolveEditPlanParams;
-    output: SynthesisSuccessResult;
-  };
+  "synthesis.resolveEditPlan": { input: SynthesisResolveEditPlanParams; output: SynthesisSuccessResult };
   "synthesis.cancel": { input: z.infer<typeof SynthesisCancelParamsSchema>; output: ActionResult };
   "runs.get": { input: z.infer<typeof RunParamsSchema>; output: RunsGetResult };
   "runs.export": { input: RunsExportParams; output: RunsExportResult };
@@ -435,43 +429,23 @@ export interface BackendRpc {
 export type RpcMethod = keyof BackendRpc;
 
 const rpcMethods = [
-  "system.ping",
-  "session.get",
-  "auth.login",
-  "auth.accounts",
-  "auth.addAccount",
-  "auth.switchAccount",
-  "auth.logout",
-  "auth.revokeAccess",
-  "auth.deleteAccountData",
-  "forms.list",
-  "forms.import",
-  "forms.import.cancel",
-  "projects.list",
-  "projects.get",
-  "projects.delete",
-  "valueGroups.list",
-  "valueGroups.values",
-  "valueGroups.create",
-  "valueGroups.delete",
-  "synthesis.start",
-  "synthesis.resolveEditPlan",
-  "synthesis.cancel",
-  "runs.get",
-  "runs.export",
+  "system.ping", "session.get", "auth.login", "auth.accounts", "auth.addAccount",
+  "auth.switchAccount", "auth.logout", "auth.revokeAccess", "auth.deleteAccountData",
+  "forms.list", "forms.import", "forms.import.cancel", "projects.list", "projects.get",
+  "projects.delete", "valueGroups.list", "valueGroups.values", "valueGroups.create",
+  "valueGroups.delete", "synthesis.start", "synthesis.resolveEditPlan", "synthesis.cancel",
+  "runs.get", "runs.export",
 ] as const satisfies readonly RpcMethod[];
 
 const RpcMethodSchema = z.enum(rpcMethods);
 
-export const RequestEnvelopeSchema = z
-  .object({
-    v: z.literal(VERSIONS.protocolVersion),
-    type: z.literal("request"),
-    id: z.string().min(1),
-    method: RpcMethodSchema,
-    params: z.unknown(),
-  })
-  .strict();
+export const RequestEnvelopeSchema = z.object({
+  v: z.literal(VERSIONS.protocolVersion),
+  type: z.literal("request"),
+  id: z.string().min(1),
+  method: RpcMethodSchema,
+  params: z.unknown(),
+}).strict();
 export type RequestEnvelope = z.infer<typeof RequestEnvelopeSchema>;
 
 const rpcParamSchemas: Record<RpcMethod, z.ZodTypeAny> = {
@@ -534,23 +508,10 @@ export const parseRpcRequest = (input: unknown): RequestEnvelope => {
   return request;
 };
 
-export const parseRpcResult = <M extends RpcMethod>(
-  method: M,
-  input: unknown,
-): BackendRpc[M]["output"] => rpcResultSchemas[method].parse(input) as BackendRpc[M]["output"];
+export const parseRpcResult = <M extends RpcMethod>(method: M, input: unknown): BackendRpc[M]["output"] =>
+  rpcResultSchemas[method].parse(input) as BackendRpc[M]["output"];
 
-export const createRequest = <M extends RpcMethod>(
-  id: string,
-  method: M,
-  params: BackendRpc[M]["input"],
-): RequestEnvelope =>
-  parseRpcRequest({
-    v: VERSIONS.protocolVersion,
-    type: "request",
-    id,
-    method,
-    params,
-  });
+export const createRequest = <M extends RpcMethod>(id: string, method: M, params: BackendRpc[M]["input"]): RequestEnvelope =>
+  parseRpcRequest({ v: VERSIONS.protocolVersion, type: "request", id, method, params });
 
-export const createPingRequest = (id: string): RequestEnvelope =>
-  createRequest(id, "system.ping", {});
+export const createPingRequest = (id: string): RequestEnvelope => createRequest(id, "system.ping", {});
