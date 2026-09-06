@@ -151,38 +151,6 @@ export function SynthesisResultsView({
           </Sheet>
         </>
       )}
-      <div className="ai-actions">
-        {aiEnabled &&
-          (runData?.aiMetadata ? (
-            <span>AI 텍스트 채움 완료 ({runData.aiMetadata.generatedCount}개 항목)</span>
-          ) : (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onStartAi}
-                disabled={aiPending || exportPending}
-              >
-                텍스트도 자연스럽게 채우기
-              </Button>
-              {aiPending && (
-                <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Spinner aria-hidden="true" />
-                  텍스트 채우는 중…
-                  <Button variant="ghost" size="sm" onClick={onCancelAi}>
-                    취소
-                  </Button>
-                </span>
-              )}
-              {aiFeedback && (
-                <p role="status" className="text-sm text-muted-foreground">
-                  {aiFeedback}
-                </p>
-              )}
-              {aiError && <FieldError>{aiError}</FieldError>}
-            </>
-          ))}
-      </div>
       <div className="export-actions">
         <Button
           variant="outline"
