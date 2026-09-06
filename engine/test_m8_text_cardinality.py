@@ -70,7 +70,10 @@ class TextCardinalityBehaviorTest(unittest.TestCase):
 
         observed_set = set(observed)
         generated = pool.data["comment"].tolist()
-        self.assertEqual(len(generated), 120)
+        # pool_size is a target minimum; observed ordinal states are also preserved for replacement support.
+        self.assertGreaterEqual(len(generated), 120)
+        generated_scores = set(pd.to_numeric(pool.data["score"], errors="raise").astype(int))
+        self.assertEqual(generated_scores, {2, 3, 4})
         self.assertTrue(set(generated) <= observed_set)
         for cell in generated:
             parsed = json.loads(cell)
