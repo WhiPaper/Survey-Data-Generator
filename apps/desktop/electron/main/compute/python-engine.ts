@@ -46,6 +46,16 @@ export type EngineConditionalShareAchievement = {
   exact: boolean;
 };
 
+export type EngineQualityDiagnostics = {
+  sdmetricsScore: number | null;
+  warning: string | null;
+  duplicateRowCount?: number;
+  maxFingerprintCount?: number;
+  maxFingerprintShare?: number;
+  sourceCloneCount?: number;
+  sourceCloneRate?: number;
+};
+
 export type EngineEditPlanShareOutcome = {
   id: string;
   value: number;
@@ -65,10 +75,7 @@ export type EngineEditPlanTargetOutcome = {
   exact: boolean;
   shares: EngineEditPlanShareOutcome[];
   conditionalShares: EngineEditPlanConditionalOutcome[];
-  quality?: {
-    sdmetricsScore: number | null;
-    warning: string | null;
-  };
+  quality?: EngineQualityDiagnostics;
   duplicateRowCount?: number;
 };
 
@@ -122,10 +129,7 @@ export type EngineSynthesisSuccessReport = {
   };
   editPlan: EngineEditPlan;
   validation: Record<string, unknown>;
-  quality: {
-    sdmetricsScore: number | null;
-    warning: string | null;
-  };
+  quality: EngineQualityDiagnostics;
   dependencies: Record<string, string>;
 };
 
