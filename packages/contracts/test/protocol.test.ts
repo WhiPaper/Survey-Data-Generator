@@ -241,6 +241,29 @@ describe("v2 RPC contracts", () => {
     ).toMatchObject({ status: "approval_required", planId: "plan-1" });
   });
 
+  it("uses the same target outcome shape for synthesis success", () => {
+    expect(
+      parseRpcResult("synthesis.start", {
+        status: "success",
+        runId: "run-1",
+        syntheticResponseCount: 40,
+        finalResponseCount: 120,
+        outcome: {
+          targets: [
+            {
+              targetId: "t-mean",
+              kind: "mean",
+              requested: 4.3,
+              achieved: 4.298,
+              absoluteError: 0.002,
+              exact: false,
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({ status: "success", outcome: { targets: [{ targetId: "t-mean" }] } });
+  });
+
   it("accepts structured target issues", () => {
     expect(
       parseRpcResult("synthesis.start", {
@@ -257,6 +280,18 @@ describe("v2 RPC contracts", () => {
   });
 
   it("validates frozen target subjects and immutable EditPlan snapshots", () => {
+    const outcome = {
+      targets: [
+        {
+          targetId: "t-mean",
+          kind: "mean",
+          requested: 4.3,
+          achieved: 4.3,
+          absoluteError: 0,
+          exact: true,
+        },
+      ],
+    };
     expect(
       parseRpcResult("runs.get", {
         runId: "run-1",
@@ -319,20 +354,10 @@ describe("v2 RPC contracts", () => {
                 },
               ],
             },
-            replacementOutcome: {
-              targets: [
-                {
-                  targetId: "t-mean",
-                  kind: "mean",
-                  requested: 4.3,
-                  achieved: 4.3,
-                  absoluteError: 0,
-                  exact: true,
-                },
-              ],
-            },
+            replacementOutcome: outcome,
           },
         },
+        outcome,
         validation: {},
         finalResponseCount: 120,
         appVersion: VERSIONS.appVersion,
@@ -341,6 +366,7 @@ describe("v2 RPC contracts", () => {
     ).toMatchObject({
       runId: "run-1",
       finalResponseCount: 120,
+      outcome: { targets: [{ targetId: "t-mean" }] },
       targetSnapshot: { editPlan: { replacementCount: 1 } },
     });
   });
