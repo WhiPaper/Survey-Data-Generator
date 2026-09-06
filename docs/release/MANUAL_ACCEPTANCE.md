@@ -16,6 +16,7 @@ This checklist separates repository-automatable validation from release steps th
 - [ ] Build the x64 AppImage on an actual Linux runner matching the release baseline.
 - [ ] Run the packaged Electron smoke under that Linux environment and record the successful evidence.
 - [ ] Launch the AppImage on a representative Linux device or VM and verify the packaged Python engine is discovered without a system Python dependency.
+- [ ] Confirm the running app groups with its installed launcher/taskbar entry rather than appearing as an unrelated window.
 - [ ] Confirm the representative Linux environment provides a secure Electron `safeStorage` backend rather than `basic_text`; if it does not, credential persistence must fail safely and the environment must not be accepted for Google login.
 
 Until these checks have evidence, do not claim that Linux packaged smoke has passed.

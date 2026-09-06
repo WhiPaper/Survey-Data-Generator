@@ -59,4 +59,16 @@ describe("M10 release hardening", () => {
     };
     expect(packageJson.description?.trim().length).toBeGreaterThan(0);
   });
+
+  it("keeps Linux desktop window association aligned with the application id", () => {
+    const packageJson = JSON.parse(readRepositoryFile("apps/desktop/package.json")) as {
+      desktopName?: string;
+    };
+    const builder = JSON.parse(readRepositoryFile("apps/desktop/electron-builder.json")) as {
+      appId?: string;
+      linux?: { syncDesktopName?: boolean };
+    };
+    expect(packageJson.desktopName).toBe(`${builder.appId}.desktop`);
+    expect(builder.linux?.syncDesktopName).toBe(true);
+  });
 });

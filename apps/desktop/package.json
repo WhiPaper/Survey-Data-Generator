@@ -2,6 +2,7 @@
   "name": "@survey-synth/desktop",
   "version": "0.1.0",
   "description": "Local-first Electron desktop app for target-constrained survey data synthesis.",
+  "desktopName": "com.whipaper.surveysynth.desktop",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
