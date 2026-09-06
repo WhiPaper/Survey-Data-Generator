@@ -26,7 +26,7 @@ const packageRules = [
       /^@survey-synth\/test-support/,
       noInternalPackageSource,
       noNodeRuntime,
-      /^(react|react-dom|zod|tauri|@tauri\/)/,
+      /^(react|react-dom|tauri|@tauri\/)/,
       /(^|\/)apps\//,
       /(google|sqlite|highs|solver)/i,
     ],
