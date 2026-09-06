@@ -115,50 +115,35 @@ describe("v2 persistence", () => {
 
     createProject(database.db, {
       id: "project-1",
-      name: "Customer survey",
+      name: "Event survey",
       googleFormId: "form-1",
       nowMs: 1000,
     });
 
-    createSourceRevision(database.db, {
-      revision: {
-        id: "revision-1",
-        projectId: "project-1",
-        formSnapshotId: "form-snapshot-1",
-        responseCount: 1,
-        responseSetHash: "hash-1",
-        importedAtMs: 2000,
-      },
+    const revision = createSourceRevision(database.db, {
+      projectId: "project-1",
+      revisionId: "revision-1",
+      importedAtMs: 2000,
+      responseSetHash: "responses-hash-1",
       formSnapshot: {
         id: "form-snapshot-1",
-        projectId: "project-1",
-        googleFormId: "form-1",
-        title: "Customer survey",
-        schema: { formId: "form-1", questions: [] },
+        title: "Event survey",
+        schema: { questions: [{ id: "q1", type: "choice" }] },
         schemaHash: "schema-hash-1",
-        capturedAtMs: 2000,
       },
       responses: [
-        {
-          responseId: "response-1",
-          submittedAtMs: 1500,
-          response: {
-            responseId: "response-1",
-            answers: {},
-            origin: "original",
-            path: { questions: {}, confidence: "certain" },
-          },
-        },
+        { responseId: "r2", submittedAtMs: 2200, response: { q1: "B" } },
+        { responseId: "r1", submittedAtMs: 2100, response: { q1: "A" } },
       ],
     });
 
+    expect(revision.responseCount).toBe(2);
+    expect(getSourceRevision(database.db, "revision-1")).toEqual(revision);
     expect(getProject(database.db, "project-1")?.currentSourceRevisionId).toBe("revision-1");
-    expect(getSourceRevision(database.db, "revision-1")).toMatchObject({
-      id: "revision-1",
-      responseSetHash: "hash-1",
-      responseCount: 1,
-    });
-    expect(listSourceResponses(database.db, "revision-1")).toHaveLength(1);
+    expect(listSourceResponses(database.db, "revision-1")).toEqual([
+      { responseId: "r1", submittedAtMs: 2100, response: { q1: "A" } },
+      { responseId: "r2", submittedAtMs: 2200, response: { q1: "B" } },
+    ]);
   });
 
   it("rolls back the whole source revision when response ids are duplicated", () => {
@@ -166,56 +151,31 @@ describe("v2 persistence", () => {
 
     createProject(database.db, {
       id: "project-1",
-      name: "Customer survey",
+      name: "Event survey",
       googleFormId: "form-1",
       nowMs: 1000,
     });
 
     expect(() =>
       createSourceRevision(database.db, {
-        revision: {
-          id: "revision-1",
-          projectId: "project-1",
-          formSnapshotId: "form-snapshot-1",
-          responseCount: 2,
-          responseSetHash: "hash-1",
-          importedAtMs: 2000,
-        },
+        projectId: "project-1",
+        revisionId: "revision-bad",
+        importedAtMs: 2000,
+        responseSetHash: "responses-hash-bad",
         formSnapshot: {
-          id: "form-snapshot-1",
-          projectId: "project-1",
-          googleFormId: "form-1",
-          title: "Customer survey",
-          schema: { formId: "form-1", questions: [] },
-          schemaHash: "schema-hash-1",
-          capturedAtMs: 2000,
+          id: "form-snapshot-bad",
+          title: "Event survey",
+          schema: {},
+          schemaHash: "schema-hash-bad",
         },
         responses: [
-          {
-            responseId: "response-1",
-            submittedAtMs: 1500,
-            response: {
-              responseId: "response-1",
-              answers: {},
-              origin: "original",
-              path: { questions: {}, confidence: "certain" },
-            },
-          },
-          {
-            responseId: "response-1",
-            submittedAtMs: 1600,
-            response: {
-              responseId: "response-1",
-              answers: {},
-              origin: "original",
-              path: { questions: {}, confidence: "certain" },
-            },
-          },
+          { responseId: "duplicate", submittedAtMs: 2100, response: { q1: "A" } },
+          { responseId: "duplicate", submittedAtMs: 2200, response: { q1: "B" } },
         ],
       }),
     ).toThrow();
 
+    expect(getSourceRevision(database.db, "revision-bad")).toBeNull();
     expect(getProject(database.db, "project-1")?.currentSourceRevisionId).toBeNull();
-    expect(getSourceRevision(database.db, "revision-1")).toBeUndefined();
   });
 });
