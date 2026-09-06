@@ -51,8 +51,8 @@ class RowQualityDiagnosticsTest(unittest.TestCase):
         concentrated = pd.DataFrame(
             {
                 "response_id": [f"synthetic-repeat-{i}" for i in range(concentration_count)],
-                "score": 5,
-                "segment": "novel-repeat",
+                "score": [5] * concentration_count,
+                "segment": ["novel-repeat"] * concentration_count,
             }
         )
         unique_count = synthetic_count - clone_count - concentration_count
