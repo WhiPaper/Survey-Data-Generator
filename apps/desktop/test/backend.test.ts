@@ -247,6 +247,10 @@ describe("typed v2 desktop backend client", () => {
     ).resolves.toMatchObject({ status: "approval_required", planId: "plan-1" });
     await expect(
       resolveSynthesisEditPlan("plan-1", "replacement", { invoke }),
-    ).resolves.toMatchObject({ status: "success", runId: "run-1" });
+    ).resolves.toMatchObject({
+      status: "success",
+      runId: "run-1",
+      outcome: { targets: [{ targetId: "t-mean", achieved: 4.3, exact: true }] },
+    });
   });
 });
