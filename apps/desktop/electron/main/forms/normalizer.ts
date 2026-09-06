@@ -152,7 +152,10 @@ export class GoogleResponseNormalizer {
     return rawResponses.map((rawResponse) => {
       const response = record(rawResponse, "Google response is invalid");
       const responseId = requiredString(response.responseId, "Google response ID is invalid");
-      const rawAnswers = response.answers === undefined ? {} : record(response.answers, "Google response answers are invalid");
+      const rawAnswers =
+        response.answers === undefined
+          ? {}
+          : record(response.answers, "Google response answers are invalid");
       const answered: Record<QuestionId, { state: "answered"; value: AnswerValue }> = {};
 
       for (const [rawQuestionId, rawAnswer] of Object.entries(rawAnswers)) {
@@ -391,8 +394,13 @@ const normalizeQuestion = (
     case "fileUploadQuestion": {
       const file = record(question.fileUploadQuestion, "Google file question is invalid");
       const allowedTypes = stringArray(file.types, "Google file type metadata is invalid");
-      const maxFiles = file.maxFiles === undefined ? 1 : finiteNumber(file.maxFiles, "Google file count is invalid");
-      if (!Number.isInteger(maxFiles) || maxFiles < 1) throw invalidImport("Google file count is invalid");
+      const maxFiles =
+        file.maxFiles === undefined
+          ? 1
+          : finiteNumber(file.maxFiles, "Google file count is invalid");
+      if (!Number.isInteger(maxFiles) || maxFiles < 1) {
+        throw invalidImport("Google file count is invalid");
+      }
       const maxFileSizeBytes = optionalString(file.maxFileSize);
       return {
         ...base,
@@ -496,6 +504,78 @@ const routeDestination = (
   }
 };
 
+const parseOrdinalAnswer = (raw: string | undefined, question: OrdinalQuestion): number => {
+  if (raw === undefined || !/^-?\d+$/.test(raw)) {
+    throw invalidImport("Google ordinal answer is invalid");
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < question.min || value > question.max) {
+    throw invalidImport("Google ordinal answer is invalid");
+  }
+  return value;
+};
+
+const isLeapYear = (year: number): boolean =>
+  year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+
+const validCalendarDate = (year: number, month: number, day: number): boolean => {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+  if (year < 1 || year > 9999 || month < 1 || month > 12 || day < 1) return false;
+  const days = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= days[month - 1]!;
+};
+
+const validClockTime = (hour: number, minute: number): boolean =>
+  Number.isInteger(hour) &&
+  Number.isInteger(minute) &&
+  hour >= 0 &&
+  hour <= 23 &&
+  minute >= 0 &&
+  minute <= 59;
+
+const parseDateAnswer = (
+  raw: string | undefined,
+  includeYear: boolean,
+  includeTime: boolean,
+): string => {
+  if (raw === undefined) throw invalidImport("Google date answer is invalid");
+  const pattern = includeYear
+    ? includeTime
+      ? /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/
+      : /^(\d{4})-(\d{2})-(\d{2})$/
+    : includeTime
+      ? /^(\d{2})-(\d{2}) (\d{2}):(\d{2})$/
+      : /^(\d{2})-(\d{2})$/;
+  const match = pattern.exec(raw);
+  if (!match) throw invalidImport("Google date answer is invalid");
+
+  const year = includeYear ? Number(match[1]) : 2000;
+  const month = Number(match[includeYear ? 2 : 1]);
+  const day = Number(match[includeYear ? 3 : 2]);
+  if (!validCalendarDate(year, month, day)) {
+    throw invalidImport("Google date answer is invalid");
+  }
+
+  if (includeTime) {
+    const hour = Number(match[includeYear ? 4 : 3]);
+    const minute = Number(match[includeYear ? 5 : 4]);
+    if (!validClockTime(hour, minute)) throw invalidImport("Google date answer is invalid");
+  }
+  return raw;
+};
+
+const parseTimeAnswer = (raw: string | undefined, duration: boolean): string => {
+  if (raw === undefined) throw invalidImport("Google time answer is invalid");
+  const match = /^(\d{2}):(\d{2})$/.exec(raw);
+  if (!match) throw invalidImport("Google time answer is invalid");
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (minute < 0 || minute > 59 || (!duration && (hour < 0 || hour > 23))) {
+    throw invalidImport("Google time answer is invalid");
+  }
+  return raw;
+};
+
 const normalizeAnswer = (question: Question, rawAnswer: unknown): AnswerValue | undefined => {
   const answer = record(rawAnswer, "Google answer is invalid");
   const textValues = extractTextValues(answer);
@@ -530,7 +610,9 @@ const normalizeAnswer = (question: Question, rawAnswer: unknown): AnswerValue | 
         const match = matchOption(question.options, rawValue);
         if (match) {
           if (match.isOther && rawValue !== match.label) {
-            if (otherValue !== undefined) throw invalidImport("Google checkbox Other answer is ambiguous");
+            if (otherValue !== undefined) {
+              throw invalidImport("Google checkbox Other answer is ambiguous");
+            }
             otherValue = rawValue;
           }
           return match.key;
@@ -552,16 +634,12 @@ const normalizeAnswer = (question: Question, rawAnswer: unknown): AnswerValue | 
         ...(otherValue ? { otherValue } : {}),
       };
     }
-    case "ordinal": {
-      const value = Number(textValues[0]);
-      if (!Number.isFinite(value)) throw invalidImport("Google ordinal answer is invalid");
-      return { kind: "ordinal", value };
-    }
+    case "ordinal":
+      return { kind: "ordinal", value: parseOrdinalAnswer(textValues[0], question) };
     case "text":
       return { kind: "text", value: textValues.join("\n") };
     case "date": {
-      const value = textValues[0];
-      if (!value) throw invalidImport("Google date answer is invalid");
+      const value = parseDateAnswer(textValues[0], question.includeYear, question.includeTime);
       return {
         kind: "date",
         value,
@@ -570,8 +648,7 @@ const normalizeAnswer = (question: Question, rawAnswer: unknown): AnswerValue | 
       };
     }
     case "time": {
-      const value = textValues[0];
-      if (!value) throw invalidImport("Google time answer is invalid");
+      const value = parseTimeAnswer(textValues[0], question.duration);
       return { kind: "time", value, duration: question.duration };
     }
     case "file":
@@ -597,9 +674,13 @@ const completeAnswerSlots = (
       continue;
     }
     const reachability = path.questions[question.id];
-    if (reachability === "reached" && !question.required) result[question.id] = { state: "skipped" };
-    else if (reachability === "not_reached") result[question.id] = { state: "not_reached" };
-    else result[question.id] = { state: "indeterminate" };
+    if (reachability === "reached" && !question.required) {
+      result[question.id] = { state: "skipped" };
+    } else if (reachability === "not_reached") {
+      result[question.id] = { state: "not_reached" };
+    } else {
+      result[question.id] = { state: "indeterminate" };
+    }
   }
   return result;
 };
