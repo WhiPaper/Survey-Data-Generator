@@ -76,25 +76,33 @@ describe("synthesis run persistence", () => {
           end: new Date(20).toISOString(),
         },
         targets: [
-          { kind: "mean", questionId: "q-score", value: 4.7 },
+          { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.7 },
           {
+            id: "t-share" as never,
             kind: "share",
             value: 0.35,
-            valueGroup: {
-              id: "group-1",
-              questionId: "q-choice",
-              name: "행사 관심",
-              members: ["festival"],
+            subject: {
+              kind: "value_group",
+              valueGroup: {
+                id: "group-1",
+                questionId: "q-choice",
+                name: "행사 관심",
+                members: ["festival"],
+              },
             },
           },
           {
+            id: "t-conditional" as never,
             kind: "conditional_share",
             value: 0.6,
-            valueGroup: {
-              id: "group-1",
-              questionId: "q-choice",
-              name: "행사 관심",
-              members: ["festival"],
+            population: {
+              kind: "value_group",
+              valueGroup: {
+                id: "group-1",
+                questionId: "q-choice",
+                name: "행사 관심",
+                members: ["festival"],
+              },
             },
             questionId: "q-checkbox",
             optionKey: "music",
@@ -137,12 +145,20 @@ describe("synthesis run persistence", () => {
     });
     expect(JSON.parse(stored!.targetJson)).toMatchObject({
       targets: [
-        { kind: "mean", questionId: "q-score", value: 4.7 },
-        { kind: "share", valueGroup: { id: "group-1", members: ["festival"] } },
+        { id: "t-mean", kind: "mean", questionId: "q-score", value: 4.7 },
         {
+          id: "t-share",
+          kind: "share",
+          subject: { kind: "value_group", valueGroup: { id: "group-1", members: ["festival"] } },
+        },
+        {
+          id: "t-conditional",
           kind: "conditional_share",
           value: 0.6,
-          valueGroup: { id: "group-1", members: ["festival"] },
+          population: {
+            kind: "value_group",
+            valueGroup: { id: "group-1", members: ["festival"] },
+          },
           questionId: "q-checkbox",
           optionKey: "music",
         },
