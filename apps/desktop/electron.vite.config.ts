@@ -13,8 +13,15 @@ const bundledPackages = [
   "hyparquet-writer",
 ];
 
+const buildGoogleClientId = process.env.SURVEY_SYNTH_GOOGLE_CLIENT_ID?.trim() ?? "";
+const buildGoogleClientSecret = process.env.SURVEY_SYNTH_GOOGLE_CLIENT_SECRET?.trim() ?? "";
+
 export default defineConfig({
   main: {
+    define: {
+      __SURVEY_SYNTH_GOOGLE_CLIENT_ID__: JSON.stringify(buildGoogleClientId),
+      __SURVEY_SYNTH_GOOGLE_CLIENT_SECRET__: JSON.stringify(buildGoogleClientSecret),
+    },
     plugins: [externalizeDepsPlugin({ exclude: bundledPackages })],
     build: {
       rollupOptions: {

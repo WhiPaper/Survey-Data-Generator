@@ -71,6 +71,28 @@ describe("M10 release hardening", () => {
     expect(packageJson.devDependencies?.["@vitejs/plugin-react"]).toBe("^5.0.2");
   });
 
+  it("injects Google OAuth build credentials into Electron Main only", () => {
+    const config = readRepositoryFile("apps/desktop/electron.vite.config.ts");
+    const authConfig = readRepositoryFile("apps/desktop/electron/main/auth/config.ts");
+    const workflow = readRepositoryFile(".github/workflows/release.yml");
+    const preloadOffset = config.indexOf("preload:");
+    const rendererOffset = config.indexOf("renderer:");
+    const clientIdDefine = config.indexOf("__SURVEY_SYNTH_GOOGLE_CLIENT_ID__");
+    const clientSecretDefine = config.indexOf("__SURVEY_SYNTH_GOOGLE_CLIENT_SECRET__");
+
+    expect(clientIdDefine).toBeGreaterThanOrEqual(0);
+    expect(clientSecretDefine).toBeGreaterThanOrEqual(0);
+    expect(clientIdDefine).toBeLessThan(preloadOffset);
+    expect(clientSecretDefine).toBeLessThan(preloadOffset);
+    expect(config.slice(rendererOffset)).not.toContain("__SURVEY_SYNTH_GOOGLE_CLIENT_ID__");
+    expect(config.slice(rendererOffset)).not.toContain("__SURVEY_SYNTH_GOOGLE_CLIENT_SECRET__");
+    expect(authConfig).toContain("buildClientId");
+    expect(authConfig).toContain("buildClientSecret");
+    expect(workflow).toContain("Require Google OAuth build credentials");
+    expect(workflow).toContain("secrets.SURVEY_SYNTH_GOOGLE_CLIENT_ID");
+    expect(workflow).toContain("secrets.SURVEY_SYNTH_GOOGLE_CLIENT_SECRET");
+  });
+
   it("provides package description metadata without inventing release authority", () => {
     const packageJson = JSON.parse(readRepositoryFile("apps/desktop/package.json")) as {
       description?: string;
