@@ -26,6 +26,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "drizzle-orm": "0.45.2",
+    "exceljs": "4.4.0",
     "google-auth-library": "11.0.2",
     "hyparquet": "1.29.2",
     "hyparquet-writer": "0.16.8",

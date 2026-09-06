@@ -40,6 +40,7 @@ export const writeCsv = async (table: LogicalExportTable, destination: string): 
   const tempPath = `${destination}.tmp`;
   try {
     await writeFile(tempPath, renderCsv(table), "utf8");
+    await rm(destination, { force: true });
     await rename(tempPath, destination);
   } catch (error) {
     await rm(tempPath, { force: true });
