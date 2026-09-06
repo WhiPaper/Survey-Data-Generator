@@ -31,7 +31,7 @@ from scipy.optimize import milp  # noqa: E402,F401
 from sdmetrics.reports import QualityReport  # noqa: E402,F401
 from sdv.single_table import GaussianCopulaSynthesizer  # noqa: E402,F401
 
-from evaluate import evaluate_result  # noqa: E402
+from evaluate import Evaluation, evaluate_result  # noqa: E402
 from generate import (  # noqa: E402
     ConditionalCandidateSupport,
     ShareCandidateSupport,
@@ -298,6 +298,18 @@ def _target_outcome(selection: TargetSelection) -> dict[str, object]:
             }
             for target in selection.conditional_shares
         ],
+    }
+
+
+def _quality_payload(evaluation: Evaluation) -> dict[str, object]:
+    return {
+        "sdmetricsScore": evaluation.quality_score,
+        "warning": evaluation.quality_warning,
+        "duplicateRowCount": evaluation.duplicate_row_count,
+        "maxFingerprintCount": evaluation.max_fingerprint_count,
+        "maxFingerprintShare": evaluation.max_fingerprint_share,
+        "sourceCloneCount": evaluation.source_clone_count,
+        "sourceCloneRate": evaluation.source_clone_rate,
     }
 
 
@@ -662,10 +674,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             replacement_path = _replacement_result_path(job.result_parquet)
             write_parquet(replacement_final, replacement_path)
             replacement_outcome = _target_outcome(replacement_plan.replacement_outcome)
-            replacement_outcome["quality"] = {
-                "sdmetricsScore": replacement_evaluation.quality_score,
-                "warning": replacement_evaluation.quality_warning,
-            }
+            replacement_outcome["quality"] = _quality_payload(replacement_evaluation)
             replacement_outcome["duplicateRowCount"] = replacement_evaluation.duplicate_row_count
             edit_plan_report.update(
                 {
@@ -725,10 +734,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             "replacementApplied": False,
             "duplicateRowCount": evaluation.duplicate_row_count,
         },
-        "quality": {
-            "sdmetricsScore": evaluation.quality_score,
-            "warning": evaluation.quality_warning,
-        },
+        "quality": _quality_payload(evaluation),
         "dependencies": dependency_versions(),
     }
     write_report(job.report_json, report)
