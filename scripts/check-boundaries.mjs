@@ -26,7 +26,7 @@ const packageRules = [
       /^@survey-synth\/test-support/,
       noInternalPackageSource,
       noNodeRuntime,
-      /^(react|react-dom|)/,
+      /^(react|react-dom)/,
       /(^|\/)apps\//,
       /(google|sqlite|highs|solver)/i,
     ],
