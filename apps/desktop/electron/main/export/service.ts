@@ -20,7 +20,7 @@ export type RunExportService = {
 export const createRunExportService = (db: SurveyDatabase): RunExportService => {
   const buildTable = (runId: string): LogicalExportTable => {
     const run = getRunRecord(db, runId);
-    if (!run) throw backendFailure("NOT_FOUND", "Run not found", { runId });
+    if (!run) throw backendFailure("NOT_FOUND", "Run not found");
 
     const revision = db
       .select({ formSnapshotId: sourceRevisions.formSnapshotId })
@@ -28,10 +28,7 @@ export const createRunExportService = (db: SurveyDatabase): RunExportService => 
       .where(eq(sourceRevisions.id, run.sourceRevisionId))
       .get();
     if (!revision) {
-      throw backendFailure("INTERNAL", "Run source revision is missing", {
-        runId,
-        sourceRevisionId: run.sourceRevisionId,
-      });
+      throw backendFailure("INTERNAL", "Run source revision is missing");
     }
 
     const snapshot = db
@@ -40,10 +37,7 @@ export const createRunExportService = (db: SurveyDatabase): RunExportService => 
       .where(eq(formSnapshots.id, revision.formSnapshotId))
       .get();
     if (!snapshot) {
-      throw backendFailure("INTERNAL", "Run Form snapshot is missing", {
-        runId,
-        formSnapshotId: revision.formSnapshotId,
-      });
+      throw backendFailure("INTERNAL", "Run Form snapshot is missing");
     }
 
     const form = JSON.parse(snapshot.schemaJson) as FormSnapshot;
