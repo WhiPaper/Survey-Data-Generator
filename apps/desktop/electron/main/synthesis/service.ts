@@ -265,7 +265,7 @@ const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]): Ta
   const rawMeans = Array.isArray(record.means) ? record.means.map(jsonRecord) : [];
 
   const outcome = TargetSetOutcomeSchema.parse({
-    targets: targets.flatMap((target) => {
+    targets: targets.flatMap<TargetSetOutcome["targets"][number]>((target) => {
       if (target.kind === "count") {
         const raw = rawCounts.find((candidate) => String(candidate.id) === String(target.id));
         if (!raw || typeof raw.count !== "number" || typeof raw.absoluteError !== "number") {
@@ -887,7 +887,10 @@ export const createSynthesisService = ({
               (target) => target.kind === "count" && !target.exact,
             )
           ) {
-            throw backendFailure("INTERNAL", "Replacement plan does not satisfy exact count targets");
+            throw backendFailure(
+              "INTERNAL",
+              "Replacement plan does not satisfy exact count targets",
+            );
           }
 
           const planId = randomUUID();

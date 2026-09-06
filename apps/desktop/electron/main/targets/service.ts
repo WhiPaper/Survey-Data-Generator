@@ -414,7 +414,11 @@ const validateDraft = (
     if (target.kind === "share") {
       if (target.intent.kind === "count_delta") {
         issues.push(
-          targetIssue([id], "domain_unsupported", "Share target does not support count_delta intent"),
+          targetIssue(
+            [id],
+            "domain_unsupported",
+            "Share target does not support count_delta intent",
+          ),
         );
       } else if (
         target.intent.kind === "absolute" &&

@@ -403,7 +403,7 @@ describe("target synthesis service", () => {
         {
           targetIds: ["t-seoul", "t-busan"],
           code: "target_conflict",
-          message: "Single-choice option targets exceed the final response count",
+          message: "Single-choice share targets exceed 100%",
         },
       ],
     });
