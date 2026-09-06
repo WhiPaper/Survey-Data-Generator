@@ -52,13 +52,14 @@ const asNormalizedResponse = (value: unknown): NormalizedResponse => {
   return value as NormalizedResponse;
 };
 
-const targetScore = (response: NormalizedResponse, questionId: QuestionId): number => {
+const targetScore = (response: NormalizedResponse, questionId: QuestionId): number | null => {
   const slot = response.answers[questionId];
-  if (slot?.state !== "answered" || slot.value.kind !== "ordinal") {
-    throw backendFailure(
-      "VALIDATION_FAILED",
-      "Mean synthesis currently requires the target ordinal question to be answered in every source row",
-    );
+  if (!slot) {
+    throw backendFailure("INTERNAL", `Stored response is missing question ${questionId}`);
+  }
+  if (slot.state !== "answered") return null;
+  if (slot.value.kind !== "ordinal") {
+    throw backendFailure("INTERNAL", `Stored response has a non-ordinal value for ${questionId}`);
   }
   return slot.value.value;
 };
@@ -193,7 +194,7 @@ export const writeSourceParquet = async (
         name: column,
         data: normalized.map(({ response }) => targetScore(response, questionId)),
         type: "DOUBLE" as const,
-        nullable: false,
+        nullable: true,
       })),
       ...questionColumns,
     ],
@@ -242,6 +243,10 @@ const syntheticResponse = (
   const provisional = {} as Record<QuestionId, AnswerSlot>;
   for (const [questionId, column] of plan.targetScoreColumns) {
     const scoreValue = row[column];
+    if (scoreValue === null || scoreValue === undefined || Number.isNaN(scoreValue)) {
+      provisional[questionId] = { state: "skipped" };
+      continue;
+    }
     const score = typeof scoreValue === "number" ? scoreValue : Number(scoreValue);
     if (!Number.isFinite(score) || !Number.isInteger(score))
       throw backendFailure("INTERNAL", "Synthetic result contains an invalid ordinal score");
