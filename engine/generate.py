@@ -304,6 +304,38 @@ def _weighted_joint_requests(
     return requests
 
 
+def _sample_schema_share_candidates(
+    synthesizer: GaussianCopulaSynthesizer,
+    *,
+    column: str,
+    schema_value: str,
+    requested: int,
+    target_column: str,
+    target_score: int,
+    target_min: int,
+    target_max: int,
+    allowed_values: dict[str, frozenset[str]],
+    timestamp_column: str | None,
+    timestamp_start: pd.Timestamp | None,
+    timestamp_end: pd.Timestamp | None,
+) -> pd.DataFrame:
+    sampled = _sample_condition(
+        synthesizer,
+        requested=requested,
+        condition_values={target_column: target_score},
+        target_column=target_column,
+        target_score=target_score,
+        target_min=target_min,
+        target_max=target_max,
+        allowed_values=allowed_values,
+        timestamp_column=timestamp_column,
+        timestamp_start=timestamp_start,
+        timestamp_end=timestamp_end,
+    )
+    sampled[column] = schema_value
+    return sampled
+
+
 def _sample_schema_option_candidates(
     synthesizer: GaussianCopulaSynthesizer,
     model_data: pd.DataFrame,
@@ -393,11 +425,14 @@ def generate_candidates(
             raise ValueError(f"categorical source column must contain strings only: {column}")
         allowed_values[column] = frozenset(values.tolist())
 
+    share_schema_member_values: frozenset[str] = frozenset()
     if share_support is not None:
         if share_support.column not in allowed_values:
             raise ValueError("share support column must be one of categorical_columns")
-        if not share_support.member_values <= allowed_values[share_support.column]:
-            raise ValueError("share support contains categorical values outside the observed source support")
+        observed_share_values = allowed_values[share_support.column]
+        share_schema_member_values = share_support.member_values - observed_share_values
+        if any(not answer_cell_eligible(value) for value in share_schema_member_values):
+            raise ValueError("share support outside observed source support must be schema-backed AnswerSlots")
         if share_support.synthetic_member_count < 0 or share_support.synthetic_nonmember_count < 0:
             raise ValueError("share support counts must be non-negative")
 
@@ -460,15 +495,15 @@ def generate_candidates(
 
     if share_support is not None:
         observed = allowed_values[share_support.column]
-        member_values = share_support.member_values
-        nonmember_values = observed - member_values
+        observed_member_values = share_support.member_values - share_schema_member_values
+        nonmember_values = observed - observed_member_values
         for score, required_score_count in candidate_score_counts.items():
             state_requests = [
                 (
-                    member_values,
+                    observed_member_values,
                     max(
                         min(required_score_count, share_support.synthetic_member_count),
-                        1 if member_values else 0,
+                        1 if observed_member_values else 0,
                     ),
                 ),
                 (
@@ -497,6 +532,30 @@ def generate_candidates(
                                 target_column: score,
                                 share_support.column: value,
                             },
+                            target_column=target_column,
+                            target_score=score,
+                            target_min=target_min,
+                            target_max=target_max,
+                            allowed_values=allowed_values,
+                            timestamp_column=timestamp_column,
+                            timestamp_start=timestamp_start,
+                            timestamp_end=timestamp_end,
+                        )
+                    )
+
+            if share_support.synthetic_member_count > 0 and share_schema_member_values:
+                directed_total = max(
+                    min(required_score_count, share_support.synthetic_member_count) * 3,
+                    20,
+                )
+                schema_requested = max(1, math.ceil(directed_total / len(share_schema_member_values)))
+                for schema_value in sorted(share_schema_member_values):
+                    accepted.append(
+                        _sample_schema_share_candidates(
+                            synthesizer,
+                            column=share_support.column,
+                            schema_value=schema_value,
+                            requested=schema_requested,
                             target_column=target_column,
                             target_score=score,
                             target_min=target_min,
