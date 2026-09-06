@@ -79,6 +79,8 @@ class ShareAchievement:
     value: float
     achieved_share: float
     absolute_error: float
+    numerator_count: int = 0
+    denominator_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -130,14 +132,30 @@ class MeanSelection:
     exact_target: bool
 
 
-def _source_scores(source: pd.DataFrame, target_column: str) -> pd.Series:
-    scores = pd.to_numeric(source[target_column], errors="coerce")
-    if scores.isna().any():
+def _mean_vectors(data: pd.DataFrame, target_column: str) -> tuple[pd.Series, np.ndarray]:
+    if target_column not in data.columns:
+        raise TargetInfeasible("mean_column_missing", f"Target column is missing: {target_column}")
+    numeric = pd.to_numeric(data[target_column], errors="coerce")
+    answered = numeric.notna().to_numpy(dtype=float)
+    return numeric.fillna(0.0), answered
+
+
+def _validate_mean_values(data: pd.DataFrame, target: MeanTarget) -> None:
+    if target.column not in data.columns:
+        raise TargetInfeasible("mean_column_missing", f"Target column is missing: {target.column}")
+    numeric = pd.to_numeric(data[target.column], errors="coerce")
+    answered = numeric.dropna()
+    if answered.empty:
+        return
+    rounded = answered.round()
+    if (
+        not np.isclose(answered.to_numpy(dtype=float), rounded.to_numpy(dtype=float), atol=1e-9).all()
+        or not rounded.between(target.minimum, target.maximum).all()
+    ):
         raise TargetInfeasible(
-            "mean_requires_answered_source",
-            "Mean targets currently require the target ordinal question to be answered in every source row",
+            "candidate_support",
+            f"Mean target {target.id} contains a score outside its ordinal domain",
         )
-    return scores
 
 
 def plan_mean_support(
@@ -163,18 +181,25 @@ def plan_mean_support(
             f"Requested mean {target_mean} is outside [{target_min}, {target_max}]",
         )
 
-    source_scores = _source_scores(source, target_column)
+    target = MeanTarget("mean", target_column, target_mean, target_min, target_max)
+    _validate_mean_values(source, target)
+    source_scores, source_answered = _mean_vectors(source, target_column)
+    answered_count = int(source_answered.sum())
     additions = final_count - source_count
+    if answered_count == 0 and additions == 0:
+        raise TargetInfeasible("mean_zero_denominator", "Mean target has no answered rows")
+
     source_sum = float(source_scores.sum())
+    final_denominator = answered_count + additions
     if additions == 0:
-        achieved = source_sum / final_count
+        achieved = source_sum / answered_count
         return MeanSupportPlan(
             score_counts={},
             achieved_mean=achieved,
             absolute_error=abs(achieved - target_mean),
         )
 
-    desired_synthetic_sum = target_mean * final_count - source_sum
+    desired_synthetic_sum = target_mean * final_denominator - source_sum
     minimum_sum = additions * target_min
     maximum_sum = additions * target_max
     nearest_integer_sum = int(np.floor(desired_synthetic_sum + 0.5))
@@ -188,7 +213,7 @@ def plan_mean_support(
     if remainder > 0:
         score_counts[int(low_score + 1)] = int(remainder)
 
-    achieved = (source_sum + synthetic_sum) / final_count
+    achieved = (source_sum + synthetic_sum) / final_denominator
     return MeanSupportPlan(
         score_counts=score_counts,
         achieved_mean=float(achieved),
@@ -215,6 +240,14 @@ def _membership(data: pd.DataFrame, target: ShareTarget) -> np.ndarray:
         values=target.member_values,
         missing_code="share_column_missing",
     )
+
+
+def _share_vectors(data: pd.DataFrame, target: ShareTarget) -> tuple[np.ndarray, np.ndarray]:
+    if target.column not in data.columns:
+        raise TargetInfeasible("share_column_missing", f"Target column is missing: {target.column}")
+    denominator = data[target.column].map(answer_cell_eligible).to_numpy(dtype=float)
+    numerator = denominator * _membership(data, target)
+    return denominator, numerator
 
 
 def _count_membership(data: pd.DataFrame, target: CountTarget) -> np.ndarray:
@@ -274,18 +307,24 @@ def plan_share_support(
     if not target.member_values:
         raise TargetInfeasible(
             "share_member_support",
-            f"ValueGroup {target.id} has no observed member values in this SourceScope",
+            f"Target {target.id} has no supported member values in this SourceScope",
         )
 
-    source_member_count = int(_membership(source, target).sum())
+    source_denominator, source_numerator = _share_vectors(source, target)
+    source_denominator_count = int(source_denominator.sum())
+    source_member_count = int(source_numerator.sum())
     additions = final_count - source_count
-    nearest_final_members = int(np.floor(target.value * final_count + 0.5))
+    final_denominator = source_denominator_count + additions
+    if final_denominator <= 0:
+        raise TargetInfeasible("share_zero_denominator", f"Share target {target.id} has no eligible rows")
+
+    nearest_final_members = int(np.floor(target.value * final_denominator + 0.5))
     final_member_count = min(
         max(nearest_final_members, source_member_count),
         source_member_count + additions,
     )
     synthetic_member_count = final_member_count - source_member_count
-    achieved_share = final_member_count / final_count
+    achieved_share = final_member_count / final_denominator
     return ShareSupportPlan(
         id=target.id,
         source_member_count=source_member_count,
@@ -309,7 +348,7 @@ def _validate_conditional_target(target: ConditionalShareTarget) -> None:
     if not target.option_values:
         raise TargetInfeasible(
             "conditional_option_support",
-            f"Conditional target {target.id} has no observed checkbox option values",
+            f"Conditional target {target.id} has no observed or schema-backed checkbox option values",
         )
 
 
@@ -368,11 +407,6 @@ def plan_conditional_support(
         raise ValueError("conditional support targets must share one eligible question")
 
     source_population_count = int(_conditional_vectors(source, targets[0])[0].sum())
-    if source_population_count <= 0:
-        raise TargetInfeasible(
-            "conditional_population_empty",
-            "Conditional target eligible population is empty in the immutable source",
-        )
     additions = final_count - len(source)
     available_population_additions = additions if population_additions is None else population_additions
     if not 0 <= available_population_additions <= additions:
@@ -380,10 +414,13 @@ def plan_conditional_support(
             "conditional_population_conflict",
             "Conditional eligible population conflicts with the overall share target",
         )
-    denominators = range(
-        source_population_count,
-        source_population_count + available_population_additions + 1,
-    )
+    start = max(1, source_population_count)
+    denominators = range(start, source_population_count + available_population_additions + 1)
+    if start > source_population_count + available_population_additions:
+        raise TargetInfeasible(
+            "conditional_population_empty",
+            "Conditional target cannot obtain a non-zero eligible population",
+        )
 
     source_numerators = {
         target.id: int(_conditional_vectors(source, target)[1].sum()) for target in targets
@@ -417,6 +454,25 @@ def plan_conditional_support(
     return best
 
 
+def _mean_achievement(
+    target: MeanTarget,
+    source_values: pd.Series,
+    source_denominator: np.ndarray,
+    candidate_values: pd.Series | None = None,
+    candidate_denominator: np.ndarray | None = None,
+    selected: np.ndarray | None = None,
+) -> MeanAchievement:
+    numerator = float(source_values.sum())
+    denominator = int(source_denominator.sum())
+    if candidate_values is not None and candidate_denominator is not None and selected is not None:
+        numerator += float(candidate_values.iloc[selected].sum())
+        denominator += int(candidate_denominator[selected].sum())
+    if denominator <= 0:
+        raise TargetInfeasible("mean_zero_denominator", f"Mean target {target.id} has no answered rows")
+    achieved = numerator / denominator
+    return MeanAchievement(target.id, target.value, achieved, abs(achieved - target.value))
+
+
 def select_for_targets(
     source: pd.DataFrame,
     candidates: pd.DataFrame,
@@ -448,24 +504,27 @@ def select_for_targets(
     for target in conditional_share_targets:
         _validate_conditional_target(target)
 
-    source_count = len(source)
-    mean_support = plan_mean_support(
-        source,
-        target_column=target_column,
-        final_count=final_count,
-        target_mean=target_mean,
-        target_min=target_min,
-        target_max=target_max,
+    primary_mean = MeanTarget(primary_mean_id, target_column, target_mean, target_min, target_max)
+    mean_targets = (primary_mean, *extra_mean_targets)
+    mean_supports = tuple(
+        plan_mean_support(
+            source,
+            target_column=target.column,
+            final_count=final_count,
+            target_mean=target.value,
+            target_min=target.minimum,
+            target_max=target.maximum,
+        )
+        for target in mean_targets
     )
+    source_mean_vectors = tuple(_mean_vectors(source, target.column) for target in mean_targets)
     share_supports = tuple(
         plan_share_support(source, target=share, final_count=final_count)
         for share in share_targets
     )
-    source_scores = _source_scores(source, target_column)
-    extra_source_scores = tuple(_source_scores(source, target.column) for target in extra_mean_targets)
+    source_share_vectors = tuple(_share_vectors(source, share) for share in share_targets)
+    source_count = len(source)
     additions = final_count - source_count
-    source_sum = float(source_scores.sum())
-    source_member_counts = [support.source_member_count for support in share_supports]
     source_conditional = [
         _conditional_vectors(source, target) for target in conditional_share_targets
     ]
@@ -489,15 +548,27 @@ def select_for_targets(
         )
 
     if additions == 0:
-        shares = tuple(
-            ShareAchievement(
-                id=share.id,
-                value=share.value,
-                achieved_share=support.achieved_share,
-                absolute_error=support.absolute_error,
-            )
-            for share, support in zip(share_targets, share_supports, strict=True)
+        mean_results = tuple(
+            _mean_achievement(target, values, denominator)
+            for target, (values, denominator) in zip(mean_targets, source_mean_vectors, strict=True)
         )
+        shares: list[ShareAchievement] = []
+        for share, (denominator, numerator) in zip(share_targets, source_share_vectors, strict=True):
+            denominator_count = int(denominator.sum())
+            if denominator_count <= 0:
+                raise TargetInfeasible("share_zero_denominator", f"Share target {share.id} has no eligible rows")
+            numerator_count = int(numerator.sum())
+            achieved = numerator_count / denominator_count
+            shares.append(
+                ShareAchievement(
+                    share.id,
+                    share.value,
+                    achieved,
+                    abs(achieved - share.value),
+                    numerator_count,
+                    denominator_count,
+                )
+            )
         conditional_results: list[ConditionalShareAchievement] = []
         for target, (population, numerator) in zip(
             conditional_share_targets, source_conditional, strict=True
@@ -520,18 +591,24 @@ def select_for_targets(
                     absolute_error=abs(achieved_share - target.value),
                 )
             )
+        primary = mean_results[0]
         return TargetSelection(
             selected_indices=np.array([], dtype=int),
-            achieved_mean=mean_support.achieved_mean,
-            mean_absolute_error=mean_support.absolute_error,
-            mean_exact=mean_support.absolute_error <= 1e-9,
+            achieved_mean=primary.achieved_mean,
+            mean_absolute_error=primary.absolute_error,
+            mean_exact=primary.absolute_error <= 1e-9,
             counts=tuple(
-                CountAchievement(target.id, target.value, int(_count_membership(source, target).sum()), abs(int(_count_membership(source, target).sum()) - target.value))
+                CountAchievement(
+                    target.id,
+                    target.value,
+                    int(_count_membership(source, target).sum()),
+                    abs(int(_count_membership(source, target).sum()) - target.value),
+                )
                 for target in count_targets
             ),
-            shares=shares,
+            shares=tuple(shares),
             conditional_shares=tuple(conditional_results),
-            means=(MeanAchievement(primary_mean_id, target_mean, mean_support.achieved_mean, mean_support.absolute_error), *tuple(MeanAchievement(target.id, target.value, float(scores.mean()), abs(float(scores.mean()) - target.value)) for target, scores in zip(extra_mean_targets, extra_source_scores, strict=True))),
+            means=mean_results,
         )
 
     if len(candidates) < additions:
@@ -539,19 +616,11 @@ def select_for_targets(
             "candidate_support",
             f"Candidate pool contains {len(candidates)} rows but {additions} additions are required",
         )
-    candidate_scores = pd.to_numeric(candidates[target_column], errors="coerce")
-    if candidate_scores.isna().any():
-        raise TargetInfeasible(
-            "candidate_support",
-            "Candidate pool contains unanswered or invalid target scores",
-        )
 
-    candidate_score_values = candidate_scores.to_numpy(dtype=float)
-    extra_candidate_scores = tuple(pd.to_numeric(candidates[target.column], errors="coerce") for target in extra_mean_targets)
-    if any(scores.isna().any() for scores in extra_candidate_scores):
-        raise TargetInfeasible("candidate_support", "Candidate pool contains unanswered or invalid mean scores")
-    source_memberships = [_membership(source, share) for share in share_targets]
-    candidate_memberships = [_membership(candidates, share) for share in share_targets]
+    for target in mean_targets:
+        _validate_mean_values(candidates, target)
+    candidate_mean_vectors = tuple(_mean_vectors(candidates, target.column) for target in mean_targets)
+    candidate_share_vectors = tuple(_share_vectors(candidates, share) for share in share_targets)
     source_count_memberships = [_count_membership(source, target) for target in count_targets]
     candidate_count_memberships = [_count_membership(candidates, target) for target in count_targets]
     candidate_conditional = [
@@ -566,30 +635,52 @@ def select_for_targets(
         population_additions = (
             population_support.synthetic_member_count if population_support is not None else additions
         )
+        start = max(1, source_population)
         group_denominators[key] = list(
-            range(source_population, source_population + population_additions + 1)
+            range(start, source_population + population_additions + 1)
         )
 
+    score_columns = []
+    mean_denominators = []
+    for (source_values, source_denominator), (candidate_values, candidate_denominator) in zip(
+        source_mean_vectors, candidate_mean_vectors, strict=True
+    ):
+        score_columns.append(
+            np.concatenate([source_values.to_numpy(dtype=float), candidate_values.to_numpy(dtype=float)])
+        )
+        mean_denominators.append(np.concatenate([source_denominator, candidate_denominator]))
+
     solution = solve_binary_selection(
-        scores=np.column_stack((
-            np.concatenate([source_scores.to_numpy(dtype=float), candidate_score_values]),
-            *(np.concatenate([source_values.to_numpy(dtype=float), candidate_values.to_numpy(dtype=float)]) for source_values, candidate_values in zip(extra_source_scores, extra_candidate_scores, strict=True)),
-        )),
+        scores=np.column_stack(tuple(score_columns)),
         final_count=final_count,
-        target_means=(target_mean, *(target.value for target in extra_mean_targets)),
+        target_means=tuple(target.value for target in mean_targets),
+        mean_denominators=tuple(mean_denominators),
+        mean_ranges=tuple(float(target.maximum - target.minimum) for target in mean_targets),
         source_count=source_count,
         fix_source=True,
         share_memberships=tuple(
-            np.concatenate([source_membership, candidate_membership])
-            for source_membership, candidate_membership in zip(
-                source_memberships, candidate_memberships, strict=True
+            np.concatenate([source_vectors[1], candidate_vectors[1]])
+            for source_vectors, candidate_vectors in zip(
+                source_share_vectors, candidate_share_vectors, strict=True
+            )
+        ),
+        share_denominators=tuple(
+            np.concatenate([source_vectors[0], candidate_vectors[0]])
+            for source_vectors, candidate_vectors in zip(
+                source_share_vectors, candidate_share_vectors, strict=True
             )
         ),
         share_values=tuple(target.value for target in share_targets),
-        count_memberships=tuple(
-            np.concatenate([source_membership, candidate_membership])
-            for source_membership, candidate_membership in zip(source_count_memberships, candidate_count_memberships, strict=True)
-        ) if enforce_counts else (),
+        count_memberships=(
+            tuple(
+                np.concatenate([source_membership, candidate_membership])
+                for source_membership, candidate_membership in zip(
+                    source_count_memberships, candidate_count_memberships, strict=True
+                )
+            )
+            if enforce_counts
+            else ()
+        ),
         count_values=tuple(target.value for target in count_targets) if enforce_counts else (),
         conditionals=tuple(
             ConditionalMetric(
@@ -619,47 +710,55 @@ def select_for_targets(
             f"MILP selected {len(selected)} rows but {additions} additions were required"
         )
 
-    achieved_mean = float(
-        (source_sum + float(candidate_score_values[selected].sum())) / final_count
-    )
-    mean_error = abs(achieved_mean - target_mean)
-    extra_mean_results = tuple(
-        MeanAchievement(
-            target.id, target.value,
-            float((float(source_values.sum()) + float(candidate_values.iloc[selected].sum())) / final_count),
-            abs(float((float(source_values.sum()) + float(candidate_values.iloc[selected].sum())) / final_count) - target.value),
+    mean_results = tuple(
+        _mean_achievement(
+            target,
+            source_values,
+            source_denominator,
+            candidate_values,
+            candidate_denominator,
+            selected,
         )
-        for target, source_values, candidate_values in zip(extra_mean_targets, extra_source_scores, extra_candidate_scores, strict=True)
-    )
-    if mean_error > mean_support.absolute_error + 1e-9:
-        raise TargetInfeasible(
-            "candidate_target_support",
-            (
-                f"Candidate pool can only reach mean {achieved_mean:.6f}, but the ordinal score domain "
-                f"can reach {mean_support.achieved_mean:.6f} for this immutable source"
-            ),
+        for target, (source_values, source_denominator), (candidate_values, candidate_denominator) in zip(
+            mean_targets, source_mean_vectors, candidate_mean_vectors, strict=True
         )
+    )
+    for achieved, support in zip(mean_results, mean_supports, strict=True):
+        if achieved.absolute_error > support.absolute_error + 1e-9:
+            raise TargetInfeasible(
+                "candidate_target_support",
+                (
+                    f"Candidate pool can only reach mean {achieved.achieved_mean:.6f} for {achieved.id}, "
+                    f"but the ordinal domain can reach {support.achieved_mean:.6f}"
+                ),
+            )
 
-    share_results = tuple(
-        ShareAchievement(
-            id=share.id,
-            value=share.value,
-            achieved_share=(source_member + int(membership[selected].sum())) / final_count,
-            absolute_error=abs(
-                (source_member + int(membership[selected].sum())) / final_count - share.value
-            ),
+    share_results: list[ShareAchievement] = []
+    for share, source_vectors, candidate_vectors in zip(
+        share_targets, source_share_vectors, candidate_share_vectors, strict=True
+    ):
+        denominator_count = int(source_vectors[0].sum() + candidate_vectors[0][selected].sum())
+        if denominator_count <= 0:
+            raise TargetInfeasible("share_zero_denominator", f"Share target {share.id} has no eligible rows")
+        numerator_count = int(source_vectors[1].sum() + candidate_vectors[1][selected].sum())
+        achieved_share = numerator_count / denominator_count
+        share_results.append(
+            ShareAchievement(
+                share.id,
+                share.value,
+                achieved_share,
+                abs(achieved_share - share.value),
+                numerator_count,
+                denominator_count,
+            )
         )
-        for share, source_member, membership in zip(
-            share_targets, source_member_counts, candidate_memberships, strict=True
-        )
-    )
     for achieved, support in zip(share_results, share_supports, strict=True):
         if achieved.absolute_error > support.absolute_error + 1e-9:
             raise TargetInfeasible(
                 "candidate_target_support",
                 (
                     f"Candidate pool can only reach share {achieved.achieved_share:.6f} for {achieved.id}, "
-                    f"but immutable source counts can reach {support.achieved_share:.6f}"
+                    f"but directed support can reach {support.achieved_share:.6f}"
                 ),
             )
 
@@ -701,29 +800,33 @@ def select_for_targets(
                 "candidate_target_support",
                 (
                     "Candidate pool can only reach total conditional share error "
-                    f"{actual_total_error:.6f}, but immutable source counts can reach "
+                    f"{actual_total_error:.6f}, but directed support can reach "
                     f"{support.total_absolute_error:.6f} with eligible population denominator "
                     f"{support.denominator_count}"
                 ),
             )
 
+    primary = mean_results[0]
     return TargetSelection(
         selected_indices=selected,
-        achieved_mean=achieved_mean,
-        mean_absolute_error=mean_error,
-        mean_exact=mean_error <= 1e-9,
+        achieved_mean=primary.achieved_mean,
+        mean_absolute_error=primary.absolute_error,
+        mean_exact=primary.absolute_error <= 1e-9,
         counts=tuple(
             CountAchievement(
                 target.id,
                 target.value,
-                (achieved := int(_count_membership(source, target).sum() + _count_membership(candidates, target)[selected].sum())),
+                (achieved := int(
+                    _count_membership(source, target).sum()
+                    + _count_membership(candidates, target)[selected].sum()
+                )),
                 abs(achieved - target.value),
             )
             for target in count_targets
         ),
-        shares=share_results,
+        shares=tuple(share_results),
         conditional_shares=tuple(conditional_results),
-        means=(MeanAchievement(primary_mean_id, target_mean, achieved_mean, mean_error), *extra_mean_results),
+        means=mean_results,
     )
 
 
