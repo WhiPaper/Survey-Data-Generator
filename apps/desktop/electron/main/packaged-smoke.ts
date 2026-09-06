@@ -1,6 +1,8 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { FormId } from "@survey-synth/contracts";
+
 import { loadGoogleOAuthConfig } from "./auth/config";
 import { createGoogleProvider } from "./auth/google-provider";
 import type { PythonEngine } from "./compute/python-engine";
@@ -82,7 +84,7 @@ const verifyGoogleOAuthLoopback = async (appPath: string): Promise<void> => {
 
 const verifyFormsImportBoundary = async (forms: FormsService): Promise<void> => {
   try {
-    await forms.importForm({ formId: "packaged-smoke-form" });
+    await forms.importForm({ formId: "packaged-smoke-form" as FormId });
     throw new Error("Packaged Forms import smoke unexpectedly succeeded without an account");
   } catch (error: unknown) {
     expectBackendFailure(error, "UNAUTHENTICATED");
