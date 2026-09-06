@@ -3,9 +3,6 @@
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@11.19.0",
-  "prettier": {
-    "endOfLine": "auto"
-  },
   "scripts": {
     "dev": "pnpm --filter @survey-synth/desktop dev",
     "check": "node scripts/check.mjs",
