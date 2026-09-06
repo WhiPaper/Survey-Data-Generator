@@ -38,6 +38,7 @@ class ConditionalCandidateSupport:
     option_column: str
     option_values: frozenset[str]
     target_value: float
+    schema_option_values: frozenset[str] = frozenset()
 
 
 def _model_frame(source: pd.DataFrame, id_column: str) -> pd.DataFrame:
@@ -303,6 +304,50 @@ def _weighted_joint_requests(
     return requests
 
 
+def _sample_schema_option_candidates(
+    synthesizer: GaussianCopulaSynthesizer,
+    model_data: pd.DataFrame,
+    support: ConditionalCandidateSupport,
+    *,
+    schema_value: str,
+    requested: int,
+    target_column: str,
+    target_score: int,
+    target_min: int,
+    target_max: int,
+    allowed_values: dict[str, frozenset[str]],
+    timestamp_column: str | None,
+    timestamp_start: pd.Timestamp | None,
+    timestamp_end: pd.Timestamp | None,
+) -> list[pd.DataFrame]:
+    batches: list[pd.DataFrame] = []
+    for population_value, amount in _weighted_requests(
+        model_data,
+        support.population_column,
+        support.population_member_values,
+        requested,
+    ):
+        sampled = _sample_condition(
+            synthesizer,
+            requested=amount,
+            condition_values={
+                target_column: target_score,
+                support.population_column: population_value,
+            },
+            target_column=target_column,
+            target_score=target_score,
+            target_min=target_min,
+            target_max=target_max,
+            allowed_values=allowed_values,
+            timestamp_column=timestamp_column,
+            timestamp_start=timestamp_start,
+            timestamp_end=timestamp_end,
+        )
+        sampled[support.option_column] = schema_value
+        batches.append(sampled)
+    return batches
+
+
 def generate_candidates(
     source: pd.DataFrame,
     *,
@@ -361,8 +406,13 @@ def generate_candidates(
             raise ValueError("conditional support columns must be categorical columns")
         if not support.population_member_values <= allowed_values[support.population_column]:
             raise ValueError("conditional population support is outside observed source support")
-        if not support.option_values <= allowed_values[support.option_column]:
-            raise ValueError("conditional option support is outside observed source support")
+        if not support.schema_option_values <= support.option_values:
+            raise ValueError("schema option support must be included in conditional option support")
+        observed_option_values = support.option_values - support.schema_option_values
+        if not observed_option_values <= allowed_values[support.option_column]:
+            raise ValueError("conditional option support is outside observed or schema-backed support")
+        if any(not answer_cell_eligible(value) for value in support.schema_option_values):
+            raise ValueError("schema option support must represent an eligible AnswerSlot")
         if not 0 <= support.target_value <= 1:
             raise ValueError("conditional support target must be between 0 and 1")
 
@@ -463,11 +513,12 @@ def generate_candidates(
         eligible_options = frozenset(
             value for value in observed_options if answer_cell_eligible(value)
         )
+        observed_target_options = support.option_values - support.schema_option_values
         states: list[frozenset[str]] = []
-        if support.target_value > 0:
-            states.append(support.option_values)
+        if support.target_value > 0 and observed_target_options:
+            states.append(observed_target_options)
         if support.target_value < 1:
-            states.append(eligible_options - support.option_values)
+            states.append(eligible_options - observed_target_options)
         for score, required_score_count in candidate_score_counts.items():
             directed_total = max(required_score_count * 3, 30)
             for option_values in states:
@@ -484,6 +535,27 @@ def generate_candidates(
                             synthesizer,
                             requested=requested,
                             condition_values={target_column: score, **conditions},
+                            target_column=target_column,
+                            target_score=score,
+                            target_min=target_min,
+                            target_max=target_max,
+                            allowed_values=allowed_values,
+                            timestamp_column=timestamp_column,
+                            timestamp_start=timestamp_start,
+                            timestamp_end=timestamp_end,
+                        )
+                    )
+
+            if support.target_value > 0 and support.schema_option_values:
+                schema_requested = max(1, math.ceil(directed_total / len(support.schema_option_values)))
+                for schema_value in sorted(support.schema_option_values):
+                    accepted.extend(
+                        _sample_schema_option_candidates(
+                            synthesizer,
+                            model_data,
+                            support,
+                            schema_value=schema_value,
+                            requested=schema_requested,
                             target_column=target_column,
                             target_score=score,
                             target_min=target_min,
