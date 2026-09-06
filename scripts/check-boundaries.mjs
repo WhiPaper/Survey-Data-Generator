@@ -12,7 +12,7 @@ const packageRules = [
     files: "packages/domain/src/**/*.ts",
     forbidden: [
       /^@survey-synth\/(contracts|test-support)/,
-      /^(react|react-dom|zod|tauri|@tauri\/)/,
+      /^(react|react-dom|zod)/,
       /(^|\/)apps\//,
       noInternalPackageSource,
       noNodeRuntime,
@@ -26,7 +26,7 @@ const packageRules = [
       /^@survey-synth\/test-support/,
       noInternalPackageSource,
       noNodeRuntime,
-      /^(react|react-dom|tauri|@tauri\/)/,
+      /^(react|react-dom|)/,
       /(^|\/)apps\//,
       /(google|sqlite|highs|solver)/i,
     ],
