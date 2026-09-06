@@ -24,9 +24,3 @@ google_oauth.local.json
 .agents/
 skills-lock.json
 
-# Legacy Tauri-generated schemas and local build output. Remove with the Tauri tree.
-src-tauri/gen/
-src-tauri/binaries/*
-!src-tauri/binaries/README.md
-src-tauri/resources/sidecar/
-src-tauri/tauri.release.generated.conf.json

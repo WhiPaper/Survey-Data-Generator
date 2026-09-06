@@ -11,7 +11,7 @@ const packageRules = [
     name: "domain",
     files: "packages/domain/src/**/*.ts",
     forbidden: [
-      /^@survey-synth\/(contracts|test-support)/,
+      /^@survey-synth\/contracts/,
       /^(react|react-dom|zod)/,
       /(^|\/)apps\//,
       noInternalPackageSource,
@@ -23,7 +23,7 @@ const packageRules = [
     name: "contracts",
     files: "packages/contracts/src/**/*.ts",
     forbidden: [
-      /^@survey-synth\/test-support/,
+      /^@survey-synth\/never/,
       noInternalPackageSource,
       noNodeRuntime,
       /^(react|react-dom)/,

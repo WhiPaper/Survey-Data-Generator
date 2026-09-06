@@ -10,7 +10,6 @@ export default [
       "**/out/**",
       "**/node_modules/**",
       "**/coverage/**",
-      "src-tauri/gen/**",
     ],
   },
   eslint.configs.recommended,
@@ -43,10 +42,8 @@ export default [
   {
     files: [
       "apps/desktop/vite.config.ts",
-      "apps/sidecar/**/*.ts",
       "scripts/**/*.{mjs,js}",
-      "tests/**/*.{ts,tsx,mjs,js}",
-      "apps/desktop/test/**/*.{js,cjs,mjs}",
+      "apps/desktop/test/**/*.{ts,tsx,js,cjs,mjs}",
     ],
     languageOptions: { globals: globals.node },
   },

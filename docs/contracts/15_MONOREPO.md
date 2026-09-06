@@ -103,7 +103,6 @@ Enforce only meaningful rules:
 ```text
 domain cannot import apps/infrastructure
 desktop renderer cannot import Main-only modules
-production cannot import test-support
 ```
 
 Avoid a large abstract dependency graph before the codebase requires it.
