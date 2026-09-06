@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
+import numpy as np
 import pandas as pd
 from scipy.stats import ks_2samp
 from sdmetrics.reports import QualityReport
@@ -33,6 +34,7 @@ class MeanEvaluation:
     requested: float
     achieved: float
     absolute_error: float
+    denominator_count: int
 
 
 def _row_diagnostics(
@@ -134,14 +136,33 @@ def evaluate_result(
             f"Final dataset has {len(final)} rows; expected {expected_final_count}"
         )
 
-    resolved_means = tuple(mean_targets or (("mean", target_column, target_mean, target_min, target_max),))
+    resolved_means = tuple(
+        mean_targets or (("mean", target_column, target_mean, target_min, target_max),)
+    )
     evaluated_means: list[MeanEvaluation] = []
     for target_id, column, requested, minimum, maximum in resolved_means:
         target_values = pd.to_numeric(final[column], errors="coerce")
-        if target_values.isna().any(): raise RuntimeError("Final dataset contains an unanswered or invalid mean target value")
-        if not target_values.between(minimum, maximum).all(): raise RuntimeError("Final dataset contains a target score outside the allowed range")
-        achieved = float(target_values.mean())
-        evaluated_means.append(MeanEvaluation(target_id, column, requested, achieved, abs(achieved - requested)))
+        answered = target_values.dropna()
+        if answered.empty:
+            raise RuntimeError(f"Mean target {target_id} has an empty answered denominator")
+        rounded = answered.round()
+        if not np.isclose(
+            answered.to_numpy(dtype=float), rounded.to_numpy(dtype=float), atol=1e-9
+        ).all():
+            raise RuntimeError("Final dataset contains a non-integer ordinal target score")
+        if not rounded.between(minimum, maximum).all():
+            raise RuntimeError("Final dataset contains a target score outside the allowed range")
+        achieved = float(answered.mean())
+        evaluated_means.append(
+            MeanEvaluation(
+                target_id,
+                column,
+                requested,
+                achieved,
+                abs(achieved - requested),
+                int(len(answered)),
+            )
+        )
     achieved_mean = evaluated_means[0].achieved if evaluated_means else 0.0
     absolute_error = evaluated_means[0].absolute_error if evaluated_means else 0.0
     (
