@@ -381,7 +381,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
     if len({target.id for target in job.share_targets}) != len(job.share_targets):
         raise ValueError("share target ids must be unique")
     if len(job.share_targets) > 1:
-        raise ValueError("M6 currently supports at most one overall share target per Run")
+        raise ValueError("The current synthesis engine supports at most one unconditional share target per Run")
     if len({target.id for target in job.conditional_share_targets}) != len(
         job.conditional_share_targets
     ):
