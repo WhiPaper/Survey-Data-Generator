@@ -6,7 +6,7 @@ import unittest
 import pandas as pd
 
 from generate import ConditionalCandidateSupport, generate_candidates
-from select import ConditionalShareTarget, select_for_targets
+from candidate_selection import ConditionalShareTarget, select_for_targets
 
 
 def _slot(value: dict[str, object]) -> str:

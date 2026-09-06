@@ -39,7 +39,7 @@ from generate import (  # noqa: E402
 )
 from prepare import read_source, smoke_source, write_parquet  # noqa: E402
 from replacement import EditPlanSelection, plan_replacements  # noqa: E402
-from select import (  # noqa: E402
+from candidate_selection import (  # noqa: E402
     ConditionalShareTarget,
     ShareTarget,
     TargetInfeasible,

@@ -4,7 +4,7 @@ import unittest
 
 import pandas as pd
 
-from select import (
+from candidate_selection import (
     ConditionalShareTarget,
     ShareTarget,
     TargetInfeasible,

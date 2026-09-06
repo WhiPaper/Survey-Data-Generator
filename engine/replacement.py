@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from selection_solver import ConditionalMetric, PopulationKey, solve_binary_selection
-from select import (
+from candidate_selection import (
     ConditionalShareAchievement,
     ConditionalShareTarget,
     ShareAchievement,

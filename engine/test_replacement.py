@@ -5,7 +5,7 @@ import unittest
 import pandas as pd
 
 from replacement import plan_replacements
-from select import ConditionalShareTarget, ShareTarget
+from candidate_selection import ConditionalShareTarget, ShareTarget
 
 
 class ReplacementPlanningTest(unittest.TestCase):

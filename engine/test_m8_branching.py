@@ -6,7 +6,7 @@ import unittest
 import pandas as pd
 
 from answer_slots import answer_cell_eligible
-from select import ConditionalShareTarget, plan_conditional_support, select_for_targets
+from candidate_selection import ConditionalShareTarget, plan_conditional_support, select_for_targets
 
 
 def _slot(state: str, option_keys: list[str] | None = None) -> str:

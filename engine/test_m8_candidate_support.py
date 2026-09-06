@@ -6,7 +6,7 @@ import pandas as pd
 
 from generate import generate_candidates
 from replacement import plan_replacements
-from select import select_for_targets
+from candidate_selection import select_for_targets
 
 
 class CandidateSupportRegenerationTest(unittest.TestCase):
