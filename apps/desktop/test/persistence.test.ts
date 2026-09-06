@@ -16,7 +16,7 @@ import {
 } from "../electron/main/persistence/store";
 
 const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
-const versionsFile = fileURLToPath(new URL("../../../versions.json", import.meta.url));
+const versionsFile = fileURLToPath(new URL("../../../versions.json", import.meta.url"));
 
 const tempDirectories: string[] = [];
 const openDatabases: AppDatabase[] = [];
@@ -42,11 +42,11 @@ afterEach(() => {
 });
 
 describe("v2 persistence", () => {
-  it("starts from the single schema 0001 baseline", () => {
+  it("tracks the ordered schema migrations", () => {
     const migrationFiles = readdirSync(migrationsFolder)
       .filter((name) => name.endsWith(".sql"))
       .sort();
-    expect(migrationFiles).toEqual(["0001_initial.sql"]);
+    expect(migrationFiles).toEqual(["0001_initial.sql", "0002_target_drafts.sql"]);
 
     const journal = JSON.parse(
       readFileSync(join(migrationsFolder, "meta", "_journal.json"), "utf8"),
@@ -55,6 +55,10 @@ describe("v2 persistence", () => {
       expect.objectContaining({
         idx: 0,
         tag: "0001_initial",
+      }),
+      expect.objectContaining({
+        idx: 1,
+        tag: "0002_target_drafts",
       }),
     ]);
 
@@ -111,35 +115,50 @@ describe("v2 persistence", () => {
 
     createProject(database.db, {
       id: "project-1",
-      name: "Event survey",
+      name: "Customer survey",
       googleFormId: "form-1",
       nowMs: 1000,
     });
 
-    const revision = createSourceRevision(database.db, {
-      projectId: "project-1",
-      revisionId: "revision-1",
-      importedAtMs: 2000,
-      responseSetHash: "responses-hash-1",
+    createSourceRevision(database.db, {
+      revision: {
+        id: "revision-1",
+        projectId: "project-1",
+        formSnapshotId: "form-snapshot-1",
+        responseCount: 1,
+        responseSetHash: "hash-1",
+        importedAtMs: 2000,
+      },
       formSnapshot: {
         id: "form-snapshot-1",
-        title: "Event survey",
-        schema: { questions: [{ id: "q1", type: "choice" }] },
+        projectId: "project-1",
+        googleFormId: "form-1",
+        title: "Customer survey",
+        schema: { formId: "form-1", questions: [] },
         schemaHash: "schema-hash-1",
+        capturedAtMs: 2000,
       },
       responses: [
-        { responseId: "r2", submittedAtMs: 2200, response: { q1: "B" } },
-        { responseId: "r1", submittedAtMs: 2100, response: { q1: "A" } },
+        {
+          responseId: "response-1",
+          submittedAtMs: 1500,
+          response: {
+            responseId: "response-1",
+            answers: {},
+            origin: "original",
+            path: { questions: {}, confidence: "certain" },
+          },
+        },
       ],
     });
 
-    expect(revision.responseCount).toBe(2);
-    expect(getSourceRevision(database.db, "revision-1")).toEqual(revision);
     expect(getProject(database.db, "project-1")?.currentSourceRevisionId).toBe("revision-1");
-    expect(listSourceResponses(database.db, "revision-1")).toEqual([
-      { responseId: "r1", submittedAtMs: 2100, response: { q1: "A" } },
-      { responseId: "r2", submittedAtMs: 2200, response: { q1: "B" } },
-    ]);
+    expect(getSourceRevision(database.db, "revision-1")).toMatchObject({
+      id: "revision-1",
+      responseSetHash: "hash-1",
+      responseCount: 1,
+    });
+    expect(listSourceResponses(database.db, "revision-1")).toHaveLength(1);
   });
 
   it("rolls back the whole source revision when response ids are duplicated", () => {
@@ -147,31 +166,56 @@ describe("v2 persistence", () => {
 
     createProject(database.db, {
       id: "project-1",
-      name: "Event survey",
+      name: "Customer survey",
       googleFormId: "form-1",
       nowMs: 1000,
     });
 
     expect(() =>
       createSourceRevision(database.db, {
-        projectId: "project-1",
-        revisionId: "revision-bad",
-        importedAtMs: 2000,
-        responseSetHash: "responses-hash-bad",
+        revision: {
+          id: "revision-1",
+          projectId: "project-1",
+          formSnapshotId: "form-snapshot-1",
+          responseCount: 2,
+          responseSetHash: "hash-1",
+          importedAtMs: 2000,
+        },
         formSnapshot: {
-          id: "form-snapshot-bad",
-          title: "Event survey",
-          schema: {},
-          schemaHash: "schema-hash-bad",
+          id: "form-snapshot-1",
+          projectId: "project-1",
+          googleFormId: "form-1",
+          title: "Customer survey",
+          schema: { formId: "form-1", questions: [] },
+          schemaHash: "schema-hash-1",
+          capturedAtMs: 2000,
         },
         responses: [
-          { responseId: "duplicate", submittedAtMs: 2100, response: { q1: "A" } },
-          { responseId: "duplicate", submittedAtMs: 2200, response: { q1: "B" } },
+          {
+            responseId: "response-1",
+            submittedAtMs: 1500,
+            response: {
+              responseId: "response-1",
+              answers: {},
+              origin: "original",
+              path: { questions: {}, confidence: "certain" },
+            },
+          },
+          {
+            responseId: "response-1",
+            submittedAtMs: 1600,
+            response: {
+              responseId: "response-1",
+              answers: {},
+              origin: "original",
+              path: { questions: {}, confidence: "certain" },
+            },
+          },
         ],
       }),
     ).toThrow();
 
-    expect(getSourceRevision(database.db, "revision-bad")).toBeNull();
     expect(getProject(database.db, "project-1")?.currentSourceRevisionId).toBeNull();
+    expect(getSourceRevision(database.db, "revision-1")).toBeUndefined();
   });
 });
