@@ -13,7 +13,12 @@ import type {
   TargetProfileResult,
   TargetsValidateResult,
 } from "@survey-synth/contracts";
-import type { AnswerSlot, FormSnapshot, NormalizedResponse, QuestionId } from "@survey-synth/domain";
+import type {
+  AnswerSlot,
+  FormSnapshot,
+  NormalizedResponse,
+  QuestionId,
+} from "@survey-synth/domain";
 
 import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
@@ -231,7 +236,11 @@ const subjectMetric = (
     }
     if (value !== null && members.has(value)) count += 1;
   }
-  return { count, denominatorCount, share: denominatorCount === 0 ? 0 : count / denominatorCount };
+  return {
+    count,
+    denominatorCount,
+    share: denominatorCount === 0 ? 0 : count / denominatorCount,
+  };
 };
 
 const meanMetric = (
@@ -302,7 +311,11 @@ const conditionalMetric = (
       count += 1;
     }
   }
-  return { count, denominatorCount, share: denominatorCount === 0 ? 0 : count / denominatorCount };
+  return {
+    count,
+    denominatorCount,
+    share: denominatorCount === 0 ? 0 : count / denominatorCount,
+  };
 };
 
 const targetIssue = (
@@ -430,32 +443,27 @@ const validateDraft = (
   }
 
   for (const targets of directByQuestion.values()) {
-    const shareTotal = targets.reduce(
-      (sum, target) => sum + (target.kind === "share" ? target.intent!.value : 0),
-      0,
-    );
-    const ids = targets.map((target) => String(target.id));
+    const shareTargets = targets.filter((target) => target.kind === "share");
+    const shareTotal = shareTargets.reduce((sum, target) => sum + target.intent!.value, 0);
     if (shareTotal > 1 + 1e-9) {
       issues.push(
-        targetIssue(ids, "target_conflict", "Single-choice share targets exceed 100%"),
+        targetIssue(
+          shareTargets.map((target) => String(target.id)),
+          "target_conflict",
+          "Single-choice share targets exceed 100%",
+        ),
       );
-      continue;
     }
+
     if (draft.finalCount !== null && Number.isInteger(draft.finalCount) && draft.finalCount > 0) {
-      const requested = targets.reduce(
-        (sum, target) =>
-          sum +
-          (target.kind === "count"
-            ? target.intent!.value
-            : target.intent!.value * draft.finalCount!),
-        0,
-      );
-      if (requested > draft.finalCount + 1e-9) {
+      const countTargets = targets.filter((target) => target.kind === "count");
+      const countTotal = countTargets.reduce((sum, target) => sum + target.intent!.value, 0);
+      if (countTotal > draft.finalCount) {
         issues.push(
           targetIssue(
-            ids,
+            countTargets.map((target) => String(target.id)),
             "target_conflict",
-            "Single-choice option targets exceed the final response count",
+            "Single-choice count targets exceed the final response count",
           ),
         );
       }
@@ -634,8 +642,9 @@ export const createTargetService = (
   },
 
   saveDraft: async (draft) => {
-    if (!getProject(db, draft.projectId))
+    if (!getProject(db, draft.projectId)) {
       throw backendFailure("NOT_FOUND", "Project was not found");
+    }
     const nowMs = Date.now();
     db.insert(targetDrafts)
       .values({ projectId: draft.projectId, draftJson: JSON.stringify(draft), updatedAtMs: nowMs })
