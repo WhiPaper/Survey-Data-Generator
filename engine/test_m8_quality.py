@@ -28,19 +28,56 @@ class RowQualityDiagnosticsTest(unittest.TestCase):
         source_output["__origin"] = "original"
         final = pd.concat([source_output, synthetic], ignore_index=True)
 
-        (
-            duplicate_row_count,
-            max_fingerprint_count,
-            max_fingerprint_share,
-            source_clone_count,
-            source_clone_rate,
-        ) = _row_diagnostics(source, synthetic, final, id_column="response_id")
+        diagnostics = _row_diagnostics(source, synthetic, final, id_column="response_id")
 
-        self.assertEqual(duplicate_row_count, 5)
-        self.assertEqual(max_fingerprint_count, 3)
-        self.assertAlmostEqual(max_fingerprint_share, 0.75)
-        self.assertEqual(source_clone_count, 1)
-        self.assertAlmostEqual(source_clone_rate, 0.25)
+        self.assertEqual(diagnostics[0], 5)
+        self.assertEqual(diagnostics[1], 3)
+        self.assertAlmostEqual(diagnostics[2], 0.75)
+        self.assertEqual(diagnostics[3], 1)
+        self.assertAlmostEqual(diagnostics[4], 0.25)
+
+    def test_scales_exact_clone_and_concentration_counts_on_larger_fixture(self) -> None:
+        source_count = 5_000
+        synthetic_count = 1_500
+        clone_count = 120
+        concentration_count = 100
+        source = pd.DataFrame(
+            {
+                "response_id": [f"source-{index}" for index in range(source_count)],
+                "score": [(index % 5) + 1 for index in range(source_count)],
+                "segment": [f"source-segment-{index}" for index in range(source_count)],
+            }
+        )
+        clones = source.iloc[:clone_count].copy()
+        clones["response_id"] = [f"synthetic-clone-{index}" for index in range(clone_count)]
+        concentrated = pd.DataFrame(
+            {
+                "response_id": [f"synthetic-repeat-{index}" for index in range(concentration_count)],
+                "score": [5] * concentration_count,
+                "segment": ["novel-repeat"] * concentration_count,
+            }
+        )
+        unique_count = synthetic_count - clone_count - concentration_count
+        unique = pd.DataFrame(
+            {
+                "response_id": [f"synthetic-unique-{index}" for index in range(unique_count)],
+                "score": [(index % 5) + 1 for index in range(unique_count)],
+                "segment": [f"novel-{index}" for index in range(unique_count)],
+            }
+        )
+        synthetic = pd.concat([clones, concentrated, unique], ignore_index=True)
+        synthetic["__origin"] = "synthetic"
+        source_output = source.copy()
+        source_output["__origin"] = "original"
+        final = pd.concat([source_output, synthetic], ignore_index=True)
+
+        diagnostics = _row_diagnostics(source, synthetic, final, id_column="response_id")
+
+        self.assertEqual(diagnostics[0], clone_count * 2 + concentration_count)
+        self.assertEqual(diagnostics[1], concentration_count)
+        self.assertAlmostEqual(diagnostics[2], concentration_count / synthetic_count)
+        self.assertEqual(diagnostics[3], clone_count)
+        self.assertAlmostEqual(diagnostics[4], clone_count / synthetic_count)
 
 
 if __name__ == "__main__":
