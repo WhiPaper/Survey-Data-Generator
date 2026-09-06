@@ -98,7 +98,7 @@ describe("M9 logical export table", () => {
     ]);
     const csv = renderCsv(table);
 
-    expect(csv).toContain("사과, 바나나,4,'=1+1");
+    expect(csv).toContain('"사과, 바나나",4,\'=1+1');
     expect(sanitizeSpreadsheetText("  +SUM(A1:A2)")).toBe("'  +SUM(A1:A2)");
     expect(sanitizeSpreadsheetText("일반 텍스트")).toBe("일반 텍스트");
   });
