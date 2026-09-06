@@ -68,7 +68,14 @@ const ordinalQuestions = (project: ProjectDetailView): OrdinalQuestionView[] =>
     ) {
       return [];
     }
-    return [{ id: question.id, title: questionTitle(question), min: question.min, max: question.max }];
+    return [
+      {
+        id: question.id,
+        title: questionTitle(question),
+        min: question.min,
+        max: question.max,
+      },
+    ];
   });
 
 const groupableQuestions = (project: ProjectDetailView): GroupableQuestionView[] =>
@@ -100,21 +107,26 @@ const checkboxQuestions = (project: ProjectDetailView): CheckboxQuestionView[] =
   });
 
 const targetId = (value: string): TargetId => value as TargetId;
+
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
 
 const outcomeLabel = (outcome: TargetOutcome): string => {
-  const requested = outcome.kind === "share" || outcome.kind === "conditional_share"
+  const percentage = outcome.kind === "share" || outcome.kind === "conditional_share";
+  const requested = percentage
     ? `${(outcome.requested * 100).toFixed(2)}%`
-    : outcome.requested.toFixed(4);
-  const achieved = outcome.kind === "share" || outcome.kind === "conditional_share"
+    : outcome.requested.toFixed(6);
+  const achieved = percentage
     ? `${(outcome.achieved * 100).toFixed(2)}%`
-    : outcome.achieved.toFixed(4);
+    : outcome.achieved.toFixed(6);
+  const error = percentage
+    ? `${(outcome.absoluteError * 100).toFixed(2)}%p`
+    : outcome.absoluteError.toFixed(6);
   const counts =
     outcome.numeratorCount === undefined
       ? ""
       : ` · ${outcome.numeratorCount}/${outcome.denominatorCount ?? "?"}`;
-  return `${String(outcome.targetId)} · ${outcome.kind} · 요청 ${requested} · 달성 ${achieved}${counts} · ${outcome.exact ? "exact" : "nearest"}`;
+  return `${String(outcome.targetId)} · 요청 ${requested} · 달성 ${achieved} · 오차 ${error}${counts} · ${outcome.exact ? "정확히 표현됨" : "가장 가까운 표현"}`;
 };
 
 function EditPlanOutcomeView({
@@ -134,106 +146,33 @@ function EditPlanOutcomeView({
   );
 }
 
-const achievedTargets = (run: RunsGetResult | null): TargetOutcome[] => {
-  if (!run) return [];
-  const achieved = asRecord(run.validation.achieved);
-  if (!achieved) return [];
-  if (Array.isArray(achieved.targets)) {
-    return achieved.targets.flatMap((value) => {
-      const item = asRecord(value);
-      if (
-        !item ||
-        typeof item.targetId !== "string" ||
-        !["count", "share", "mean", "conditional_share"].includes(String(item.kind)) ||
-        typeof item.requested !== "number" ||
-        typeof item.achieved !== "number" ||
-        typeof item.absoluteError !== "number" ||
-        typeof item.exact !== "boolean"
-      ) {
-        return [];
-      }
-      return [
-        {
-          targetId: targetId(item.targetId),
-          kind: item.kind as TargetOutcome["kind"],
-          requested: item.requested,
-          achieved: item.achieved,
-          absoluteError: item.absoluteError,
-          exact: item.exact,
-          ...(typeof item.numeratorCount === "number" ? { numeratorCount: item.numeratorCount } : {}),
-          ...(typeof item.denominatorCount === "number" ? { denominatorCount: item.denominatorCount } : {}),
-        },
-      ];
-    });
-  }
+const qualityScore = (run: RunsGetResult | null): number | undefined => {
+  if (!run) return undefined;
+  const quality = asRecord(run.validation.quality);
+  return typeof quality?.sdmetricsScore === "number" ? quality.sdmetricsScore : undefined;
+};
 
-  const frozen = run.targetSnapshot.targets;
-  const results: TargetOutcome[] = [];
-  const meanTarget = frozen.find((target) => target.kind === "mean");
-  if (
-    meanTarget?.kind === "mean" &&
-    typeof achieved.mean === "number" &&
-    typeof achieved.absoluteError === "number" &&
-    typeof achieved.exact === "boolean"
-  ) {
-    results.push({
-      targetId: meanTarget.id,
-      kind: "mean",
-      requested: meanTarget.value,
-      achieved: achieved.mean,
-      absoluteError: achieved.absoluteError,
-      exact: achieved.exact,
-    });
+const frozenTargetLabel = (
+  run: RunsGetResult,
+  outcome: TargetOutcome,
+  checkbox: CheckboxQuestionView[],
+): string => {
+  const frozen = run.targetSnapshot.targets.find(
+    (target) => String(target.id) === String(outcome.targetId),
+  );
+  if (!frozen) return String(outcome.targetId);
+  if (frozen.kind === "share") {
+    if (frozen.subject.kind === "value_group") return frozen.subject.valueGroup.name;
+    const question = checkbox.find((candidate) => candidate.id === frozen.subject.questionId);
+    const option = question?.options.find((candidate) => candidate.key === frozen.subject.optionKey);
+    return option?.label ?? frozen.subject.optionKey;
   }
-  const shares = Array.isArray(achieved.shares) ? achieved.shares.map(asRecord) : [];
-  for (const share of shares) {
-    if (!share || typeof share.id !== "string" || typeof share.share !== "number") continue;
-    const target = frozen.find(
-      (candidate) => candidate.kind === "share" && String(candidate.id) === share.id,
-    );
-    if (target?.kind !== "share" || typeof share.absoluteError !== "number") continue;
-    results.push({
-      targetId: target.id,
-      kind: "share",
-      requested: target.value,
-      achieved: share.share,
-      absoluteError: share.absoluteError,
-      exact: typeof share.exact === "boolean" ? share.exact : share.absoluteError <= 1e-9,
-    });
+  if (frozen.kind === "conditional_share") {
+    const question = checkbox.find((candidate) => candidate.id === frozen.questionId);
+    const option = question?.options.find((candidate) => candidate.key === frozen.optionKey);
+    return `${frozen.population.valueGroup.name} 중 ${option?.label ?? frozen.optionKey}`;
   }
-  const conditionals = Array.isArray(achieved.conditionalShares)
-    ? achieved.conditionalShares.map(asRecord)
-    : [];
-  for (const conditional of conditionals) {
-    if (!conditional || typeof conditional.id !== "string" || typeof conditional.share !== "number") {
-      continue;
-    }
-    const target = frozen.find(
-      (candidate) =>
-        candidate.kind === "conditional_share" && String(candidate.id) === conditional.id,
-    );
-    if (target?.kind !== "conditional_share" || typeof conditional.absoluteError !== "number") {
-      continue;
-    }
-    results.push({
-      targetId: target.id,
-      kind: "conditional_share",
-      requested: target.value,
-      achieved: conditional.share,
-      absoluteError: conditional.absoluteError,
-      exact:
-        typeof conditional.exact === "boolean"
-          ? conditional.exact
-          : conditional.absoluteError <= 1e-9,
-      ...(typeof conditional.numeratorCount === "number"
-        ? { numeratorCount: conditional.numeratorCount }
-        : {}),
-      ...(typeof conditional.denominatorCount === "number"
-        ? { denominatorCount: conditional.denominatorCount }
-        : {}),
-    });
-  }
-  return results;
+  return String(outcome.targetId);
 };
 
 export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
@@ -249,6 +188,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   const [groups, setGroups] = useState<ValueGroupView[]>([]);
   const [groupQuestionId, setGroupQuestionId] = useState("");
   const [groupValues, setGroupValues] = useState<ValueGroupObservedValue[]>([]);
+  const [groupValueQuery, setGroupValueQuery] = useState("");
   const [groupName, setGroupName] = useState("");
   const [groupMembers, setGroupMembers] = useState<string[]>([]);
   const [useShare, setUseShare] = useState(false);
@@ -258,7 +198,11 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   const [conditionalGroupId, setConditionalGroupId] = useState("");
   const [conditionalQuestionId, setConditionalQuestionId] = useState("");
   const [conditionalDrafts, setConditionalDrafts] = useState<ConditionalDraft[]>([]);
+  const [groupBusy, setGroupBusy] = useState(false);
   const [operationId, setOperationId] = useState<string | null>(null);
+  const [planBusy, setPlanBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [result, setResult] = useState<SynthesisStartResult | null>(null);
   const [run, setRun] = useState<RunsGetResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -277,36 +221,80 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
 
   useEffect(() => {
     setQuestionId(ordinal[0]?.id ?? "");
+    setFinalCount(String(project.responseCount + 40));
+    setTargetMean("4.7");
+    setUseRange(false);
+    setRangeStart(project.responseTimestampRange?.start ?? "");
+    setRangeEnd(project.responseTimestampRange?.end ?? "");
     setGroupQuestionId(groupable[0]?.id ?? "");
+    setGroupValueQuery("");
+    setGroupName("");
+    setGroupMembers([]);
+    setUseShare(false);
+    setTargetSharePercent("35");
+    setUseConditional(false);
     setConditionalQuestionId(checkbox[0]?.id ?? "");
+    setConditionalDrafts([]);
+    setOperationId(null);
+    setPlanBusy(false);
+    setExportBusy(false);
+    setExportMessage(null);
     setResult(null);
     setRun(null);
     setError(null);
     void reloadGroups().catch((cause: unknown) => setError(errorMessage(cause)));
-  }, [project.id, project.currentSourceRevisionId]);
+  }, [project.id, project.currentSourceRevisionId, project.responseCount]);
 
   useEffect(() => {
     if (!groupQuestionId) {
       setGroupValues([]);
       return;
     }
+    let active = true;
+    setGroupBusy(true);
     void listValueGroupValues(project.id, groupQuestionId)
-      .then(setGroupValues)
-      .catch((cause: unknown) => setError(errorMessage(cause)));
+      .then((values) => {
+        if (!active) return;
+        setGroupValues(values);
+        setGroupMembers((current) =>
+          current.filter((member) => values.some((value) => value.value === member)),
+        );
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(errorMessage(cause));
+      })
+      .finally(() => {
+        if (active) setGroupBusy(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [project.id, groupQuestionId]);
 
   const selectedQuestion = ordinal.find((question) => question.id === questionId) ?? null;
   const selectedConditionalQuestion =
     checkbox.find((question) => question.id === conditionalQuestionId) ?? null;
-  const targetOutcomes = achievedTargets(run);
+  const currentQualityScore = qualityScore(run);
+  const targetOutcomes = run?.outcome.targets ?? [];
+  const filteredGroupValues = useMemo(() => {
+    const query = groupValueQuery.trim().toLocaleLowerCase();
+    if (!query) return groupValues;
+    return groupValues.filter(
+      (value) =>
+        value.label.toLocaleLowerCase().includes(query) ||
+        value.value.toLocaleLowerCase().includes(query),
+    );
+  }, [groupValueQuery, groupValues]);
 
   const handleCreateGroup = async (): Promise<void> => {
     if (!groupQuestionId || !groupName.trim() || groupMembers.length === 0) {
       setError("ValueGroup 이름과 하나 이상의 멤버가 필요합니다.");
       return;
     }
+    setGroupBusy(true);
+    setError(null);
     try {
-      await createValueGroup({
+      const created = await createValueGroup({
         projectId: project.id,
         questionId: groupQuestionId,
         name: groupName.trim(),
@@ -315,19 +303,65 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
       setGroupName("");
       setGroupMembers([]);
       await reloadGroups();
+      setShareGroupId(created.id);
+      setConditionalGroupId(created.id);
     } catch (cause: unknown) {
       setError(errorMessage(cause));
+    } finally {
+      setGroupBusy(false);
     }
+  };
+
+  const handleDeleteGroup = async (group: ValueGroupView): Promise<void> => {
+    if (
+      !window.confirm(
+        `ValueGroup “${group.name}”을 삭제할까요? 기존 Run의 frozen snapshot은 유지됩니다.`,
+      )
+    ) {
+      return;
+    }
+    setGroupBusy(true);
+    setError(null);
+    try {
+      await deleteValueGroup(group.id);
+      await reloadGroups();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const toggleConditionalOption = (optionKey: string, checked: boolean): void => {
+    setConditionalDrafts((current) => {
+      if (checked) {
+        return current.some((draft) => draft.optionKey === optionKey)
+          ? current
+          : [...current, { optionKey, percent: "50" }];
+      }
+      return current.filter((draft) => draft.optionKey !== optionKey);
+    });
+  };
+
+  const updateConditionalPercent = (optionKey: string, percent: string): void => {
+    setConditionalDrafts((current) =>
+      current.map((draft) => (draft.optionKey === optionKey ? { ...draft, percent } : draft)),
+    );
   };
 
   const handleStart = async (): Promise<void> => {
     if (!selectedQuestion) return;
     const parsedFinalCount = Number(finalCount);
     const parsedMean = Number(targetMean);
-    if (!Number.isInteger(parsedFinalCount) || parsedFinalCount <= 0 || !Number.isFinite(parsedMean)) {
-      setError("최종 응답 수와 평균 목표를 확인해 주세요.");
+    if (!Number.isInteger(parsedFinalCount) || parsedFinalCount <= 0) {
+      setError("최종 응답 수는 1 이상의 정수여야 합니다.");
       return;
     }
+    if (!Number.isFinite(parsedMean)) {
+      setError("목표 평균은 유한한 숫자여야 합니다.");
+      return;
+    }
+
     const sourceScope: SourceScope = useRange
       ? { kind: "submitted_between", start: rangeStart.trim(), end: rangeEnd.trim() }
       : { kind: "all" };
@@ -345,8 +379,8 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
       },
     ];
     if (useShare) {
-      const value = Number(targetSharePercent) / 100;
-      if (!shareGroupId || !Number.isFinite(value) || value < 0 || value > 1) {
+      const parsedShare = Number(targetSharePercent) / 100;
+      if (!shareGroupId || !Number.isFinite(parsedShare) || parsedShare < 0 || parsedShare > 1) {
         setError("share target은 ValueGroup과 0–100 사이의 비율이 필요합니다.");
         return;
       }
@@ -354,12 +388,15 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
         id: targetId(`share:value-group:${shareGroupId}`),
         kind: "share",
         subject: { kind: "value_group", valueGroupId: shareGroupId },
-        value,
+        value: parsedShare,
       });
     }
+
     if (useConditional) {
       if (!conditionalGroupId || !selectedConditionalQuestion || conditionalDrafts.length === 0) {
-        setError("조건부 share는 Population ValueGroup, checkbox 질문, 옵션이 필요합니다.");
+        setError(
+          "조건부 share는 Population ValueGroup, checkbox 질문, 하나 이상의 옵션이 필요합니다.",
+        );
         return;
       }
       for (const draft of conditionalDrafts) {
@@ -385,6 +422,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     setOperationId(nextOperationId);
     setResult(null);
     setRun(null);
+    setExportMessage(null);
     setError(null);
     try {
       const next = await startSynthesis({
@@ -404,14 +442,47 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     }
   };
 
-  const resolvePlan = async (choice: "append_only" | "replacement"): Promise<void> => {
+  const handleResolveEditPlan = async (choice: "append_only" | "replacement"): Promise<void> => {
     if (result?.status !== "approval_required") return;
+    setPlanBusy(true);
+    setError(null);
     try {
       const resolved = await resolveSynthesisEditPlan(result.planId, choice);
       setResult(resolved);
       setRun(await getRun(resolved.runId));
+      setExportMessage(null);
     } catch (cause: unknown) {
       setError(errorMessage(cause));
+    } finally {
+      setPlanBusy(false);
+    }
+  };
+
+  const handleCancel = async (): Promise<void> => {
+    if (!operationId) return;
+    try {
+      await cancelSynthesis(operationId);
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
+    }
+  };
+
+  const handleExport = async (format: "csv" | "xlsx"): Promise<void> => {
+    if (result?.status !== "success") return;
+    setExportBusy(true);
+    setExportMessage(null);
+    setError(null);
+    try {
+      const exported = await exportRun(result.runId, format);
+      setExportMessage(
+        exported.status === "saved"
+          ? `${format.toUpperCase()} 저장 완료`
+          : `${format.toUpperCase()} 저장 취소`,
+      );
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
+    } finally {
+      setExportBusy(false);
     }
   };
 
@@ -419,19 +490,39 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
       {groupable.length > 0 ? (
         <section style={{ padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
-          <strong>ValueGroup</strong>
-          <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-            <select value={groupQuestionId} onChange={(event) => setGroupQuestionId(event.target.value)}>
-              {groupable.map((question) => (
-                <option key={question.id} value={question.id}>{question.title}</option>
-              ))}
-            </select>
+          <p style={{ margin: 0, fontWeight: 600 }}>ValueGroup</p>
+          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+            <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+              그룹화할 질문 (single-choice / text)
+              <select
+                value={groupQuestionId}
+                onChange={(event) => {
+                  setGroupQuestionId(event.target.value);
+                  setGroupValueQuery("");
+                  setGroupMembers([]);
+                }}
+                disabled={groupBusy}
+              >
+                {groupable.map((question) => (
+                  <option key={question.id} value={question.id}>
+                    {question.title} · {question.kind === "text" ? "text" : "single-choice"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <input
+              placeholder="값 검색"
+              value={groupValueQuery}
+              onChange={(event) => setGroupValueQuery(event.target.value)}
+              disabled={groupBusy}
+            />
             <div style={{ display: "grid", gap: 4 }}>
-              {groupValues.map((value) => (
+              {filteredGroupValues.map((value) => (
                 <label key={value.value} style={{ fontSize: 12 }}>
                   <input
                     type="checkbox"
                     checked={groupMembers.includes(value.value)}
+                    disabled={groupBusy}
                     onChange={(event) =>
                       setGroupMembers((current) =>
                         event.target.checked
@@ -440,139 +531,364 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                       )
                     }
                   />{" "}
-                  {value.label} · {value.count}
+                  {value.label} · 원본 {value.count}개
                 </label>
               ))}
             </div>
-            <input value={groupName} placeholder="그룹 이름" onChange={(event) => setGroupName(event.target.value)} />
-            <button type="button" onClick={() => void handleCreateGroup()}>ValueGroup 저장</button>
-            {groups.map((group) => (
-              <div key={group.id} style={{ display: "flex", gap: 8, fontSize: 12 }}>
-                <span>{group.name}</span>
-                <button
-                  type="button"
-                  onClick={() => void deleteValueGroup(group.id).then(reloadGroups).catch((cause: unknown) => setError(errorMessage(cause)))}
-                >
-                  삭제
-                </button>
-              </div>
-            ))}
+            <input
+              placeholder="그룹 이름"
+              value={groupName}
+              onChange={(event) => setGroupName(event.target.value)}
+              disabled={groupBusy}
+            />
+            <button type="button" disabled={groupBusy} onClick={() => void handleCreateGroup()}>
+              ValueGroup 저장
+            </button>
           </div>
+          {groups.length > 0 ? (
+            <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
+              {groups.map((group) => (
+                <div
+                  key={group.id}
+                  style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}
+                >
+                  <span>
+                    {group.name} · 멤버 {group.members.length}개
+                  </span>
+                  <button
+                    type="button"
+                    disabled={groupBusy}
+                    onClick={() => void handleDeleteGroup(group)}
+                  >
+                    삭제
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </section>
       ) : null}
 
-      {selectedQuestion ? (
+      {ordinal.length === 0 ? (
         <section style={{ padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
-          <strong>합성 targets</strong>
-          <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-            <select value={questionId} onChange={(event) => setQuestionId(event.target.value)}>
-              {ordinal.map((question) => (
-                <option key={question.id} value={question.id}>{question.title} ({question.min}–{question.max})</option>
-              ))}
-            </select>
-            <input value={finalCount} onChange={(event) => setFinalCount(event.target.value)} placeholder="최종 응답 수" />
-            <input value={targetMean} onChange={(event) => setTargetMean(event.target.value)} placeholder="최종 평균" />
+          <p style={{ margin: 0, fontSize: 13 }}>
+            ordinal 질문이 없어 mean target을 실행할 수 없습니다.
+          </p>
+        </section>
+      ) : (
+        <section style={{ padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
+          <p style={{ margin: 0, fontWeight: 600 }}>
+            최종 N + targets + 승인형 original replacement
+          </p>
+          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+            <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+              평균을 맞출 점수 질문
+              <select
+                value={questionId}
+                onChange={(event) => setQuestionId(event.target.value)}
+                disabled={operationId !== null}
+              >
+                {ordinal.map((question) => (
+                  <option key={question.id} value={question.id}>
+                    {question.title} ({question.min}–{question.max})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+              최종 응답 수
+              <input
+                value={finalCount}
+                onChange={(event) => setFinalCount(event.target.value)}
+                disabled={operationId !== null}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+              최종 평균
+              <input
+                value={targetMean}
+                onChange={(event) => setTargetMean(event.target.value)}
+                disabled={operationId !== null}
+              />
+            </label>
 
             {groups.length > 0 ? (
               <>
-                <label><input type="checkbox" checked={useShare} onChange={(event) => setUseShare(event.target.checked)} /> ValueGroup 전체 비중 target 사용</label>
+                <label style={{ fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={useShare}
+                    onChange={(event) => setUseShare(event.target.checked)}
+                    disabled={operationId !== null}
+                  />{" "}
+                  ValueGroup 전체 비중 target 사용
+                </label>
                 {useShare ? (
-                  <>
-                    <select value={shareGroupId} onChange={(event) => setShareGroupId(event.target.value)}>
-                      {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <select
+                      value={shareGroupId}
+                      onChange={(event) => setShareGroupId(event.target.value)}
+                      disabled={operationId !== null}
+                    >
+                      {groups.map((group) => (
+                        <option key={group.id} value={group.id}>
+                          {group.name}
+                        </option>
+                      ))}
                     </select>
-                    <input value={targetSharePercent} onChange={(event) => setTargetSharePercent(event.target.value)} placeholder="share %" />
-                  </>
+                    <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+                      최종 share (%)
+                      <input
+                        value={targetSharePercent}
+                        onChange={(event) => setTargetSharePercent(event.target.value)}
+                        disabled={operationId !== null}
+                      />
+                    </label>
+                  </div>
                 ) : null}
               </>
             ) : null}
 
             {groups.length > 0 && checkbox.length > 0 ? (
               <>
-                <label><input type="checkbox" checked={useConditional} onChange={(event) => setUseConditional(event.target.checked)} /> 조건부 checkbox share target 사용</label>
+                <label style={{ fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={useConditional}
+                    onChange={(event) => setUseConditional(event.target.checked)}
+                    disabled={operationId !== null}
+                  />{" "}
+                  ValueGroup 내부 checkbox 조건부 share target 사용
+                </label>
                 {useConditional ? (
-                  <>
-                    <select value={conditionalGroupId} onChange={(event) => setConditionalGroupId(event.target.value)}>
-                      {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-                    </select>
-                    <select value={conditionalQuestionId} onChange={(event) => { setConditionalQuestionId(event.target.value); setConditionalDrafts([]); }}>
-                      {checkbox.map((question) => <option key={question.id} value={question.id}>{question.title}</option>)}
-                    </select>
-                    {selectedConditionalQuestion?.options.map((option) => {
-                      const draft = conditionalDrafts.find((item) => item.optionKey === option.key);
-                      return (
-                        <div key={option.key} style={{ display: "flex", gap: 8 }}>
-                          <label>
+                  <div style={{ display: "grid", gap: 8, paddingLeft: 12 }}>
+                    <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+                      Population ValueGroup (분모)
+                      <select
+                        value={conditionalGroupId}
+                        onChange={(event) => setConditionalGroupId(event.target.value)}
+                        disabled={operationId !== null}
+                      >
+                        {groups.map((group) => (
+                          <option key={group.id} value={group.id}>
+                            {group.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+                      checkbox 질문
+                      <select
+                        value={conditionalQuestionId}
+                        onChange={(event) => {
+                          setConditionalQuestionId(event.target.value);
+                          setConditionalDrafts([]);
+                        }}
+                        disabled={operationId !== null}
+                      >
+                        {checkbox.map((question) => (
+                          <option key={question.id} value={question.id}>
+                            {question.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {selectedConditionalQuestion?.options.map((option) => {
+                        const draft = conditionalDrafts.find(
+                          (candidate) => candidate.optionKey === option.key,
+                        );
+                        return (
+                          <div
+                            key={option.key}
+                            style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: 8 }}
+                          >
+                            <label style={{ fontSize: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={draft !== undefined}
+                                onChange={(event) =>
+                                  toggleConditionalOption(option.key, event.target.checked)
+                                }
+                                disabled={operationId !== null}
+                              />{" "}
+                              {option.label}
+                            </label>
                             <input
-                              type="checkbox"
-                              checked={draft !== undefined}
-                              onChange={(event) => setConditionalDrafts((current) => event.target.checked ? [...current, { optionKey: option.key, percent: "50" }] : current.filter((item) => item.optionKey !== option.key))}
-                            />{" "}{option.label}
-                          </label>
-                          <input
-                            value={draft?.percent ?? ""}
-                            disabled={!draft}
-                            onChange={(event) => setConditionalDrafts((current) => current.map((item) => item.optionKey === option.key ? { ...item, percent: event.target.value } : item))}
-                            placeholder="%"
-                          />
-                        </div>
-                      );
-                    })}
-                  </>
+                              aria-label={`${option.label} 조건부 share`}
+                              value={draft?.percent ?? ""}
+                              placeholder="%"
+                              disabled={draft === undefined || operationId !== null}
+                              onChange={(event) =>
+                                updateConditionalPercent(option.key, event.target.value)
+                              }
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ) : null}
               </>
             ) : null}
 
-            <label><input type="checkbox" checked={useRange} onChange={(event) => setUseRange(event.target.checked)} /> SourceScope timestamp 범위 사용</label>
+            <label style={{ fontSize: 12 }}>
+              <input
+                type="checkbox"
+                checked={useRange}
+                onChange={(event) => setUseRange(event.target.checked)}
+                disabled={operationId !== null}
+              />{" "}
+              제출 timestamp 범위로 SourceScope 제한
+            </label>
             {useRange ? (
-              <>
-                <input value={rangeStart} onChange={(event) => setRangeStart(event.target.value)} />
-                <input value={rangeEnd} onChange={(event) => setRangeEnd(event.target.value)} />
-              </>
+              <div style={{ display: "grid", gap: 6 }}>
+                <input
+                  value={rangeStart}
+                  onChange={(event) => setRangeStart(event.target.value)}
+                  disabled={operationId !== null}
+                />
+                <input
+                  value={rangeEnd}
+                  onChange={(event) => setRangeEnd(event.target.value)}
+                  disabled={operationId !== null}
+                />
+              </div>
             ) : null}
-            <div style={{ display: "flex", gap: 8 }}>
-              <button type="button" disabled={operationId !== null} onClick={() => void handleStart()}>{operationId ? "합성 중…" : "합성 실행"}</button>
-              {operationId ? <button type="button" onClick={() => void cancelSynthesis(operationId)}>취소</button> : null}
-            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button
+              type="button"
+              disabled={operationId !== null}
+              onClick={() => void handleStart()}
+            >
+              {operationId ? "합성 중…" : "합성 실행"}
+            </button>
+            {operationId ? (
+              <button type="button" onClick={() => void handleCancel()}>
+                취소
+              </button>
+            ) : null}
           </div>
 
           {result?.status === "approval_required" ? (
-            <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-              <EditPlanOutcomeView label="append-only" outcome={result.editPlan.appendOnlyOutcome} />
-              <EditPlanOutcomeView label={`replacement (${result.editPlan.replacementCount})`} outcome={result.editPlan.replacementOutcome} />
+            <div
+              style={{
+                marginTop: 10,
+                display: "grid",
+                gap: 10,
+                padding: 10,
+                border: "1px solid currentColor",
+                borderRadius: 8,
+                fontSize: 12,
+              }}
+            >
+              <p style={{ margin: 0, fontWeight: 600 }}>
+                목표를 더 가깝게 맞추려면 원본-derived 행 {result.editPlan.replacementCount}개를
+                최종 결과에서 교체해야 합니다. 원본 import 자체는 변경되지 않습니다.
+              </p>
+              <EditPlanOutcomeView
+                label="원본 유지 (append-only)"
+                outcome={result.editPlan.appendOnlyOutcome}
+              />
+              <EditPlanOutcomeView
+                label={`교체 적용 (${result.editPlan.replacementCount}개)`}
+                outcome={result.editPlan.replacementOutcome}
+              />
+              <div style={{ display: "grid", gap: 3 }}>
+                {result.editPlan.proposedReplacements.map((replacement) => (
+                  <span
+                    key={`${replacement.sourceResponseId}:${replacement.replacementResponseId}`}
+                  >
+                    {replacement.sourceResponseId} → {replacement.replacementResponseId}
+                  </span>
+                ))}
+              </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" onClick={() => void resolvePlan("append_only")}>원본 유지 결과 사용</button>
-                <button type="button" onClick={() => void resolvePlan("replacement")}>교체 계획 승인</button>
+                <button
+                  type="button"
+                  disabled={planBusy}
+                  onClick={() => void handleResolveEditPlan("append_only")}
+                >
+                  원본 유지 결과 사용
+                </button>
+                <button
+                  type="button"
+                  disabled={planBusy}
+                  onClick={() => void handleResolveEditPlan("replacement")}
+                >
+                  {planBusy ? "처리 중…" : "교체 계획 승인"}
+                </button>
               </div>
             </div>
           ) : null}
 
           {result?.status === "success" ? (
-            <div style={{ display: "grid", gap: 4, marginTop: 12, fontSize: 12 }}>
-              <span>Run {result.runId} · 최종 {result.finalResponseCount}</span>
-              {targetOutcomes.map((outcome) => <span key={String(outcome.targetId)}>{outcomeLabel(outcome)}</span>)}
-              <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" onClick={() => void exportRun(result.runId, "csv")}>CSV 내보내기</button>
-                <button type="button" onClick={() => void exportRun(result.runId, "xlsx")}>XLSX 내보내기</button>
+            <div style={{ marginTop: 10, fontSize: 12 }}>
+              <p style={{ margin: 0 }}>Run {result.runId}</p>
+              <p style={{ margin: "4px 0 0" }}>
+                합성 {result.syntheticResponseCount}개 · 최종 {result.finalResponseCount}개
+              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                <button
+                  type="button"
+                  disabled={exportBusy}
+                  onClick={() => void handleExport("csv")}
+                >
+                  {exportBusy ? "저장 중…" : "CSV 내보내기"}
+                </button>
+                <button
+                  type="button"
+                  disabled={exportBusy}
+                  onClick={() => void handleExport("xlsx")}
+                >
+                  {exportBusy ? "저장 중…" : "XLSX 내보내기"}
+                </button>
+                {exportMessage ? <span role="status">{exportMessage}</span> : null}
               </div>
+              {run ? (
+                <>
+                  {currentQualityScore === undefined ? null : (
+                    <p style={{ margin: "4px 0 0" }}>
+                      SDMetrics {currentQualityScore.toFixed(4)}
+                    </p>
+                  )}
+                  {run.targetSnapshot.editPlan ? (
+                    <p style={{ margin: "4px 0 0" }}>
+                      승인된 original replacement {run.targetSnapshot.editPlan.replacementCount}개
+                    </p>
+                  ) : null}
+                  {targetOutcomes.map((outcome) => (
+                    <p key={String(outcome.targetId)} style={{ margin: "4px 0 0" }}>
+                      {frozenTargetLabel(run, outcome, checkbox)} · {outcomeLabel(outcome)}
+                    </p>
+                  ))}
+                </>
+              ) : null}
             </div>
           ) : null}
 
           {result?.status === "infeasible" ? (
-            <div style={{ marginTop: 12, fontSize: 12 }}>
-              {result.issues.map((item) => (
-                <p key={`${item.code}:${item.targetIds.join(",")}`} style={{ margin: "4px 0" }}>
-                  {item.code} [{item.targetIds.join(", ")}]: {item.message}
+            <div style={{ marginTop: 10, fontSize: 12 }}>
+              {result.issues.map((issue) => (
+                <p
+                  key={`${issue.code}:${issue.targetIds.join(",")}:${issue.message}`}
+                  style={{ margin: "4px 0 0" }}
+                >
+                  {issue.code} [{issue.targetIds.join(", ")}]: {issue.message}
                 </p>
               ))}
             </div>
           ) : null}
         </section>
-      ) : (
-        <p>ordinal 질문이 없어 현재 synthesis engine을 실행할 수 없습니다.</p>
       )}
 
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? (
+        <p role="alert" style={{ margin: 0, fontSize: 12 }}>
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
