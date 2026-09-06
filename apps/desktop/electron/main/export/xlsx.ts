@@ -21,10 +21,7 @@ const xlsxValue = (cell: ExportCell): unknown => {
   }
 };
 
-export const writeXlsx = async (
-  table: LogicalExportTable,
-  destination: string,
-): Promise<void> => {
+export const writeXlsx = async (table: LogicalExportTable, destination: string): Promise<void> => {
   const tempPath = `${destination}.tmp`;
   try {
     const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({

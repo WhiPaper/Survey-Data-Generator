@@ -99,7 +99,11 @@ const answerCell = (question: Question, slot: AnswerSlot | undefined): ExportCel
     case "multi_choice":
       return {
         kind: "text",
-        value: orderedCheckboxText(question as MultiChoiceQuestion, answer.optionKeys, answer.otherValue),
+        value: orderedCheckboxText(
+          question as MultiChoiceQuestion,
+          answer.optionKeys,
+          answer.otherValue,
+        ),
       };
     case "ordinal":
       return { kind: "number", value: answer.value };
@@ -153,7 +157,9 @@ export const buildLogicalExportTable = (
     return {
       cells: [
         { kind: "datetime", value: submittedAt, isoWithOffset: submittedAt.toISOString() },
-        ...form.questions.map((question) => answerCell(question, row.response.answers[question.id])),
+        ...form.questions.map((question) =>
+          answerCell(question, row.response.answers[question.id]),
+        ),
       ],
     };
   });

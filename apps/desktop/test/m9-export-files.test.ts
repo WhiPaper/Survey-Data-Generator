@@ -96,7 +96,12 @@ const seedRun = (database: AppDatabase): void => {
     revisionId: "revision-1",
     importedAtMs: 2,
     responseSetHash: "hash",
-    formSnapshot: { id: "snapshot-1", title: form.title, schema: form, schemaHash: form.schemaHash },
+    formSnapshot: {
+      id: "snapshot-1",
+      title: form.title,
+      schema: form,
+      schemaHash: form.schemaHash,
+    },
     responses: [],
   });
   persistRun(database.db, {
