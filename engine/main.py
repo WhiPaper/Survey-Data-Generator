@@ -90,6 +90,7 @@ class ConditionalShareTargetSpec(BaseModel):
     population_member_values: list[str] = Field(min_length=1)
     option_column: str
     option_values: list[str] = Field(min_length=1)
+    schema_option_values: list[str] = Field(default_factory=list)
     value: float
 
 
@@ -385,6 +386,9 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         job.conditional_share_targets
     ):
         raise ValueError("conditional share target ids must be unique")
+    for target in job.conditional_share_targets:
+        if not set(target.schema_option_values) <= set(target.option_values):
+            raise ValueError("schema option support must be included in option_values")
 
     reserved_columns = {job.id_column, job.mean_target.column}
     if job.timestamp_column is not None:
@@ -466,14 +470,15 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         )
     generator_conditional_supports = tuple(
         ConditionalCandidateSupport(
-            id=target.id,
-            population_column=target.population_column,
-            population_member_values=target.population_member_values,
-            option_column=target.option_column,
-            option_values=target.option_values,
-            target_value=target.value,
+            id=compiled.id,
+            population_column=compiled.population_column,
+            population_member_values=compiled.population_member_values,
+            option_column=compiled.option_column,
+            option_values=compiled.option_values,
+            target_value=compiled.value,
+            schema_option_values=frozenset(spec.schema_option_values),
         )
-        for target in conditionals
+        for spec, compiled in zip(job.conditional_share_targets, conditionals, strict=True)
     )
 
     emit(
@@ -801,7 +806,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except (ValidationError, json.JSONDecodeError, ValueError) as error:
         print(
-            json.dumps({"type": "error", "kind": "validation", "message": str(error)}),
+            json.dumps({"type": "error", "kind": "validation", "message": str(error)),
             file=sys.stderr,
         )
         return 2
