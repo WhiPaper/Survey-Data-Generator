@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ import {
 } from "../electron/main/persistence/store";
 
 const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
+const versionsFile = fileURLToPath(new URL("../../../versions.json", import.meta.url));
 
 const tempDirectories: string[] = [];
 const openDatabases: AppDatabase[] = [];
@@ -41,6 +42,43 @@ afterEach(() => {
 });
 
 describe("v2 persistence", () => {
+  it("starts from the single schema 0001 baseline", () => {
+    const migrationFiles = readdirSync(migrationsFolder)
+      .filter((name) => name.endsWith(".sql"))
+      .sort();
+    expect(migrationFiles).toEqual(["0001_initial.sql"]);
+
+    const journal = JSON.parse(
+      readFileSync(join(migrationsFolder, "meta", "_journal.json"), "utf8"),
+    ) as { entries: Array<{ idx: number; tag: string }> };
+    expect(journal.entries).toEqual([
+      expect.objectContaining({
+        idx: 0,
+        tag: "0001_initial",
+      }),
+    ]);
+
+    const versions = JSON.parse(readFileSync(versionsFile, "utf8")) as {
+      databaseSchemaVersion: number;
+    };
+    expect(versions.databaseSchemaVersion).toBe(1);
+
+    const { database } = createDatabase();
+    const runColumns = database.sqlite.prepare("PRAGMA table_info('runs')").all() as Array<{
+      name: string;
+      notnull: number;
+      dflt_value: string | null;
+    }>;
+    expect(runColumns.find((column) => column.name === "app_version")).toMatchObject({
+      notnull: 1,
+      dflt_value: null,
+    });
+    expect(runColumns.find((column) => column.name === "engine_version")).toMatchObject({
+      notnull: 1,
+      dflt_value: null,
+    });
+  });
+
   it("creates a project and reopens it from the same sqlite file", () => {
     const { database, filename } = createDatabase();
 
