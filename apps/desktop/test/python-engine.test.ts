@@ -29,7 +29,7 @@ const writeSynthesisJob = (directory: string): { jobPath: string; reportPath: st
       result_parquet: "result.parquet",
       report_json: "report.json",
       final_count: 4,
-      mean_target: { column: "target_score", value: 4.5, minimum: 1, maximum: 5 },
+      mean_targets: [{ id: "t-mean", column: "target_score", value: 4.5, minimum: 1, maximum: 5 }],
       conditional_share_targets: [],
       seed: 42,
     }),

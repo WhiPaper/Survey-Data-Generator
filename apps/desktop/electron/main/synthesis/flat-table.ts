@@ -15,11 +15,11 @@ import type { StoredSourceResponse } from "../persistence/store";
 
 export const RESPONSE_ID_COLUMN = "response_id";
 export const TIMESTAMP_COLUMN = "submitted_at";
-export const TARGET_SCORE_COLUMN = "target_score";
+export const TARGET_SCORE_COLUMN_PREFIX = "target_score_";
 const ORIGIN_COLUMN = "__origin";
 
 export type FlatTablePlan = {
-  targetQuestionId: QuestionId;
+  targetScoreColumns: ReadonlyMap<QuestionId, string>;
   questionColumns: ReadonlyMap<QuestionId, string>;
 };
 
@@ -65,16 +65,23 @@ const targetScore = (response: NormalizedResponse, questionId: QuestionId): numb
 
 export const createFlatTablePlan = (
   form: FormSnapshot,
-  targetQuestionId: QuestionId,
+  targetQuestionIds: readonly QuestionId[],
 ): FlatTablePlan => {
+  const targetIds = new Set(targetQuestionIds);
+  const targetScoreColumns = new Map<QuestionId, string>();
   const questionColumns = new Map<QuestionId, string>();
   let index = 0;
+  let scoreIndex = 0;
   for (const question of form.questions) {
-    if (question.id === targetQuestionId) continue;
+    if (targetIds.has(question.id)) {
+      targetScoreColumns.set(question.id, `${TARGET_SCORE_COLUMN_PREFIX}${scoreIndex}`);
+      scoreIndex += 1;
+      continue;
+    }
     questionColumns.set(question.id, `q_${index}`);
     index += 1;
   }
-  return { targetQuestionId, questionColumns };
+  return { targetScoreColumns, questionColumns };
 };
 
 const valueGroupMemberKey = (slot: AnswerSlot | undefined): string | null => {
@@ -182,12 +189,12 @@ export const writeSourceParquet = async (
         type: "STRING" as const,
         nullable: false,
       },
-      {
-        name: TARGET_SCORE_COLUMN,
-        data: normalized.map(({ response }) => targetScore(response, plan.targetQuestionId)),
+      ...[...plan.targetScoreColumns].map(([questionId, column]) => ({
+        name: column,
+        data: normalized.map(({ response }) => targetScore(response, questionId)),
         type: "DOUBLE" as const,
         nullable: false,
-      },
+      })),
       ...questionColumns,
     ],
   });
@@ -233,15 +240,13 @@ const syntheticResponse = (
   submittedAtMs: number,
 ): NormalizedResponse => {
   const provisional = {} as Record<QuestionId, AnswerSlot>;
-  const scoreValue = row[TARGET_SCORE_COLUMN];
-  const score = typeof scoreValue === "number" ? scoreValue : Number(scoreValue);
-  if (!Number.isFinite(score) || !Number.isInteger(score)) {
-    throw backendFailure("INTERNAL", "Synthetic result contains an invalid ordinal score");
+  for (const [questionId, column] of plan.targetScoreColumns) {
+    const scoreValue = row[column];
+    const score = typeof scoreValue === "number" ? scoreValue : Number(scoreValue);
+    if (!Number.isFinite(score) || !Number.isInteger(score))
+      throw backendFailure("INTERNAL", "Synthetic result contains an invalid ordinal score");
+    provisional[questionId] = { state: "answered", value: { kind: "ordinal", value: score } };
   }
-  provisional[plan.targetQuestionId] = {
-    state: "answered",
-    value: { kind: "ordinal", value: score },
-  };
 
   for (const [questionId, column] of plan.questionColumns) {
     provisional[questionId] = parseGeneratedSlot(row[column], questionId);

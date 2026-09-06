@@ -41,6 +41,7 @@ from prepare import read_source, smoke_source, write_parquet  # noqa: E402
 from replacement import EditPlanSelection, plan_replacements  # noqa: E402
 from candidate_selection import (  # noqa: E402
     CountTarget,
+    MeanTarget,
     ConditionalShareTarget,
     ShareTarget,
     TargetInfeasible,
@@ -68,6 +69,7 @@ class SmokeJob(JobPaths):
 class MeanTargetSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    id: str
     column: str
     value: float
     minimum: int
@@ -107,7 +109,7 @@ class ConditionalShareTargetSpec(BaseModel):
 class SynthesizeJob(JobPaths):
     kind: Literal["synthesize"]
     final_count: int
-    mean_target: MeanTargetSpec
+    mean_targets: list[MeanTargetSpec] = Field(default_factory=list)
     count_targets: list[CountTargetSpec] = Field(default_factory=list)
     share_targets: list[ShareTargetSpec] = Field(default_factory=list)
     conditional_share_targets: list[ConditionalShareTargetSpec] = Field(default_factory=list)
@@ -118,6 +120,12 @@ class SynthesizeJob(JobPaths):
     timestamp_start: str | None = None
     timestamp_end: str | None = None
     candidate_pool_size: int | None = None
+
+    @property
+    def mean_target(self) -> MeanTargetSpec:
+        if not self.mean_targets:
+            raise ValueError("synthesis without a mean target requires the generic candidate path")
+        return self.mean_targets[0]
 
 
 JobT = TypeVar("JobT", bound=JobPaths)
@@ -296,6 +304,11 @@ def _write_infeasible(
 
 def _target_outcome(selection: TargetSelection) -> dict[str, object]:
     return {
+        "means": [
+            {"id": target.id, "value": target.value, "mean": target.achieved_mean,
+             "absoluteError": target.absolute_error, "exact": target.absolute_error <= 1e-9}
+            for target in selection.means
+        ],
         "mean": selection.achieved_mean,
         "absoluteError": selection.mean_absolute_error,
         "exact": selection.mean_exact,
@@ -400,12 +413,16 @@ def _replacement_result_path(result_path: Path) -> Path:
 
 def run_synthesize(job_path: Path) -> dict[str, object]:
     job = load_job(job_path, SynthesizeJob)
+    has_public_means = bool(job.mean_targets)
     if not job.source_parquet.is_file():
         raise FileNotFoundError(f"source parquet does not exist: {job.source_parquet}")
     if job.final_count <= 0:
         raise ValueError("final_count must be positive")
-    if job.mean_target.minimum > job.mean_target.maximum:
+    if any(target.minimum > target.maximum for target in job.mean_targets):
         raise ValueError("mean target minimum must not exceed maximum")
+    all_target_ids = [target.id for target in (*job.mean_targets, *job.count_targets, *job.share_targets, *job.conditional_share_targets)]
+    if len(all_target_ids) != len(set(all_target_ids)):
+        raise ValueError("target ids must be unique")
     if job.candidate_pool_size is not None and job.candidate_pool_size <= 0:
         raise ValueError("candidate_pool_size must be positive")
     if len(job.categorical_columns) != len(set(job.categorical_columns)):
@@ -422,7 +439,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         if not set(target.schema_option_values) <= set(target.option_values):
             raise ValueError("schema option support must be included in option_values")
 
-    reserved_columns = {job.id_column, job.mean_target.column}
+    reserved_columns = {job.id_column, *(target.column for target in job.mean_targets)}
     if job.timestamp_column is not None:
         reserved_columns.add(job.timestamp_column)
     conflicting = [column for column in job.categorical_columns if column in reserved_columns]
@@ -433,9 +450,17 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
 
     emit({"type": "progress", "stage": "read_source"})
     source = read_source(job.source_parquet).copy()
+    if not job.mean_targets:
+        # A constant internal column keeps the existing dependency-backed candidate/selection
+        # pipeline target-neutral. It is never a public target or reported outcome.
+        fallback = MeanTargetSpec(
+            id="__no_mean__", column="__no_mean_score", value=0.0, minimum=0, maximum=0
+        )
+        source[fallback.column] = 0
+        job = job.model_copy(update={"mean_targets": [fallback]})
     required_columns = {
         job.id_column,
-        job.mean_target.column,
+        *(target.column for target in job.mean_targets),
         *job.categorical_columns,
         *(target.column for target in job.share_targets),
         *(target.column for target in job.count_targets),
@@ -448,18 +473,14 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
     if missing:
         raise ValueError(f"source is missing columns: {', '.join(missing)}")
 
-    source_scores = pandas.to_numeric(source[job.mean_target.column], errors="coerce")
-    if source_scores.notna().any():
-        rounded = source_scores.round()
-        invalid_score = source_scores.notna() & (
-            ~np.isclose(source_scores, rounded, atol=1e-9)
-            | ~rounded.between(job.mean_target.minimum, job.mean_target.maximum)
-        )
-        if invalid_score.any():
-            raise ValueError("source contains invalid ordinal target values")
-        source.loc[source_scores.notna(), job.mean_target.column] = rounded[
-            source_scores.notna()
-        ].astype(int)
+    for mean_target in job.mean_targets:
+        source_scores = pandas.to_numeric(source[mean_target.column], errors="coerce")
+        if source_scores.notna().any():
+            rounded = source_scores.round()
+            invalid_score = source_scores.notna() & (~np.isclose(source_scores, rounded, atol=1e-9) | ~rounded.between(mean_target.minimum, mean_target.maximum))
+            if invalid_score.any():
+                raise ValueError("source contains invalid ordinal target values")
+            source.loc[source_scores.notna(), mean_target.column] = rounded[source_scores.notna()].astype(int)
 
     timestamp_start = _timestamp_bound(job.timestamp_start)
     timestamp_end = _timestamp_bound(job.timestamp_end)
@@ -485,6 +506,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             target_min=job.mean_target.minimum,
             target_max=job.mean_target.maximum,
         )
+        extra_mean_targets = tuple(MeanTarget(target.id, target.column, target.value, target.minimum, target.maximum) for target in job.mean_targets[1:])
         share_supports = tuple(
             plan_share_support(source, target=share, final_count=job.final_count)
             for share in shares
@@ -575,6 +597,8 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             count_targets=counts,
             share_targets=shares,
             conditional_share_targets=conditionals,
+            extra_mean_targets=extra_mean_targets,
+            primary_mean_id=job.mean_target.id,
         )
     except TargetInfeasible as issue:
         if counts and issue.code == "solver_infeasible":
@@ -590,6 +614,8 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
                 enforce_counts=False,
                 share_targets=shares,
                 conditional_share_targets=conditionals,
+                extra_mean_targets=extra_mean_targets,
+                primary_mean_id=job.mean_target.id,
             )
         else:
             return _write_infeasible(job, source_count, issue)
@@ -621,6 +647,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         timestamp_column=job.timestamp_column,
         timestamp_start=timestamp_start,
         timestamp_end=timestamp_end,
+        mean_targets=tuple((target.id, target.column, target.value, target.minimum, target.maximum) for target in job.mean_targets),
     )
 
     share_support_by_id = {support.id: support for support in share_supports}
@@ -682,7 +709,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         )
 
     append_error = (
-        selection.mean_absolute_error
+        sum(mean.absolute_error for mean in selection.means)
         + sum(target.absolute_error for target in selection.counts)
         + sum(target.absolute_error for target in selection.shares)
         + sum(target.absolute_error for target in selection.conditional_shares)
@@ -707,6 +734,8 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             share_targets=shares,
             conditional_share_targets=conditionals,
             append_only_outcome=selection,
+            extra_mean_targets=extra_mean_targets,
+            primary_mean_id=job.mean_target.id,
         )
         if any(target.absolute_error > 0 for target in selection.counts) and replacement_plan.status == "impossible":
             return _write_infeasible(
@@ -739,6 +768,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
                 timestamp_column=job.timestamp_column,
                 timestamp_start=timestamp_start,
                 timestamp_end=timestamp_end,
+                mean_targets=tuple((target.id, target.column, target.value, target.minimum, target.maximum) for target in job.mean_targets),
             )
             if (
                 abs(
@@ -796,6 +826,11 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             for target in job.conditional_share_targets
         ],
         "achieved": {
+            "means": [
+                {"id": mean.id, "value": mean.requested, "mean": mean.achieved,
+                 "absoluteError": mean.absolute_error, "exact": mean.absolute_error <= 1e-9}
+                for mean in evaluation.means if has_public_means
+            ],
             "mean": evaluation.achieved_mean,
             "absoluteError": evaluation.absolute_error,
             "exact": selection.mean_exact,

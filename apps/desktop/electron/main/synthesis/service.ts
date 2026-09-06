@@ -39,7 +39,6 @@ import {
   multiChoiceOptionSupport,
   readResultParquet,
   RESPONSE_ID_COLUMN,
-  TARGET_SCORE_COLUMN,
   TIMESTAMP_COLUMN,
   valueGroupMemberCells,
   writeSourceParquet,
@@ -244,6 +243,7 @@ const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]): Ta
   const rawConditionals = Array.isArray(record.conditionalShares)
     ? record.conditionalShares.map(jsonRecord)
     : [];
+  const rawMeans = Array.isArray(record.means) ? record.means.map(jsonRecord) : [];
 
   return TargetSetOutcomeSchema.parse({
     targets: targets.flatMap((target) => {
@@ -264,6 +264,19 @@ const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]): Ta
         ];
       }
       if (target.kind === "mean") {
+        const raw = rawMeans.find((candidate) => String(candidate.id) === String(target.id));
+        if (raw && typeof raw.mean === "number" && typeof raw.absoluteError === "number") {
+          return [
+            {
+              targetId: target.id,
+              kind: "mean",
+              requested: target.value,
+              achieved: raw.mean,
+              absoluteError: raw.absoluteError,
+              exact: typeof raw.exact === "boolean" ? raw.exact : raw.absoluteError <= 1e-9,
+            },
+          ];
+        }
         if (
           typeof record.mean !== "number" ||
           typeof record.absoluteError !== "number" ||
@@ -417,39 +430,28 @@ export const createSynthesisService = ({
         }
       }
 
-      if (means.length !== 1) {
-        return {
-          status: "infeasible",
-          issues: [
-            issue(
-              means.length > 0 ? means : params.targets,
-              "domain_unsupported",
-              "The current synthesis engine requires exactly one mean target",
-            ),
-          ],
-        };
-      }
-      const mean = means[0]!;
       const form = loadForm(db, revision.formSnapshotId);
-      const meanQuestion = form.questions.find((question) => question.id === mean.questionId);
-      if (!meanQuestion || meanQuestion.kind !== "ordinal") {
-        return {
-          status: "infeasible",
-          issues: [
-            issue([mean], "invalid_subject", "Mean target must reference an ordinal question"),
-          ],
-        };
+      for (const mean of means) {
+        const question = form.questions.find((candidate) => candidate.id === mean.questionId);
+        if (!question || question.kind !== "ordinal")
+          return {
+            status: "infeasible",
+            issues: [
+              issue([mean], "invalid_subject", "Mean target must reference an ordinal question"),
+            ],
+          };
+        if (mean.value < question.min || mean.value > question.max)
+          return {
+            status: "infeasible",
+            issues: [
+              issue([mean], "out_of_range", "Mean target is outside the ordinal question range"),
+            ],
+          };
       }
-      if (mean.value < meanQuestion.min || mean.value > meanQuestion.max) {
-        return {
-          status: "infeasible",
-          issues: [
-            issue([mean], "out_of_range", "Mean target is outside the ordinal question range"),
-          ],
-        };
-      }
-
-      const plan = createFlatTablePlan(form, mean.questionId as QuestionId);
+      const plan = createFlatTablePlan(
+        form,
+        means.map((mean) => mean.questionId as QuestionId),
+      );
       const shareJobTargets: Array<{
         id: string;
         column: string;
@@ -471,7 +473,7 @@ export const createSynthesisService = ({
         schema_option_values: string[];
         value: number;
       }> = [];
-      const frozenTargets: FrozenRunTarget[] = [{ ...mean }];
+      const frozenTargets: FrozenRunTarget[] = [...means];
 
       for (const share of [...counts, ...shares]) {
         let column: string | undefined;
@@ -767,12 +769,26 @@ export const createSynthesisService = ({
               result_parquet: "result.parquet",
               report_json: "report.json",
               final_count: params.finalCount,
-              mean_target: {
-                column: TARGET_SCORE_COLUMN,
-                value: mean.value,
-                minimum: meanQuestion.min,
-                maximum: meanQuestion.max,
-              },
+              mean_targets: means.map((mean) => {
+                const question = form.questions.find(
+                  (candidate) => candidate.id === mean.questionId,
+                );
+                if (!question || question.kind !== "ordinal")
+                  throw backendFailure("INTERNAL", "Validated mean question was lost");
+                const column = plan.targetScoreColumns.get(mean.questionId as QuestionId);
+                if (!column)
+                  throw backendFailure(
+                    "INTERNAL",
+                    "Mean question is unavailable in the synthesis table",
+                  );
+                return {
+                  id: String(mean.id),
+                  column,
+                  value: mean.value,
+                  minimum: question.min,
+                  maximum: question.max,
+                };
+              }),
               count_targets: countJobTargets,
               share_targets: shareJobTargets,
               conditional_share_targets: conditionalJobTargets,

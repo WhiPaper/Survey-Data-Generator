@@ -24,6 +24,23 @@ class MeanSupportPlan:
 
 
 @dataclass(frozen=True)
+class MeanTarget:
+    id: str
+    column: str
+    value: float
+    minimum: int
+    maximum: int
+
+
+@dataclass(frozen=True)
+class MeanAchievement:
+    id: str
+    value: float
+    achieved_mean: float
+    absolute_error: float
+
+
+@dataclass(frozen=True)
 class ShareTarget:
     id: str
     column: str
@@ -102,6 +119,7 @@ class TargetSelection:
     shares: tuple[ShareAchievement, ...]
     conditional_shares: tuple[ConditionalShareAchievement, ...]
     counts: tuple[CountAchievement, ...] = ()
+    means: tuple[MeanAchievement, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -412,6 +430,8 @@ def select_for_targets(
     enforce_counts: bool = True,
     share_targets: tuple[ShareTarget, ...] = (),
     conditional_share_targets: tuple[ConditionalShareTarget, ...] = (),
+    extra_mean_targets: tuple[MeanTarget, ...] = (),
+    primary_mean_id: str = "mean",
 ) -> TargetSelection:
     if len({target.id for target in (*count_targets, *share_targets)}) != len(count_targets) + len(share_targets):
         raise TargetInfeasible("duplicate_categorical_target", "Categorical target ids must be unique")
@@ -442,6 +462,7 @@ def select_for_targets(
         for share in share_targets
     )
     source_scores = _source_scores(source, target_column)
+    extra_source_scores = tuple(_source_scores(source, target.column) for target in extra_mean_targets)
     additions = final_count - source_count
     source_sum = float(source_scores.sum())
     source_member_counts = [support.source_member_count for support in share_supports]
@@ -510,6 +531,7 @@ def select_for_targets(
             ),
             shares=shares,
             conditional_shares=tuple(conditional_results),
+            means=(MeanAchievement(primary_mean_id, target_mean, mean_support.achieved_mean, mean_support.absolute_error), *tuple(MeanAchievement(target.id, target.value, float(scores.mean()), abs(float(scores.mean()) - target.value)) for target, scores in zip(extra_mean_targets, extra_source_scores, strict=True))),
         )
 
     if len(candidates) < additions:
@@ -525,6 +547,9 @@ def select_for_targets(
         )
 
     candidate_score_values = candidate_scores.to_numpy(dtype=float)
+    extra_candidate_scores = tuple(pd.to_numeric(candidates[target.column], errors="coerce") for target in extra_mean_targets)
+    if any(scores.isna().any() for scores in extra_candidate_scores):
+        raise TargetInfeasible("candidate_support", "Candidate pool contains unanswered or invalid mean scores")
     source_memberships = [_membership(source, share) for share in share_targets]
     candidate_memberships = [_membership(candidates, share) for share in share_targets]
     source_count_memberships = [_count_membership(source, target) for target in count_targets]
@@ -546,9 +571,12 @@ def select_for_targets(
         )
 
     solution = solve_binary_selection(
-        scores=np.concatenate([source_scores.to_numpy(dtype=float), candidate_score_values]),
+        scores=np.column_stack((
+            np.concatenate([source_scores.to_numpy(dtype=float), candidate_score_values]),
+            *(np.concatenate([source_values.to_numpy(dtype=float), candidate_values.to_numpy(dtype=float)]) for source_values, candidate_values in zip(extra_source_scores, extra_candidate_scores, strict=True)),
+        )),
         final_count=final_count,
-        target_mean=target_mean,
+        target_means=(target_mean, *(target.value for target in extra_mean_targets)),
         source_count=source_count,
         fix_source=True,
         share_memberships=tuple(
@@ -595,6 +623,14 @@ def select_for_targets(
         (source_sum + float(candidate_score_values[selected].sum())) / final_count
     )
     mean_error = abs(achieved_mean - target_mean)
+    extra_mean_results = tuple(
+        MeanAchievement(
+            target.id, target.value,
+            float((float(source_values.sum()) + float(candidate_values.iloc[selected].sum())) / final_count),
+            abs(float((float(source_values.sum()) + float(candidate_values.iloc[selected].sum())) / final_count) - target.value),
+        )
+        for target, source_values, candidate_values in zip(extra_mean_targets, extra_source_scores, extra_candidate_scores, strict=True)
+    )
     if mean_error > mean_support.absolute_error + 1e-9:
         raise TargetInfeasible(
             "candidate_target_support",
@@ -687,6 +723,7 @@ def select_for_targets(
         ),
         shares=share_results,
         conditional_shares=tuple(conditional_results),
+        means=(MeanAchievement(primary_mean_id, target_mean, achieved_mean, mean_error), *extra_mean_results),
     )
 
 

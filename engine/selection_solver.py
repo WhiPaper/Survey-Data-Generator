@@ -26,7 +26,8 @@ def solve_binary_selection(
     *,
     scores: np.ndarray,
     final_count: int,
-    target_mean: float,
+    target_mean: float | None = None,
+    target_means: tuple[float, ...] = (),
     source_count: int,
     fix_source: bool,
     share_memberships: tuple[np.ndarray, ...] = (),
@@ -38,7 +39,16 @@ def solve_binary_selection(
     target_limit: float | None = None,
     minimize_replacements: bool = False,
 ) -> BinarySelection | None:
-    row_count = len(scores)
+    score_matrix = np.asarray(scores, dtype=float)
+    if score_matrix.ndim == 1:
+        score_matrix = score_matrix.reshape((-1, 1))
+    if score_matrix.ndim != 2:
+        raise ValueError("scores must be a one- or two-dimensional array")
+    if target_mean is not None:
+        target_means = (target_mean, *target_means)
+    if score_matrix.shape[1] != len(target_means):
+        raise ValueError("score columns and mean targets must have equal length")
+    row_count = len(score_matrix)
     if len(count_memberships) != len(count_values):
         raise ValueError("count memberships and values must have equal length")
     groups: dict[PopulationKey, list[ConditionalMetric]] = {}
@@ -51,15 +61,15 @@ def solve_binary_selection(
     if any(not values for values in denominators.values()):
         return None
 
-    mean_slack_index = row_count
-    share_slack_start = mean_slack_index + 1
+    mean_slack_start = row_count
+    share_slack_start = mean_slack_start + len(target_means)
     conditional_slack_start = share_slack_start + len(share_values)
     selector_start = conditional_slack_start + len(conditionals)
     selector_count = sum(len(values) for values in denominators.values())
     variable_count = selector_start + selector_count
 
     target_objective = np.zeros(variable_count, dtype=float)
-    target_objective[mean_slack_index] = 1.0 / final_count
+    target_objective[mean_slack_start:share_slack_start] = 1.0 / final_count
     target_objective[share_slack_start:conditional_slack_start] = 1.0 / final_count
     target_objective[conditional_slack_start:selector_start] = 1.0
 
@@ -76,7 +86,7 @@ def solve_binary_selection(
     upper_bounds = np.ones(variable_count, dtype=float)
     if fix_source:
         lower_bounds[:source_count] = 1.0
-    upper_bounds[mean_slack_index:selector_start] = np.inf
+    upper_bounds[mean_slack_start:selector_start] = np.inf
 
     rows: list[np.ndarray] = []
     lower: list[float] = []
@@ -91,16 +101,17 @@ def solve_binary_selection(
     count_row[:row_count] = 1.0
     constrain(count_row, float(final_count), float(final_count))
 
-    mean_rhs = target_mean * final_count
-    mean_upper = np.zeros(variable_count, dtype=float)
-    mean_upper[:row_count] = scores
-    mean_upper[mean_slack_index] = -1.0
-    constrain(mean_upper, -np.inf, mean_rhs)
-
-    mean_lower = np.zeros(variable_count, dtype=float)
-    mean_lower[:row_count] = scores
-    mean_lower[mean_slack_index] = 1.0
-    constrain(mean_lower, mean_rhs, np.inf)
+    for index, value in enumerate(target_means):
+        mean_rhs = value * final_count
+        slack_index = mean_slack_start + index
+        mean_upper = np.zeros(variable_count, dtype=float)
+        mean_upper[:row_count] = score_matrix[:, index]
+        mean_upper[slack_index] = -1.0
+        constrain(mean_upper, -np.inf, mean_rhs)
+        mean_lower = np.zeros(variable_count, dtype=float)
+        mean_lower[:row_count] = score_matrix[:, index]
+        mean_lower[slack_index] = 1.0
+        constrain(mean_lower, mean_rhs, np.inf)
 
     for index, (membership, value) in enumerate(
         zip(share_memberships, share_values, strict=True)

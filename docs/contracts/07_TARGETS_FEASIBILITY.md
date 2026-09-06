@@ -70,9 +70,9 @@ Target cardinality is a product semantic, not a permanent API restriction. Compa
 
 The engine supports multiple depth-1 categorical `count` and `share` targets in one Run. Count targets are exact constraints; share targets use the nearest integer-row representation. Both participate in candidate support, append-only selection, evaluation, and replacement planning.
 
-The remaining staged execution limit is that the engine requires exactly one mean target. Mean cardinality `0..N` is Phase 3 because it requires a vertical refactor of synthesis, evaluation, and replacement paths.
+The engine accepts `0..N` mean targets. Each valid ordinal target is compiled to an independent solver metric; a target-free categorical Run does not invent an ordinal target merely to enter the synthesis pipeline.
 
-These are engine capability boundaries. They are surfaced as structured `domain_unsupported` issues rather than encoded as permanent public-schema restrictions.
+Engine capability failures are surfaced as structured `domain_unsupported` issues rather than encoded as permanent public-schema restrictions.
 
 ## Structured options and observed support
 

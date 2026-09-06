@@ -141,7 +141,7 @@ const writeResult = (
         nullable: false,
       },
       {
-        name: "target_score",
+        name: "target_score_0",
         data: rows.map((row) => row.score),
         type: "DOUBLE",
         nullable: false,
