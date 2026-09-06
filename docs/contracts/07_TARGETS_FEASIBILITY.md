@@ -1,232 +1,171 @@
-# Targets & Feasibility
+# Targets and feasibility
 
-## Final-dataset semantics
-
-Every target applies to the final result.
-
-```text
-source scope count = N0
-requested final count = Nf
-requested synthetic additions = Nf - N0
-```
-
-Target contribution is always:
-
-```text
-kept source contribution
-+ approved replacement contribution
-+ synthetic addition contribution
-```
-
-Append-only planning fixes the source contribution. Replacement planning may remove selected source-derived rows from the final dataset only through an approved EditPlan.
+This contract keeps the public target vocabulary intentionally small while allowing the backend to compile those targets into solver-facing metrics.
 
 ## Public target vocabulary
 
-The v2 public target vocabulary is intentionally small:
+The v2 public API exposes only four target kinds:
 
-```text
-count
-share
-mean
-conditional_share
+- `count`
+- `share`
+- `mean`
+- `conditional_share`
+
+The public contract does not expose a generic formula or boolean-expression DSL. More complex solver metrics remain an internal implementation detail.
+
+Every public target has a stable `TargetId`. A `TargetId` must be unique within a Run and is preserved through execution, diagnostics, EditPlan comparison, frozen snapshots, and final outcomes.
+
+## TargetSubject
+
+Depth-1 target subjects are explicit and finite:
+
+```ts
+type TargetSubject =
+  | { kind: "option"; questionId: string; optionKey: string }
+  | { kind: "checkbox_option"; questionId: string; optionKey: string }
+  | { kind: "value_group"; valueGroupId: string };
 ```
 
-Do not add a generic target language in v2.
+A structured single-choice option does not require a ValueGroup. A checkbox option can also be targeted directly. ValueGroups remain useful for grouping several observed categorical/text values under one reusable population or subject.
 
-Every public target has a stable `TargetId`. Array position is not target identity.
+The public target shapes are conceptually:
 
-```text
-TargetId = string
+```ts
+type CountTarget = {
+  id: TargetId;
+  kind: "count";
+  subject: TargetSubject;
+  value: number;
+};
+
+type ShareTarget = {
+  id: TargetId;
+  kind: "share";
+  subject: TargetSubject;
+  value: number; // 0..1
+};
+
+type MeanTarget = {
+  id: TargetId;
+  kind: "mean";
+  questionId: string;
+  value: number;
+};
+
+type ConditionalShareTarget = {
+  id: TargetId;
+  kind: "conditional_share";
+  population: { kind: "value_group"; valueGroupId: string };
+  questionId: string;
+  optionKey: string;
+  value: number; // 0..1
+};
 ```
 
-`count` and `share` separate the metric from the thing being measured through `TargetSubject`:
+`conditional_share` intentionally stays depth-1 in v2: its population is a ValueGroup and its numerator is one checkbox option. Nested arbitrary conditions are not part of the public contract.
 
-```text
-TargetSubject =
-  option(questionId, optionKey)
-  | checkbox_option(questionId, optionKey)
-  | value_group(valueGroupId)
-```
+## Cardinality and execution boundaries
 
-A single structured Form option does not require a ValueGroup. ValueGroup is reserved for intentionally grouping multiple raw values.
+Target cardinality is a product semantic, not a permanent API restriction. Compatible target sets should eventually flow to the feasibility solver rather than being rejected simply because several targets were supplied.
 
-`conditional_share` remains depth-1 in v2:
+The current engine still has staged execution limits:
 
-```text
-population = ValueGroup
-outcome = checkbox option
-```
+- CountTarget is accepted by the public contract but executable count compilation is deferred to Phase 2.
+- The current candidate generator executes at most one unconditional share target. Removing that temporary execution boundary is Phase 2.
+- The current engine requires exactly one mean target. Mean cardinality `0..N` is Phase 3 because it requires a vertical refactor of synthesis, evaluation, and replacement paths.
 
-Arbitrary boolean expressions, custom denominators, custom formulas, scripting, and user-defined target weights are outside v2.
+These are engine capability boundaries. They must be surfaced as structured `domain_unsupported` outcomes rather than encoded as permanent public-schema restrictions.
 
-## Cardinality and engine boundaries
+## Structured options and observed support
 
-A target set is not semantically invalid merely because it contains several valid targets. The product contract allows each target kind `0..N` and requires at least one target per Run.
+Structured Form options are schema-backed. A direct `option` or `checkbox_option` subject remains a valid target even when that option has zero observations in the selected SourceScope.
 
-Static/domain validation decides whether each target is meaningful and computable. Feasibility/selection/replacement decides whether valid targets can be satisfied together.
+For zero-observed structured options, the backend can construct the canonical AnswerSlot from the Form schema. Candidate generation may use that canonical structured value directly, so a valid schema-backed option is not rejected merely because it is absent from the source observations.
 
-Temporary engine implementation limits must be reported as `domain_unsupported`; they are not part of the public target semantics. Phase 1 exposes the `count` contract without compiling it into the current engine and preserves the current single-mean and single-unconditional-share execution boundaries without generalizing the solver. Executable count and multiple categorical targets are Phase 2 work; mean `0..N` is Phase 3 work.
+Text ValueGroups are different. The system must not invent unseen raw text values. ValueGroup compilation continues to use observed source cells for its members; if the selected SourceScope provides no usable member support, the result is a structured `candidate_support` issue.
 
-## Metric compilation
+## Static validation vs feasibility
 
-Most targets compile to row-level numerator/denominator features.
+Static/domain validation answers questions such as:
 
-For a final ratio `r`:
+- Does a referenced question exist?
+- Is an `option` subject attached to a single-choice question?
+- Is a `checkbox_option` attached to a multi-choice question?
+- Does the option key exist in the Form schema?
+- Is a requested share within `[0, 1]`?
+- Is a requested mean within the ordinal domain?
 
-```text
-N0 + n·x = r(D0 + d·x)
-```
+Feasibility answers different questions after valid targets have been compiled:
 
-which becomes a linear constraint:
+- Can the immutable source plus allowed synthetic rows reach the requested target values?
+- Does a conditional population have a usable denominator?
+- Does the candidate pool contain enough support?
+- Do several targets conflict when considered together?
 
-```text
-(n - r d)·x = rD0 - N0
-```
-
-For a mean, numerator is the value/score sum and denominator is the answered/eligible indicator.
-
-For a conditional share, numerator and denominator both include the condition.
-
-Public targets remain product-specific, while solver-facing compiled metrics may use a generalized internal representation.
-
-## Examples
-
-Likert mean:
-
-```text
-numerator = satisfaction score
-denominator = answered
-```
-
-Structured option share:
-
-```text
-numerator = selected_seoul
-denominator = region_eligible
-```
-
-ValueGroup share:
-
-```text
-numerator = is_fruit
-denominator = eligible rows
-```
-
-Checkbox conditional share:
-
-```text
-numerator = is_busan AND selected_bus
-denominator = is_busan AND transport_eligible
-```
-
-Checkbox option shares are independent and need not sum to 100%.
-
-## Representability
-
-Counts are exact when feasible.
-
-Ratios and means may be impossible to represent exactly with integer rows/score sums. The result should use the nearest feasible representation and report the achieved value rather than apply an arbitrary generic epsilon.
-
-## Target outcomes
-
-Target results use one shape everywhere target-level outcomes are compared or frozen:
-
-```text
-TargetOutcome {
-  targetId
-  kind
-  requested
-  achieved
-  absoluteError
-  exact
-  numeratorCount?
-  denominatorCount?
-}
-```
-
-Synthesis success, historical Run results, and EditPlan comparison use:
-
-```text
-TargetSetOutcome {
-  targets: TargetOutcome[]
-}
-```
-
-Target identity must survive draft edits, execution, replacement comparison, and historical Run snapshots.
+The public boundary should not confuse a valid-but-infeasible target with an invalid target description.
 
 ## Target issues
 
-Target-aware diagnostics use:
+Target-related infeasibility is structured and target-aware:
 
-```text
-TargetIssue {
-  targetIds: TargetId[]
+```ts
+type TargetIssue = {
+  targetIds: TargetId[];
   code:
-    out_of_range
-    | invalid_subject
-    | immutable_source_conflict
-    | zero_denominator
-    | target_conflict
-    | candidate_support
-    | domain_unsupported
-  message
-}
+    | "out_of_range"
+    | "invalid_subject"
+    | "immutable_source_conflict"
+    | "zero_denominator"
+    | "target_conflict"
+    | "candidate_support"
+    | "domain_unsupported";
+  message: string;
+};
 ```
 
-A solver conflict does not require a minimal unsat core. When a smaller affected set cannot be identified cheaply, attach the issue to all relevant targets.
+Milestone names are not part of validation or infeasibility messages. Messages describe the actual capability or conflict.
 
-Mathematical/domain conflict and candidate support failure are different diagnostics. Invalid question, option, or ValueGroup references use `invalid_subject` with the affected TargetId.
+## Outcomes
 
-## Semantics of changes
+All target-bearing result surfaces use the same target-aware representation:
 
-These are different target requests:
+```ts
+type TargetOutcome = {
+  targetId: TargetId;
+  kind: "count" | "share" | "mean" | "conditional_share";
+  requested: number;
+  achieved: number;
+  absoluteError: number;
+  exact: boolean;
+  numeratorCount?: number;
+  denominatorCount?: number;
+};
 
-```text
-final share 25%
-+5 percentage points
-+5% relative to current share
-final exact count 40
-+5 people
+type TargetSetOutcome = {
+  targets: TargetOutcome[];
+};
 ```
 
-Resolve the requested semantics before compilation. A Run snapshot freezes the resolved absolute target value; any original editing intent may be stored separately.
+The same structure is used for:
 
-## Feasibility
+- direct synthesis success
+- append-only EditPlan preview
+- replacement EditPlan preview
+- the selected/persisted Run outcome
+- `runs.get`
 
-Use simple static checks when they provide clear diagnostics, then rely on the same SciPy MILP formulation used for selection.
+This avoids separate mean/share/conditional result shapes and keeps `TargetId` as the stable join key between intent, diagnostics, preview, and achieved result.
 
-Do not maintain a separate solver architecture for feasibility.
+## Frozen Run targets
 
-Planning order:
+Run snapshots freeze executable target meaning at Run time. They do not retain only a mutable ValueGroup ID.
 
-```text
-1. validate target semantics and obvious bounds
-2. append-only MILP
-3. if infeasible, replacement-enabled MILP minimizing replaced source rows
-4. if still infeasible, report unsupported candidate/domain requirement
-```
+A frozen `value_group` subject contains the ValueGroup's ID, question, name, and member list as they existed when the Run started. Conditional populations are frozen in the same way. Structured `option` and `checkbox_option` subjects retain the stable question/option identifiers from the frozen Form revision.
 
-Examples of early diagnostics:
+This separation means later draft edits do not rewrite historical Run intent.
 
-- final count below source-scope count
-- requested mean beyond the question's possible score range
-- requested final category count already below immutable append-only source contribution
-- conditional denominator is zero/unsupported
-- duplicate TargetId
-- invalid question/option/ValueGroup reference
+## Internal compilation
 
-## Original replacement
+The backend may compile public targets to a more generic internal metric representation, for example a solver-facing `CompiledMetric[]`. That representation is not a public formula DSL and should not leak into renderer contracts.
 
-The replacement-enabled solve should minimize the number of replaced original-derived rows before secondary considerations.
-
-The computed plan is not automatically applied. Return both append-only and replacement-enabled outcomes to the application for user approval.
-
-Start with complete-row replacement. Do not optimize edit distance or individual cell mutations in v2.
-
-## Candidate support
-
-A mathematically valid target can still be infeasible with the available candidate pool.
-
-The engine may regenerate a larger or conditionally enriched candidate pool before declaring final infeasibility. This is preferable to adding a custom repair engine.
-
-Structured Form options may generate values that are valid in the Form schema even when unseen in observed responses. Arbitrary short-text values require observed or explicit user-provided support.
+Phase 1 deliberately avoids a large solver generalization. It aligns identity, subject modeling, frozen snapshots, issues, and outcomes while preserving the current solver execution shape. Phase 2 can arrayize categorical targets and count metrics behind the same public contract. Phase 3 can then arrayize mean metrics without another public-contract rewrite.
