@@ -65,7 +65,7 @@ A target set is not semantically invalid merely because it contains several vali
 
 Static/domain validation decides whether each target is meaningful and computable. Feasibility/selection/replacement decides whether valid targets can be satisfied together.
 
-Temporary engine implementation limits must be reported as `domain_unsupported`; they are not part of the public target semantics. In particular, Phase 1 may expose a target shape before the corresponding Phase 2/3 solver refactor is executable.
+Temporary engine implementation limits must be reported as `domain_unsupported`; they are not part of the public target semantics. Phase 1 exposes the `count` contract without compiling it into the current engine and preserves the current single-mean and single-unconditional-share execution boundaries without generalizing the solver. Executable count and multiple categorical targets are Phase 2 work; mean `0..N` is Phase 3 work.
 
 ## Metric compilation
 
@@ -144,7 +144,7 @@ TargetOutcome {
 }
 ```
 
-EditPlan comparison uses:
+Synthesis success, historical Run results, and EditPlan comparison use:
 
 ```text
 TargetSetOutcome {
@@ -175,7 +175,7 @@ TargetIssue {
 
 A solver conflict does not require a minimal unsat core. When a smaller affected set cannot be identified cheaply, attach the issue to all relevant targets.
 
-Mathematical/domain conflict and candidate support failure are different diagnostics.
+Mathematical/domain conflict and candidate support failure are different diagnostics. Invalid question, option, or ValueGroup references use `invalid_subject` with the affected TargetId.
 
 ## Semantics of changes
 
