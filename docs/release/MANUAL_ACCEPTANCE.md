@@ -13,17 +13,21 @@ This checklist separates repository-automatable validation from release steps th
 
 ## Linux x64 package acceptance
 
-- [ ] Build the x64 AppImage on an actual Linux runner matching the release baseline.
-- [ ] Run the packaged Electron smoke under that Linux environment and record the successful evidence.
+GitHub Actions run `34028158373` checked out `b7be0544aa9e89024740fbffa0a560103d483f23` on the Ubuntu 22.04 release runner and provides concrete runner-level evidence for x64 AppImage creation, packaged Electron smoke (`PACKAGED_SMOKE_OK`), and artifact upload. The uploaded `linux-x64` artifact recorded SHA-256 digest `dc68fa6b8241e3e481cf9c634c3e005bca47e1ed4d6cdc89544eb7ec6c234d92`.
+
+- [ ] For the final release candidate, build the x64 AppImage on an actual Linux runner matching the release baseline.
+- [ ] For the final release candidate, run the packaged Electron smoke under that Linux environment and record the successful evidence.
 - [ ] Launch the AppImage on a representative Linux device or VM and verify the packaged Python engine is discovered without a system Python dependency.
 - [ ] Confirm the running app groups with its installed launcher/taskbar entry rather than appearing as an unrelated window.
 - [ ] Confirm the representative Linux environment provides a secure Electron `safeStorage` backend rather than `basic_text`; if it does not, credential persistence must fail safely and the environment must not be accepted for Google login.
 
-Until these checks have evidence, do not claim that Linux packaged smoke has passed.
+Runner-level Linux packaged smoke may be claimed for the evidenced commit above. Do not treat that result as representative Linux desktop/device acceptance, secure `safeStorage` backend acceptance, or launcher/taskbar association evidence.
 
 ## Packaging metadata and warnings
 
 The desktop package includes a product description and a stable Linux desktop identity. The pinned electron-builder 26.15.3 schema does not expose a supported missing-dependency hard-fail option. Automated release validation therefore treats `package:desktop:dir` followed by the packaged Electron smoke as the primary runtime dependency gate: the produced app must launch and exercise representative packaged native/runtime paths before artifact creation proceeds.
+
+GitHub Actions run `34028158373` also demonstrated that the Windows directory package and packaged Electron smoke pass before NSIS artifact creation. The remaining Windows failure occurred when NSIS tried to open an electron-builder template through a 261-character `pnpm dlx` cache path. The release workflow therefore places the Windows pnpm cache under the shorter `${{ runner.temp }}` path before `dlx` packaging; this is a build-tool path-length mitigation, not a product-runtime dependency change.
 
 - [ ] Confirm the release owner/publisher identity before adding or relying on `author`/publisher metadata. Do not invent this value merely to silence a packaging warning.
 - [ ] Review the final installer/application icon. The current configuration does not provide a custom brand icon, so electron-builder may use its default Electron icon until the release owner supplies or explicitly accepts an asset.

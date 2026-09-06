@@ -90,10 +90,14 @@ describe("M10 release hardening", () => {
     expect(builder.allowMissingDependencies).toBeUndefined();
     expect(rootPackage.scripts?.["package:desktop:dir"]).toContain("--publish never");
     expect(rootPackage.scripts?.["package:desktop:artifact"]).toContain("--publish never");
+    expect(workflow).toContain("Shorten pnpm dlx cache path on Windows");
+    expect(workflow).toContain('pnpm config set cache-dir "${{ runner.temp }}\\pnpm-cache"');
 
+    const shortDlxCache = workflow.indexOf("Shorten pnpm dlx cache path on Windows");
     const packageDir = workflow.indexOf("pnpm run package:desktop:dir");
     const packagedSmoke = workflow.indexOf("pnpm run package:desktop:smoke");
-    expect(packageDir).toBeGreaterThanOrEqual(0);
+    expect(shortDlxCache).toBeGreaterThanOrEqual(0);
+    expect(packageDir).toBeGreaterThan(shortDlxCache);
     expect(packagedSmoke).toBeGreaterThan(packageDir);
   });
 

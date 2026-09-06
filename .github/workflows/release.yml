@@ -41,6 +41,9 @@ jobs:
       - run: pnpm run engine:build
       - run: pnpm run engine:binary-smoke
       - run: pnpm run build
+      - name: Shorten pnpm dlx cache path on Windows
+        if: runner.os == 'Windows'
+        run: pnpm config set cache-dir "${{ runner.temp }}\pnpm-cache"
       - run: pnpm run package:desktop:dir
       - name: Smoke packaged Electron app
         if: runner.os == 'Windows'
