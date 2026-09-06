@@ -2,6 +2,17 @@ from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = collect_submodules("sdv") + collect_submodules("sdmetrics")
 
+# v2 uses SDV GaussianCopulaSynthesizer only. SDV 1.38 tolerates missing
+# CTGAN/PAR dependencies, so keep their neural/GPU stacks out of the bundle.
+unused_neural_modules = [
+    "ctgan",
+    "deepecho",
+    "torch",
+    "triton",
+    "nvidia",
+    "cuda",
+]
+
 a = Analysis(
     ["main.py"],
     pathex=["."],
@@ -11,7 +22,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=unused_neural_modules,
     noarchive=False,
     optimize=0,
 )

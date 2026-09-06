@@ -101,6 +101,22 @@ describe("M10 release hardening", () => {
     expect(packagedSmoke).toBeGreaterThan(packageDir);
   });
 
+  it("keeps unused neural and CUDA stacks out of the packaged Gaussian engine", () => {
+    const spec = readRepositoryFile("engine/survey-synth-engine.spec");
+    const generator = readRepositoryFile("engine/generate.py");
+    const requirements = readRepositoryFile("engine/requirements.txt");
+
+    for (const moduleName of ["ctgan", "deepecho", "torch", "triton", "nvidia", "cuda"]) {
+      expect(spec).toContain(`"${moduleName}"`);
+    }
+    expect(spec).toContain("excludes=unused_neural_modules");
+    expect(generator).toContain("GaussianCopulaSynthesizer");
+    expect(generator).not.toContain("CTGANSynthesizer");
+    expect(generator).not.toContain("TVAESynthesizer");
+    expect(generator).not.toContain("PARSynthesizer");
+    expect(requirements).toContain("sdv==1.38.0");
+  });
+
   it("keeps Linux desktop window association aligned with the application id", () => {
     const packageJson = JSON.parse(readRepositoryFile("apps/desktop/package.json")) as {
       desktopName?: string;
