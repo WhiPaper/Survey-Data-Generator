@@ -93,6 +93,7 @@ describe("M8 zero-observed structured option boundary", () => {
               kind: "single_choice",
               presentation: "radio",
               options: [{ key: "P", label: "서울" }],
+              shuffle: false,
             },
             {
               id: "q-checkbox",
@@ -101,11 +102,12 @@ describe("M8 zero-observed structured option boundary", () => {
               required: false,
               affectsNavigation: false,
               kind: "multi_choice",
-              presentation: "checkboxes",
+              presentation: "checkbox",
               options: [
                 { key: "A", label: "공연" },
                 { key: "B", label: "먹거리" },
               ],
+              shuffle: false,
             },
           ],
           groups: [],
