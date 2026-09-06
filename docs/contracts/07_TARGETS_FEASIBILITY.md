@@ -74,15 +74,15 @@ The current engine still has staged execution limits:
 - The current candidate generator executes at most one unconditional share target. Removing that temporary execution boundary is Phase 2.
 - The current engine requires exactly one mean target. Mean cardinality `0..N` is Phase 3 because it requires a vertical refactor of synthesis, evaluation, and replacement paths.
 
-These are engine capability boundaries. They must be surfaced as structured `domain_unsupported` outcomes rather than encoded as permanent public-schema restrictions.
+These are engine capability boundaries. They are surfaced as structured `domain_unsupported` issues rather than encoded as permanent public-schema restrictions.
 
 ## Structured options and observed support
 
 Structured Form options are schema-backed. A direct `option` or `checkbox_option` subject remains a valid target even when that option has zero observations in the selected SourceScope.
 
-For zero-observed structured options, the backend can construct the canonical AnswerSlot from the Form schema. Candidate generation may use that canonical structured value directly, so a valid schema-backed option is not rejected merely because it is absent from the source observations.
+For zero-observed structured options, the backend constructs the canonical AnswerSlot from the Form schema. Candidate generation can inject that canonical structured value after sampling the rest of the row, so a valid schema-backed option is not rejected merely because it is absent from source observations.
 
-Text ValueGroups are different. The system must not invent unseen raw text values. ValueGroup compilation continues to use observed source cells for its members; if the selected SourceScope provides no usable member support, the result is a structured `candidate_support` issue.
+Text ValueGroups are different. The system must not invent unseen raw text values. ValueGroup compilation uses observed source cells for its members; if the selected SourceScope provides no usable member support, the result is a structured `candidate_support` issue.
 
 ## Static validation vs feasibility
 
@@ -146,15 +146,7 @@ type TargetSetOutcome = {
 };
 ```
 
-The same structure is used for:
-
-- direct synthesis success
-- append-only EditPlan preview
-- replacement EditPlan preview
-- the selected/persisted Run outcome
-- `runs.get`
-
-This avoids separate mean/share/conditional result shapes and keeps `TargetId` as the stable join key between intent, diagnostics, preview, and achieved result.
+The same structure is used for direct synthesis success, append-only and replacement EditPlan previews, the selected persisted Run outcome, and `runs.get`. `TargetId` is the stable join key between requested intent, diagnostics, preview, and achieved result.
 
 ## Frozen Run targets
 
@@ -168,4 +160,4 @@ This separation means later draft edits do not rewrite historical Run intent.
 
 The backend may compile public targets to a more generic internal metric representation, for example a solver-facing `CompiledMetric[]`. That representation is not a public formula DSL and should not leak into renderer contracts.
 
-Phase 1 deliberately avoids a large solver generalization. It aligns identity, subject modeling, frozen snapshots, issues, and outcomes while preserving the current solver execution shape. Phase 2 can arrayize categorical targets and count metrics behind the same public contract. Phase 3 can then arrayize mean metrics without another public-contract rewrite.
+Phase 1 deliberately avoids a large solver generalization. It aligns identity, subject modeling, structured option support, frozen snapshots, issues, and outcomes while preserving the current solver execution shape. Phase 2 can arrayize categorical targets and count metrics behind the same public contract. Phase 3 can then arrayize mean metrics without another public-contract rewrite.
