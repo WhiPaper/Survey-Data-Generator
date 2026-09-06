@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { once } from "node:events";
 import { createReadStream, createWriteStream } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { request } from "node:https";
 import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import { app, dialog } from "electron";
 
@@ -157,16 +157,10 @@ const downloadToFile = async (
           return;
         }
 
-        const output = createWriteStream(filename, { flags: "w", mode: 0o600 });
         try {
-          for await (const chunk of response) {
-            if (!output.write(chunk as Buffer)) await once(output, "drain");
-          }
-          output.end();
-          await once(output, "finish");
+          await pipeline(response, createWriteStream(filename, { flags: "w", mode: 0o600 }));
           resolve();
         } catch (error) {
-          output.destroy();
           reject(error);
         }
       },
@@ -216,6 +210,21 @@ const prepareInstaller = async (
   return { filename, version };
 };
 
+const launchInstaller = async (filename: string): Promise<void> => {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(filename, ["--updated", "/S", "--force-run"], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+};
+
 const checkForUpdate = async (token: string): Promise<void> => {
   const release = await requestJson<LatestRelease>(
     `/repos/${UPDATE_OWNER}/${UPDATE_REPOSITORY}/releases/latest`,
@@ -239,12 +248,7 @@ const checkForUpdate = async (token: string): Promise<void> => {
   });
   if (result.response !== 0) return;
 
-  const child = spawn(installer.filename, ["--updated", "/S", "--force-run"], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  child.unref();
+  await launchInstaller(installer.filename);
   app.quit();
 };
 
