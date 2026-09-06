@@ -6,11 +6,16 @@ import { asyncBufferFromFile, parquetReadObjects } from "hyparquet";
 import { parquetWriteFile } from "hyparquet-writer";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { FormSnapshot, NormalizedResponse } from "@survey-synth/domain";
+import type {
+  FormSnapshot,
+  MultiChoiceQuestion,
+  NormalizedResponse,
+} from "@survey-synth/domain";
 
 import {
   createFlatTablePlan,
   multiChoiceOptionCells,
+  multiChoiceOptionSupport,
   readResultParquet,
   valueGroupMemberCells,
   writeSourceParquet,
@@ -186,6 +191,51 @@ describe("synthesis flat parquet transport", () => {
       JSON.stringify(aAndB),
       JSON.stringify(bOnly),
     ]);
+  });
+
+  it("uses Form schema support when a structured checkbox option has zero observations", () => {
+    const question = {
+      id: "q-checkbox",
+      title: "관심 행사",
+      sectionId: "__entry__",
+      required: false,
+      affectsNavigation: false,
+      kind: "multi_choice",
+      presentation: "checkboxes",
+      options: [
+        { key: "A", label: "공연" },
+        { key: "B", label: "먹거리" },
+      ],
+    } as unknown as MultiChoiceQuestion;
+    const bOnly = {
+      state: "answered",
+      value: { kind: "multi_choice", optionKeys: ["B"], labels: ["먹거리"] },
+    };
+    const responses = [
+      {
+        responseId: "r1",
+        submittedAtMs: 1,
+        response: {
+          responseId: "r1",
+          answers: { "q-checkbox": bOnly },
+          origin: "original",
+          path: { questions: { "q-checkbox": "reached" }, confidence: "certain" },
+        } as unknown as NormalizedResponse,
+      },
+    ];
+    const canonicalA = JSON.stringify({
+      state: "answered",
+      value: { kind: "multi_choice", optionKeys: ["A"], labels: ["공연"] },
+    });
+
+    expect(multiChoiceOptionSupport(responses, question, "A")).toEqual({
+      optionValues: [canonicalA],
+      schemaOptionValues: [canonicalA],
+    });
+    expect(multiChoiceOptionSupport(responses, question, "B")).toEqual({
+      optionValues: [JSON.stringify(bOnly)],
+      schemaOptionValues: [],
+    });
   });
 
   it("reconstructs synthetic normalized responses and derives answer state from Form logic", async () => {
