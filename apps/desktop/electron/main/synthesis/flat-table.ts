@@ -243,7 +243,11 @@ const syntheticResponse = (
   const provisional = {} as Record<QuestionId, AnswerSlot>;
   for (const [questionId, column] of plan.targetScoreColumns) {
     const scoreValue = row[column];
-    if (scoreValue === null || scoreValue === undefined || Number.isNaN(scoreValue)) {
+    if (
+      scoreValue === null ||
+      scoreValue === undefined ||
+      (typeof scoreValue === "number" && Number.isNaN(scoreValue))
+    ) {
       provisional[questionId] = { state: "skipped" };
       continue;
     }
