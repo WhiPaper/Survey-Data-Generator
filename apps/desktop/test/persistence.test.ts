@@ -16,7 +16,7 @@ import {
 } from "../electron/main/persistence/store";
 
 const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
-const versionsFile = fileURLToPath(new URL("../../../versions.json", import.meta.url"));
+const versionsFile = fileURLToPath(new URL("../../../versions.json", import.meta.url));
 
 const tempDirectories: string[] = [];
 const openDatabases: AppDatabase[] = [];
