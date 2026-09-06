@@ -142,7 +142,7 @@ describe("M9 saved Run export", () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(xlsxPath);
     const sheet = workbook.getWorksheet("응답")!;
-    expect(sheet.getRow(1).values).toEqual([, "응답 제출 시간", "점수", "메모"]);
+    expect(sheet.getRow(1).values).toEqual([undefined, "응답 제출 시간", "점수", "메모"]);
     expect(sheet.getCell("B2").value).toBe(4);
     expect(sheet.getCell("C2").value).toBe("'=1+1");
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
