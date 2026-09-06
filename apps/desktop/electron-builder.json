@@ -1,0 +1,41 @@
+{
+  "appId": "com.whipaper.surveysynth",
+  "productName": "Survey Synth",
+  "executableName": "survey-synth",
+  "electronVersion": "44.2.0",
+  "asar": true,
+  "asarUnpack": ["node_modules/**/*.node"],
+  "npmRebuild": true,
+  "directories": {
+    "output": "dist"
+  },
+  "files": ["out/**/*", "drizzle/**/*"],
+  "extraResources": [
+    {
+      "from": "../../engine/dist",
+      "to": "engine",
+      "filter": ["survey-synth-engine*"]
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  },
+  "linux": {
+    "target": [
+      {
+        "target": "AppImage",
+        "arch": ["x64"]
+      }
+    ],
+    "category": "Utility"
+  }
+}
