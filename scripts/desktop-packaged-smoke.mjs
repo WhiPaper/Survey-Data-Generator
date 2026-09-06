@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-if (!['win32', 'linux'].includes(process.platform)) {
+if (!["win32", "linux"].includes(process.platform)) {
   throw new Error(`Packaged desktop smoke is unsupported on ${process.platform}`);
 }
 if (process.arch !== "x64") {
@@ -10,7 +10,10 @@ if (process.arch !== "x64") {
 }
 
 const desktopDist = resolve("apps", "desktop", "dist");
-const unpacked = resolve(desktopDist, process.platform === "win32" ? "win-unpacked" : "linux-unpacked");
+const unpacked = resolve(
+  desktopDist,
+  process.platform === "win32" ? "win-unpacked" : "linux-unpacked",
+);
 const executable = resolve(
   unpacked,
   process.platform === "win32" ? "survey-synth.exe" : "survey-synth",

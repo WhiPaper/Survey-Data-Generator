@@ -50,11 +50,7 @@ const verifyGoogleOAuthLoopback = async (appPath: string): Promise<void> => {
       const redirectUri = authorizationUrl.searchParams.get("redirect_uri");
       const state = authorizationUrl.searchParams.get("state");
       const codeChallenge = authorizationUrl.searchParams.get("code_challenge");
-      if (
-        !redirectUri?.startsWith("http://127.0.0.1:") ||
-        !state ||
-        !codeChallenge
-      ) {
+      if (!redirectUri?.startsWith("http://127.0.0.1:") || !state || !codeChallenge) {
         throw new Error("Packaged Google OAuth URL/loopback setup was invalid");
       }
 

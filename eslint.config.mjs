@@ -5,12 +5,7 @@ import tsParser from "@typescript-eslint/parser";
 
 export default [
   {
-    ignores: [
-      "**/dist/**",
-      "**/out/**",
-      "**/node_modules/**",
-      "**/coverage/**",
-    ],
+    ignores: ["**/dist/**", "**/out/**", "**/node_modules/**", "**/coverage/**"],
   },
   eslint.configs.recommended,
   {
