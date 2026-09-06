@@ -37,7 +37,7 @@ import {
 } from "../persistence/store";
 import {
   createFlatTablePlan,
-  multiChoiceOptionCells,
+  multiChoiceOptionSupport,
   readResultParquet,
   RESPONSE_ID_COLUMN,
   TARGET_SCORE_COLUMN,
@@ -327,6 +327,7 @@ export const createSynthesisService = ({
         population_member_values: string[];
         option_column: string;
         option_values: string[];
+        schema_option_values: string[];
         value: number;
       }> = [];
       const frozenTargets: FrozenRunTarget[] = [{ ...mean }];
@@ -400,21 +401,16 @@ export const createSynthesisService = ({
         if (!optionColumn) {
           throw backendFailure("INTERNAL", "Conditional checkbox question is not available in the synthesis table");
         }
-        const optionValues = multiChoiceOptionCells(
+        const optionSupport = multiChoiceOptionSupport(
           scope.responses,
-          checkbox.id,
+          checkbox,
           target.optionKey,
         );
-        if (optionValues.length === 0) {
-          return {
-            status: "infeasible",
-            issues: [
-              {
-                code: "conditional_option_support",
-                message: `Checkbox option “${target.optionKey}” has no observed support in this SourceScope`,
-              },
-            ],
-          };
+        if (optionSupport.optionValues.length === 0) {
+          throw backendFailure(
+            "INTERNAL",
+            "Validated checkbox option did not produce synthesis support",
+          );
         }
 
         const id = conditionalTargetId(row.id, checkbox.id, target.optionKey);
@@ -423,7 +419,8 @@ export const createSynthesisService = ({
           population_column: populationColumn,
           population_member_values: populationMemberValues,
           option_column: optionColumn,
-          option_values: optionValues,
+          option_values: optionSupport.optionValues,
+          schema_option_values: optionSupport.schemaOptionValues,
           value: target.value,
         });
         frozenTargets.push({
