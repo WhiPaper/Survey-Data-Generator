@@ -5,6 +5,7 @@ import {
   resolveResponsePath,
   type AnswerSlot,
   type FormSnapshot,
+  type MultiChoiceQuestion,
   type NormalizedResponse,
   type QuestionId,
 } from "@survey-synth/domain";
@@ -27,6 +28,11 @@ export type DecodedRunRow = {
   submittedAtMs: number;
   origin: "original" | "synthetic";
   response: NormalizedResponse;
+};
+
+export type MultiChoiceOptionSupport = {
+  optionValues: string[];
+  schemaOptionValues: string[];
 };
 
 type ParquetRecord = Record<string, unknown>;
@@ -110,6 +116,31 @@ export const multiChoiceOptionCells = (
     }
   }
   return [...cells];
+};
+
+export const multiChoiceOptionSupport = (
+  responses: readonly StoredSourceResponse[],
+  question: MultiChoiceQuestion,
+  optionKey: string,
+): MultiChoiceOptionSupport => {
+  const observed = multiChoiceOptionCells(responses, question.id, optionKey);
+  if (observed.length > 0) {
+    return { optionValues: observed, schemaOptionValues: [] };
+  }
+
+  const option = question.options.find((candidate) => String(candidate.key) === optionKey);
+  if (!option) return { optionValues: [], schemaOptionValues: [] };
+
+  const canonical: AnswerSlot = {
+    state: "answered",
+    value: {
+      kind: "multi_choice",
+      optionKeys: [option.key],
+      labels: [option.label],
+    },
+  };
+  const cell = JSON.stringify(canonical);
+  return { optionValues: [cell], schemaOptionValues: [cell] };
 };
 
 export const writeSourceParquet = async (
