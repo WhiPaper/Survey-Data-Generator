@@ -89,7 +89,7 @@ const start = (
   createSynthesisService({ db: database.db, engine, workRoot }).start({
     projectId: "project-1",
     finalCount: 2,
-    targets: [{ kind: "mean", questionId: "q-score", value: 4 }],
+    targets: [{ id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4 }],
     sourceScope: { kind: "all" },
     seed: 8,
     operationId,
@@ -157,7 +157,7 @@ describe("M8 synthesis cleanup", () => {
     const pending = service.start({
       projectId: "project-1",
       finalCount: 2,
-      targets: [{ kind: "mean", questionId: "q-score", value: 4 }],
+      targets: [{ id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4 }],
       sourceScope: { kind: "all" },
       seed: 8,
       operationId,
