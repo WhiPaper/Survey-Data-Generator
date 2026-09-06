@@ -19,6 +19,7 @@ import {
   type SynthesisStartResult,
   type SynthesisSuccessResult,
   type TargetIssue,
+  type TargetSetOutcome,
 } from "@survey-synth/contracts";
 import type { FormSnapshot, QuestionId } from "@survey-synth/domain";
 
@@ -241,7 +242,10 @@ const normalizeEngineIssue = (
   return issue(targets, code, raw.message);
 };
 
-const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]) => {
+const targetSetOutcome = (
+  value: unknown,
+  targets: readonly OutcomeTarget[],
+): TargetSetOutcome => {
   const record = jsonRecord(value);
   if (Array.isArray(record.targets)) return TargetSetOutcomeSchema.parse(record);
 
@@ -261,14 +265,16 @@ const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]) => 
         ) {
           return [];
         }
-        return [{
-          targetId: target.id,
-          kind: "mean",
-          requested: target.value,
-          achieved: record.mean,
-          absoluteError: record.absoluteError,
-          exact: record.exact,
-        }];
+        return [
+          {
+            targetId: target.id,
+            kind: "mean",
+            requested: target.value,
+            achieved: record.mean,
+            absoluteError: record.absoluteError,
+            exact: record.exact,
+          },
+        ];
       }
 
       const values = target.kind === "share" ? rawShares : rawConditionals;
@@ -276,16 +282,20 @@ const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]) => 
       if (!raw || typeof raw.share !== "number" || typeof raw.absoluteError !== "number") {
         return [];
       }
-      return [{
-        targetId: target.id,
-        kind: target.kind,
-        requested: target.value,
-        achieved: raw.share,
-        absoluteError: raw.absoluteError,
-        exact: typeof raw.exact === "boolean" ? raw.exact : raw.absoluteError <= 1e-9,
-        ...(typeof raw.numeratorCount === "number" ? { numeratorCount: raw.numeratorCount } : {}),
-        ...(typeof raw.denominatorCount === "number" ? { denominatorCount: raw.denominatorCount } : {}),
-      }];
+      return [
+        {
+          targetId: target.id,
+          kind: target.kind,
+          requested: target.value,
+          achieved: raw.share,
+          absoluteError: raw.absoluteError,
+          exact: typeof raw.exact === "boolean" ? raw.exact : raw.absoluteError <= 1e-9,
+          ...(typeof raw.numeratorCount === "number" ? { numeratorCount: raw.numeratorCount } : {}),
+          ...(typeof raw.denominatorCount === "number"
+            ? { denominatorCount: raw.denominatorCount }
+            : {}),
+        },
+      ];
     }),
   });
 };
@@ -320,6 +330,7 @@ const persistedScope = (scope: FrozenScope): PersistRunInput["scope"] => ({
 const persistCompletedRun = (
   db: SurveyDatabase,
   input: Omit<PersistRunInput, "id">,
+  outcome: TargetSetOutcome,
 ): SynthesisSuccessResult => {
   const runId = randomUUID();
   persistRun(db, { id: runId, ...input });
@@ -328,6 +339,7 @@ const persistCompletedRun = (
     runId,
     syntheticResponseCount: Math.max(0, input.finalResponseCount - input.scope.responseCount),
     finalResponseCount: input.finalResponseCount,
+    outcome,
   };
 };
 
@@ -414,7 +426,9 @@ export const createSynthesisService = ({
       if (mean.value < meanQuestion.min || mean.value > meanQuestion.max) {
         return {
           status: "infeasible",
-          issues: [issue([mean], "out_of_range", "Mean target is outside the ordinal question range")],
+          issues: [
+            issue([mean], "out_of_range", "Mean target is outside the ordinal question range"),
+          ],
         };
       }
 
@@ -471,16 +485,24 @@ export const createSynthesisService = ({
             (candidate) => candidate.id === share.subject.questionId,
           );
           if (!question || question.kind !== "single_choice") {
-            throw backendFailure("VALIDATION_FAILED", "Option share subject must reference a single-choice question");
+            throw backendFailure(
+              "VALIDATION_FAILED",
+              "Option share subject must reference a single-choice question",
+            );
           }
           const option = question.options.find(
             (candidate) => String(candidate.key) === share.subject.optionKey,
           );
           if (!option) {
-            throw backendFailure("VALIDATION_FAILED", "Option share subject was not found in the Form");
+            throw backendFailure(
+              "VALIDATION_FAILED",
+              "Option share subject was not found in the Form",
+            );
           }
           column = plan.questionColumns.get(question.id);
-          memberValues = valueGroupMemberCells(scope.responses, question.id, [share.subject.optionKey]);
+          memberValues = valueGroupMemberCells(scope.responses, question.id, [
+            share.subject.optionKey,
+          ]);
           if (memberValues.length === 0) {
             memberValues = [
               JSON.stringify({
@@ -731,16 +753,25 @@ export const createSynthesisService = ({
           return { status: "approval_required", planId, editPlan };
         }
 
-        return persistCompletedRun(db, {
-          projectId: project.id,
-          sourceRevisionId: revision.id,
-          scope: persistedScope(scope),
-          finalResponseCount: report.finalCount,
-          target: targetSnapshot,
-          seed: params.seed,
-          engineReport: report,
-          rows: appendOnlyRows,
-        });
+        const outcome = targetSetOutcome(report.achieved, frozenTargets);
+        const engineReport: Record<string, unknown> = {
+          ...jsonRecord(report),
+          achieved: outcome,
+        };
+        return persistCompletedRun(
+          db,
+          {
+            projectId: project.id,
+            sourceRevisionId: revision.id,
+            scope: persistedScope(scope),
+            finalResponseCount: report.finalCount,
+            target: targetSnapshot,
+            seed: params.seed,
+            engineReport,
+            rows: appendOnlyRows,
+          },
+          outcome,
+        );
       } finally {
         await rm(workDir, { recursive: true, force: true });
       }
@@ -753,22 +784,23 @@ export const createSynthesisService = ({
       }
 
       const useReplacement = choice === "replacement";
+      const selectedOutcome = useReplacement
+        ? pending.editPlan.replacementOutcome
+        : pending.editPlan.appendOnlyOutcome;
       const rawEditPlan = jsonRecord(pending.engineReport.editPlan);
       const rawReplacementOutcome = jsonRecord(rawEditPlan.replacementOutcome);
       const engineReport: Record<string, unknown> = {
         ...pending.engineReport,
+        achieved: selectedOutcome,
         ...(useReplacement
           ? {
-              achieved: pending.editPlan.replacementOutcome,
               quality:
                 typeof rawReplacementOutcome.quality === "object" &&
                 rawReplacementOutcome.quality !== null
                   ? rawReplacementOutcome.quality
                   : pending.engineReport.quality,
             }
-          : {
-              achieved: pending.editPlan.appendOnlyOutcome,
-            }),
+          : {}),
         editPlan: { ...rawEditPlan, decision: choice },
         validation: {
           ...jsonRecord(pending.engineReport.validation),
@@ -781,16 +813,20 @@ export const createSynthesisService = ({
         : pending.targetSnapshot;
       const rows = useReplacement ? pending.replacementRows : pending.appendOnlyRows;
 
-      const result = persistCompletedRun(db, {
-        projectId: pending.projectId,
-        sourceRevisionId: pending.sourceRevisionId,
-        scope: pending.scope,
-        finalResponseCount: rows.length,
-        target: targetSnapshot,
-        seed: pending.seed,
-        engineReport,
-        rows,
-      });
+      const result = persistCompletedRun(
+        db,
+        {
+          projectId: pending.projectId,
+          sourceRevisionId: pending.sourceRevisionId,
+          scope: pending.scope,
+          finalResponseCount: rows.length,
+          target: targetSnapshot,
+          seed: pending.seed,
+          engineReport,
+          rows,
+        },
+        selectedOutcome,
+      );
       pendingPlans.delete(planId);
       return {
         ...result,
@@ -803,12 +839,16 @@ export const createSynthesisService = ({
     getRun: async (runId) => {
       const run = getRunRecord(db, runId);
       if (!run) throw backendFailure("NOT_FOUND", "Run was not found");
+      const targetSnapshot = JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"];
+      const validation = jsonRecord(JSON.parse(run.engineReportJson) as unknown);
+      const outcome = targetSetOutcome(validation.achieved, targetSnapshot.targets);
       return {
         runId: run.id,
         projectId: run.projectId,
         sourceRevisionId: run.sourceRevisionId,
-        targetSnapshot: JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"],
-        validation: jsonRecord(JSON.parse(run.engineReportJson) as unknown),
+        targetSnapshot,
+        outcome,
+        validation,
         finalResponseCount: run.finalResponseCount,
         appVersion: run.appVersion,
         engineVersion: run.engineVersion,
