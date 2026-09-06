@@ -310,6 +310,8 @@ def _quality_payload(evaluation: Evaluation) -> dict[str, object]:
         "maxFingerprintShare": evaluation.max_fingerprint_share,
         "sourceCloneCount": evaluation.source_clone_count,
         "sourceCloneRate": evaluation.source_clone_rate,
+        "timestampKsStatistic": evaluation.timestamp_ks_statistic,
+        "timestampMedianDeltaSeconds": evaluation.timestamp_median_delta_seconds,
     }
 
 
@@ -555,6 +557,9 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         target_min=job.mean_target.minimum,
         target_max=job.mean_target.maximum,
         expected_final_count=job.final_count,
+        timestamp_column=job.timestamp_column,
+        timestamp_start=timestamp_start,
+        timestamp_end=timestamp_end,
     )
 
     share_support_by_id = {support.id: support for support in share_supports}
@@ -662,6 +667,9 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
                 target_min=job.mean_target.minimum,
                 target_max=job.mean_target.maximum,
                 expected_final_count=job.final_count,
+                timestamp_column=job.timestamp_column,
+                timestamp_start=timestamp_start,
+                timestamp_end=timestamp_end,
             )
             if (
                 abs(
