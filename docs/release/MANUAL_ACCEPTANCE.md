@@ -23,11 +23,11 @@ Until these checks have evidence, do not claim that Linux packaged smoke has pas
 
 ## Packaging metadata and warnings
 
-The desktop package includes a product description and a stable Linux desktop identity. Missing production dependencies are configured to fail packaging instead of being accepted as electron-builder v26 warnings.
+The desktop package includes a product description and a stable Linux desktop identity. The pinned electron-builder 26.15.3 schema does not expose a supported missing-dependency hard-fail option. Automated release validation therefore treats `package:desktop:dir` followed by the packaged Electron smoke as the primary runtime dependency gate: the produced app must launch and exercise representative packaged native/runtime paths before artifact creation proceeds.
 
 - [ ] Confirm the release owner/publisher identity before adding or relying on `author`/publisher metadata. Do not invent this value merely to silence a packaging warning.
 - [ ] Review the final installer/application icon. The current configuration does not provide a custom brand icon, so electron-builder may use its default Electron icon until the release owner supplies or explicitly accepts an asset.
-- [ ] If packaging emits dependency warnings that are not missing production dependencies, classify whether they affect the packaged runtime or are build-tool/transitive warnings before changing product dependencies.
+- [ ] If packaging emits dependency or collector warnings, classify whether they affect the packaged runtime; do not add unsupported builder options or change product dependencies merely to silence warnings.
 
 ## Signing and publishing
 

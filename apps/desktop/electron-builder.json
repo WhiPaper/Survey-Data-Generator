@@ -6,7 +6,6 @@
   "asar": true,
   "asarUnpack": ["node_modules/**/*.node"],
   "npmRebuild": true,
-  "allowMissingDependencies": false,
   "directories": {
     "output": "dist"
   },

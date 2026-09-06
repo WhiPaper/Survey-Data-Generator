@@ -78,11 +78,23 @@ describe("M10 release hardening", () => {
     expect(packageJson.description?.trim().length).toBeGreaterThan(0);
   });
 
-  it("fails packaging when a production dependency cannot be resolved", () => {
+  it("keeps pinned electron-builder packaging schema-compatible and disables implicit publishing", () => {
     const builder = JSON.parse(readRepositoryFile("apps/desktop/electron-builder.json")) as {
-      allowMissingDependencies?: boolean;
+      allowMissingDependencies?: unknown;
     };
-    expect(builder.allowMissingDependencies).toBe(false);
+    const rootPackage = JSON.parse(readRepositoryFile("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const workflow = readRepositoryFile(".github/workflows/release.yml");
+
+    expect(builder.allowMissingDependencies).toBeUndefined();
+    expect(rootPackage.scripts?.["package:desktop:dir"]).toContain("--publish never");
+    expect(rootPackage.scripts?.["package:desktop:artifact"]).toContain("--publish never");
+
+    const packageDir = workflow.indexOf("pnpm run package:desktop:dir");
+    const packagedSmoke = workflow.indexOf("pnpm run package:desktop:smoke");
+    expect(packageDir).toBeGreaterThanOrEqual(0);
+    expect(packagedSmoke).toBeGreaterThan(packageDir);
   });
 
   it("keeps Linux desktop window association aligned with the application id", () => {
