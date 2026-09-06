@@ -17,9 +17,14 @@ import {
   type RunsExportResult,
   type RunsGetResult,
   type SessionView,
+  type SourceScope,
   type SynthesisStartParams,
   type SynthesisStartResult,
   type SynthesisSuccessResult,
+  type TargetDraft,
+  type TargetDraftView,
+  type TargetProfileResult,
+  type TargetsValidateResult,
   type ValueGroupObservedValue,
   type ValueGroupView,
 } from "@survey-synth/contracts";
@@ -171,6 +176,39 @@ export const deleteValueGroup = (
   valueGroupId: string,
   backend?: BackendInvoker,
 ): Promise<{ ok: true }> => callBackend("valueGroups.delete", { valueGroupId }, backend);
+
+export const getTargetProfile = (
+  projectId: string,
+  sourceScope?: SourceScope,
+  backend?: BackendInvoker,
+): Promise<TargetProfileResult> =>
+  callBackend(
+    "targets.profile",
+    { projectId, ...(sourceScope === undefined ? {} : { sourceScope }) },
+    backend,
+  );
+export const validateTargetDraft = (
+  draft: TargetDraft,
+  backend?: BackendInvoker,
+): Promise<TargetsValidateResult> => callBackend("targets.validate", draft, backend);
+export const getTargetDraft = (
+  projectId: string,
+  backend?: BackendInvoker,
+): Promise<TargetDraftView | null> => callBackend("targets.draft.get", { projectId }, backend);
+export const saveTargetDraft = (
+  draft: TargetDraft,
+  backend?: BackendInvoker,
+): Promise<TargetDraftView> => callBackend("targets.draft.save", draft, backend);
+export const startTargetDraft = (
+  projectId: string,
+  operationId?: string,
+  backend?: BackendInvoker,
+): Promise<SynthesisStartResult> =>
+  callBackend(
+    "targets.draft.start",
+    { projectId, ...(operationId === undefined ? {} : { operationId }) },
+    backend,
+  );
 
 export const startSynthesis = (
   params: SynthesisStartParams,
