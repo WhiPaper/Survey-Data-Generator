@@ -1,6 +1,6 @@
 {
   "appVersion": "0.1.0",
   "protocolVersion": 1,
-  "databaseSchemaVersion": 10,
+  "databaseSchemaVersion": 11,
   "engineVersion": 2
 }

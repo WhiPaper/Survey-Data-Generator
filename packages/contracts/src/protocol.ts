@@ -351,6 +351,8 @@ export const RunsGetResultSchema = z
     targetSnapshot: RunTargetSnapshotSchema,
     validation: z.record(z.string(), z.unknown()),
     finalResponseCount: z.number().int().nonnegative(),
+    appVersion: z.string().min(1),
+    engineVersion: z.number().int().nonnegative(),
   })
   .strict();
 export type RunsGetResult = z.infer<typeof RunsGetResultSchema>;

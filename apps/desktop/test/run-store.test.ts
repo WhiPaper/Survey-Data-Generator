@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { VERSIONS } from "@survey-synth/contracts";
+
 import { openAppDatabase, type AppDatabase } from "../electron/main/persistence/database";
 import {
   getRunRecord,
@@ -129,6 +131,8 @@ describe("synthesis run persistence", () => {
       scopeResponseSetHash: "scope-hash",
       finalResponseCount: 1,
       seed: 42,
+      appVersion: VERSIONS.appVersion,
+      engineVersion: VERSIONS.engineVersion,
       createdAtMs: 3000,
     });
     expect(JSON.parse(stored!.targetJson)).toMatchObject({

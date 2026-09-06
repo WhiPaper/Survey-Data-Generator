@@ -636,6 +636,8 @@ export const createSynthesisService = ({
         targetSnapshot: JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"],
         validation: jsonRecord(JSON.parse(run.engineReportJson) as unknown),
         finalResponseCount: run.finalResponseCount,
+        appVersion: run.appVersion,
+        engineVersion: run.engineVersion,
       };
     },
   };

@@ -289,6 +289,8 @@ describe("v2 RPC contracts", () => {
         },
         validation: {},
         finalResponseCount: 120,
+        appVersion: VERSIONS.appVersion,
+        engineVersion: VERSIONS.engineVersion,
       }),
     ).toMatchObject({
       runId: "run-1",

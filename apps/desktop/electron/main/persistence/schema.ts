@@ -121,6 +121,8 @@ export const runs = sqliteTable(
     finalResponseCount: integer("final_response_count").notNull(),
     targetJson: text("target_json").notNull(),
     seed: integer("seed").notNull(),
+    appVersion: text("app_version").notNull(),
+    engineVersion: integer("engine_version").notNull(),
     engineReportJson: text("engine_report_json").notNull(),
     createdAtMs: integer("created_at_ms").notNull(),
   },

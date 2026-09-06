@@ -1,5 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 
+import { VERSIONS } from "@survey-synth/contracts";
 import type { NormalizedResponse } from "@survey-synth/domain";
 
 import type { SurveyDatabase } from "./database";
@@ -21,6 +22,8 @@ export type PersistRunInput = {
   finalResponseCount: number;
   target: unknown;
   seed: number;
+  appVersion?: string;
+  engineVersion?: number;
   engineReport: unknown;
   rows: readonly {
     responseId: string;
@@ -45,6 +48,8 @@ export const persistRun = (db: SurveyDatabase, input: PersistRunInput): RunRecor
     finalResponseCount: input.finalResponseCount,
     targetJson: JSON.stringify(input.target),
     seed: input.seed,
+    appVersion: input.appVersion ?? VERSIONS.appVersion,
+    engineVersion: input.engineVersion ?? VERSIONS.engineVersion,
     engineReportJson: JSON.stringify(input.engineReport),
     createdAtMs,
   };
