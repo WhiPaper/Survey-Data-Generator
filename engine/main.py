@@ -806,7 +806,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except (ValidationError, json.JSONDecodeError, ValueError) as error:
         print(
-            json.dumps({"type": "error", "kind": "validation", "message": str(error)),
+            json.dumps({"type": "error", "kind": "validation", "message": str(error)}),
             file=sys.stderr,
         )
         return 2
