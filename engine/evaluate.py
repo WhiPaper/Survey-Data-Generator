@@ -13,8 +13,49 @@ class Evaluation:
     target_mean: float
     absolute_error: float
     duplicate_row_count: int
+    max_fingerprint_count: int
+    max_fingerprint_share: float
+    source_clone_count: int
+    source_clone_rate: float
     quality_score: float | None
     quality_warning: str | None
+
+
+def _row_diagnostics(
+    source: pd.DataFrame,
+    synthetic: pd.DataFrame,
+    final: pd.DataFrame,
+    *,
+    id_column: str,
+) -> tuple[int, int, float, int, float]:
+    comparison_columns = [
+        column for column in final.columns if column not in {id_column, "__origin"}
+    ]
+    duplicate_row_count = int(final.duplicated(subset=comparison_columns, keep=False).sum())
+    if synthetic.empty:
+        return duplicate_row_count, 0, 0.0, 0, 0.0
+
+    synthetic_fingerprints = pd.util.hash_pandas_object(
+        synthetic[comparison_columns],
+        index=False,
+    )
+    max_fingerprint_count = int(synthetic_fingerprints.value_counts().max())
+    max_fingerprint_share = max_fingerprint_count / len(synthetic)
+
+    source_fingerprints = set(
+        pd.util.hash_pandas_object(source[comparison_columns], index=False).tolist()
+    )
+    source_clone_count = sum(
+        int(fingerprint in source_fingerprints) for fingerprint in synthetic_fingerprints
+    )
+    source_clone_rate = source_clone_count / len(synthetic)
+    return (
+        duplicate_row_count,
+        max_fingerprint_count,
+        max_fingerprint_share,
+        source_clone_count,
+        source_clone_rate,
+    )
 
 
 def evaluate_result(
@@ -43,9 +84,13 @@ def evaluate_result(
 
     achieved_mean = float(target_values.mean())
     absolute_error = abs(achieved_mean - target_mean)
-
-    comparison_columns = [column for column in final.columns if column not in {id_column, "__origin"}]
-    duplicate_row_count = int(final.duplicated(subset=comparison_columns, keep=False).sum())
+    (
+        duplicate_row_count,
+        max_fingerprint_count,
+        max_fingerprint_share,
+        source_clone_count,
+        source_clone_rate,
+    ) = _row_diagnostics(source, synthetic, final, id_column=id_column)
 
     quality_score: float | None = None
     quality_warning: str | None = None
@@ -70,6 +115,10 @@ def evaluate_result(
         target_mean=target_mean,
         absolute_error=absolute_error,
         duplicate_row_count=duplicate_row_count,
+        max_fingerprint_count=max_fingerprint_count,
+        max_fingerprint_share=max_fingerprint_share,
+        source_clone_count=source_clone_count,
+        source_clone_rate=source_clone_rate,
         quality_score=quality_score,
         quality_warning=quality_warning,
     )
