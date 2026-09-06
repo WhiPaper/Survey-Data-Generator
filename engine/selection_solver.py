@@ -28,6 +28,7 @@ def solve_binary_selection(
     final_count: int,
     target_mean: float | None = None,
     target_means: tuple[float, ...] = (),
+    mean_ranges: tuple[float, ...] = (),
     source_count: int,
     fix_source: bool,
     share_memberships: tuple[np.ndarray, ...] = (),
@@ -48,6 +49,12 @@ def solve_binary_selection(
         target_means = (target_mean, *target_means)
     if score_matrix.shape[1] != len(target_means):
         raise ValueError("score columns and mean targets must have equal length")
+    if not mean_ranges:
+        mean_ranges = tuple(1.0 for _ in target_means)
+    if len(mean_ranges) != len(target_means):
+        raise ValueError("mean ranges and mean targets must have equal length")
+    if any(value <= 0 for value in mean_ranges):
+        raise ValueError("mean ranges must be positive")
     row_count = len(score_matrix)
     if len(count_memberships) != len(count_values):
         raise ValueError("count memberships and values must have equal length")
@@ -69,7 +76,8 @@ def solve_binary_selection(
     variable_count = selector_start + selector_count
 
     target_objective = np.zeros(variable_count, dtype=float)
-    target_objective[mean_slack_start:share_slack_start] = 1.0 / final_count
+    for index, allowed_range in enumerate(mean_ranges):
+        target_objective[mean_slack_start + index] = 1.0 / (final_count * allowed_range)
     target_objective[share_slack_start:conditional_slack_start] = 1.0 / final_count
     target_objective[conditional_slack_start:selector_start] = 1.0
 
