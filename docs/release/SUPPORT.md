@@ -1,60 +1,45 @@
 # Support & Contact Guide
 
 **Product Name:** Survey Synth  
-**Repository:** `https://github.com/WhiPaper/Survey-Data-Generator`  
+**Repository:** https://github.com/WhiPaper/Survey-Data-Generator
 
----
+## Getting help
 
-## 1. Getting Help & Support
+- [GitHub Issues](https://github.com/WhiPaper/Survey-Data-Generator/issues) for bugs, workflow questions, and sanitized crash reports.
 
-Survey Synth is an open-source, local-first desktop application for representative survey data synthesis and target optimization.
+A dedicated production support contact has not yet been published. Before public release or Google OAuth production verification, the release owner must configure a real externally reachable support contact and stable public support/privacy URLs.
 
-### Official Channels
-- **Issue Tracker:** [GitHub Issues](https://github.com/WhiPaper/Survey-Data-Generator/issues) for bug reports, crash logs (sanitized), and feature requests.
-- **Discussions & Questions:** [GitHub Discussions](https://github.com/WhiPaper/Survey-Data-Generator/discussions) for community Q&A and workflow guidance.
-- **Email Contact:** `support@surveysynth.local`
+## Supported platforms
 
----
+| Operating System | Architecture | Distribution |
+|---|---:|---|
+| Windows 10/11 | x64 | NSIS installer |
+| Linux (Ubuntu 22.04+ baseline) | x64 | AppImage |
 
-## 2. Supported Platforms & System Requirements
+Node.js and Python are not required for installed users.
 
-| Operating System | Supported Architecture | Minimum Version | Notes |
-|:---|:---:|:---:|:---|
-| **Windows** | x64 | Windows 10 (Build 19041+) or Windows 11 | WebView2 runtime included |
-| **Linux** | x64 | Ubuntu 22.04 LTS+, Fedora 38+ | AppImage distribution (glibc 2.35+) |
+The Linux package target and updater are configured, but representative Linux desktop acceptance is currently deferred. GitHub-hosted Linux packaged smoke is automated evidence only and does not establish representative device acceptance, secure `safeStorage` backend acceptance, launcher/taskbar association, or a manual AppImage update acceptance.
 
-**Hardware Requirements:**
-- RAM: 4 GB minimum (8 GB+ recommended for synthesis runs over 10,000 rows).
-- Disk Space: 250 MB free for application installation; additional disk space depending on survey dataset size.
-- Node.js: **Not required** (Survey Synth bundles its own self-contained, isolated JavaScript runtime).
+## Frequently asked questions
 
----
+### Where is data stored?
 
-## 3. Frequently Asked Questions (FAQ)
+Projects, imported source revisions, targets, runs, and local results are stored in the application's local SQLite database. The database is plain SQLite in v2 and is not promised to be encrypted. Protect the operating-system account and application data directory.
 
-### Where is my survey data stored?
-All imported survey forms, respondent answers, target configurations, and synthesized datasets are stored entirely locally on your computer in an encrypted SQLite database:
-- **Windows:** `%APPDATA%\com.surveysynth.desktop\`
-- **Linux:** `~/.config/com.surveysynth.desktop/`
+### Does Survey Synth upload survey data?
 
-### How is my data encrypted?
-Survey Synth uses SQLCipher (AES-256-CBC) encryption for local database files. Encryption keys are generated cryptographically and stored in your operating system's native secure credential storage (Windows Credential Manager, Linux Secret Service).
-
-### Does Survey Synth upload my data to the cloud?
-No. Survey Synth has no developer servers or cloud synchronization. Data travels strictly between your device and Google's official OAuth/Forms endpoints to retrieve your forms, and directly between your device and your chosen local export folder (CSV/XLSX).
+No. Survey data is processed locally. Network access is limited to Google OAuth and Google Drive/Forms requests required by the selected import workflow plus, on packaged Windows and Linux builds, GitHub Release requests used to check for and download application updates. Update requests do not contain survey data. There is no developer backend, telemetry, cloud synchronization, or AI/LLM transfer path.
 
 ### How do updates work?
-Survey Synth automatically checks GitHub Releases once every 24 hours for signed software updates. Updates will never install while an active import, synthesis, or export task is running. Before an update applies, Survey Synth flushes target drafts, checkpoints the encrypted database, and verifies the update's cryptographic signature.
 
-### How do I delete my data from this computer?
-- **To delete a single project:** Open the project in Survey Synth and click **프로젝트 삭제** (Delete Project) -> confirm permanent deletion.
-- **To delete an account and all its data:** Open the **계정 메뉴** (Account Menu) -> next to the account, click **기기 데이터 삭제** (Delete this device's account data) -> confirm permanent deletion. This completely removes the OAuth tokens from the OS Keyring and purges all associated local project databases.
+Packaged Windows and Linux builds check the repository's latest non-prerelease GitHub Release. When a newer stable version exists, Survey Synth downloads the platform artifact and verifies the SHA-256 digest and size reported by GitHub before asking whether to restart. Users do not enter a GitHub credential.
 
----
+On Windows, choosing to restart launches the per-user NSIS installer silently. On Linux AppImage, the verified replacement is staged beside the running AppImage; after the current process exits, a detached helper replaces the original AppImage path, preserves executable permissions, and relaunches the application.
 
-## 4. Security & Vulnerability Reporting
+### How do I delete data?
 
-We take security and privacy seriously. If you discover a potential security vulnerability (such as credential exposure, unencrypted data leakage, or cryptographic flaws):
-- **Do not open a public GitHub issue.**
-- Please report vulnerabilities directly to `security@surveysynth.local` or submit a private security advisory on GitHub.
-- We will acknowledge receipt within 48 hours and work with you to remediate the issue promptly.
+Use the project's delete action to remove project-owned records, or the account data deletion action to remove the account's stored refresh token and associated local project records after confirmation.
+
+## Security reports
+
+Do not open a public issue for a credential or data-exposure vulnerability. Use a private GitHub security advisory. A dedicated production security contact must be confirmed by the release owner before public release.

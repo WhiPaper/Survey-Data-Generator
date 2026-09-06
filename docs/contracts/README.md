@@ -1,50 +1,72 @@
-# Survey Synth — Architecture & Product Contracts
+# Survey Synth — v2 Product & Architecture Contracts
 
-This directory is the authoritative implementation contract for the desktop application designed in the preceding product/architecture discussion.
+These documents are the authoritative implementation contract for the pre-release v2 rewrite.
 
 ## Product in one sentence
 
-A local-first Tauri desktop app that signs in with Google, lets a user choose an accessible Google Form, analyzes its responses, and expands an original response set to a user-selected final size by generating synthetic additions while preserving the original rows and the important statistical/structural properties of the source data.
+Survey Synth is a local-first Electron desktop app that imports Google Form responses, lets the user choose a source scope and final statistical targets, generates plausible candidate responses with a packaged Python compute engine, and selects a final dataset that satisfies those targets with minimal change to the observed data.
 
-## Core product invariants
+## Core invariants
 
 1. Google is the only account provider.
-2. The Google account is the app account/workspace identity.
-3. Original responses are immutable.
-4. If source size is 50 and target final size is 200, only 150 synthetic rows are created.
-5. User targets are expressed against the **final combined dataset**, not only the synthetic portion.
-6. Unspecified metrics are preserved automatically as closely as practical.
-7. Exact count constraints are hard; percentage/mean targets use the nearest mathematically representable result.
-8. Confirmed Google Form routing and required-question rules are respected.
-9. Unknown/ambiguous routing is not invented.
-10. The normal CSV/XLSX export contains no synthetic provenance columns.
-11. Project data is local-first and encrypted at rest.
-12. React never receives OAuth refresh tokens, DB keys, or LLM API keys.
-13. Business/backend logic is TypeScript; Rust is a thin Tauri/OS/process/security bridge.
-14. AI free-text generation is optional and off by default.
-15. Public AI functionality must not be enabled until Google OAuth/Limited Use implications of third-party LLM transfer have been reviewed.
-16. UI copy and component chrome are intentionally sparse.
+2. Imported source observations and source revisions are immutable evidence.
+3. `SourceScope` is frozen into each run and governs all analysis, synthesis, validation, and export for that run.
+4. User targets apply to the final dataset.
+5. Initial target kinds are `count`, `share`, `mean`, and `conditional_share`.
+6. Percentage points, relative percentages, absolute shares, and counts are distinct semantics.
+7. Short-text concepts are represented by user-defined `ValueGroup`s, not automatic semantic understanding.
+8. Confirmed Form routing, required-question rules, and allowed values are hard constraints. Unknown routing is not invented.
+9. Append-only synthesis is attempted first.
+10. If append-only cannot reach the target, the system may calculate a minimum original-row replacement plan. Application requires explicit user approval; imported source data itself is never overwritten.
+11. Synthetic timestamps are part of the generated row and should remain plausible for the selected source scope.
+12. Obvious repeated-row artifacts are not acceptable merely because targets are numerically correct.
+13. Default CSV/XLSX exports contain the final survey table without synthetic provenance columns.
+14. No LLM/AI feature is part of the v2 plan.
+15. The application uses Electron Main for application concerns and a packaged Python process only for heavy compute.
+16. The repository is pre-release. Existing development DB/IPC/architecture compatibility is not a product requirement.
+17. Prefer mature dependencies over application-owned implementations of general statistics, synthesis, optimization, dataframe, and quality algorithms.
 
-## Document map
+## Runtime
 
-- `01_PRODUCT_UI.md` — product flow and UI rules
-- `02_ARCHITECTURE.md` — process boundaries, RPC, state management
-- `03_DOMAIN_MODEL.md` — canonical Form/Response/Profile/Target models
-- `04_GOOGLE_AUTH_IMPORT.md` — Google OAuth, Drive/Forms acquisition
-- `05_FORM_LOGIC.md` — reachability and branching evidence model
-- `06_PROFILING_RELATIONSHIPS.md` — profiling, semantic inference, relationship analysis
-- `07_TARGETS_FEASIBILITY.md` — user targets, compiler, feasibility equations
-- `08_SYNTHESIS_ENGINE.md` — resampling, mutation, repair, validation
-- `09_PERSISTENCE_LIFECYCLE.md` — SQLite ownership, revisions, project lifecycle
-- `10_EXPORT.md` — CSV/XLSX contract
-- `11_AI_TEXT.md` — optional LLM-based free-text generation
-- `12_SECURITY_PRIVACY.md` — security and privacy boundary
-- `13_TESTING.md` — test strategy and quality gates
-- `14_DEPLOYMENT_VERSIONING.md` — installers, sidecar packaging, updates and versions
-- `15_MONOREPO.md` — packages, imports and dependency rules
-- `16_MILESTONES.md` — implementation milestones
-- `17_DECISIONS.md` — consolidated architecture decisions
+```text
+React Renderer
+    ↓
+Preload / contextBridge
+    ↓
+Electron Main
+    ├─ Google
+    ├─ SQLite + Drizzle
+    ├─ projects / sources / runs / export
+    └─ packaged Python compute job
+          ├─ pandas / PyArrow
+          ├─ SDV
+          ├─ SciPy MILP
+          └─ SDMetrics
+```
 
-## Authority rule
+Python is not a daemon and not the app backend.
 
-When an earlier idea conflicts with a later decision recorded here, the **later contract reflected in these documents wins**. These documents intentionally omit superseded alternatives.
+## Contract map
+
+- `01_PRODUCT_UI.md` — core workflow and UI semantics
+- `02_ARCHITECTURE.md` — Electron/Python process architecture
+- `03_DOMAIN_MODEL.md` — source scope, targets, runs, edit plans
+- `04_GOOGLE_AUTH_IMPORT.md` — Google OAuth and Form import
+- `05_FORM_LOGIC.md` — evidence-aware routing and structural validity
+- `06_PROFILING_RELATIONSHIPS.md` — prepared features, ValueGroups, quality boundaries
+- `07_TARGETS_FEASIBILITY.md` — target math, linear compilation, feasibility
+- `08_SYNTHESIS_ENGINE.md` — dependency-backed candidate generation/selection
+- `09_PERSISTENCE_LIFECYCLE.md` — clean v2 SQLite schema and immutable history
+- `10_EXPORT.md` — final CSV/XLSX semantics
+- `12_SECURITY_PRIVACY.md` — practical local-first boundary
+- `13_TESTING.md` — scenario/invariant test strategy
+- `14_DEPLOYMENT_VERSIONING.md` — Electron + packaged Python deployment
+- `15_MONOREPO.md` — repository/dependency boundaries
+- `16_MILESTONES.md` — v2 implementation sequence
+- `17_DECISIONS.md` — consolidated major decisions
+
+`11_AI_TEXT.md` is intentionally removed because v2 has no AI/LLM plan.
+
+## Authority
+
+Specific topic contracts control their topic. `17_DECISIONS.md` summarizes major decisions and `16_MILESTONES.md` controls implementation sequencing. Existing code is not authoritative when it conflicts with these documents.

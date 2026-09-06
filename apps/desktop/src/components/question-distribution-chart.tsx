@@ -64,4 +64,3 @@ export function QuestionDistributionChart({ data, unit }: QuestionDistributionCh
     </ChartContainer>
   );
 }
-

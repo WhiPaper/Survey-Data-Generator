@@ -1,291 +1,128 @@
 # Synthesis Engine Contract
 
-## Philosophy
+## Goal
 
-Core pipeline:
+Generate a plausible candidate pool from the selected source data, then select rows that satisfy the user's final-dataset targets. Keep application-owned synthesis code thin.
 
-```text
-Weighted resampling
-→ constrained mutation
-→ global repair
-→ validation
-```
+## Process boundary
 
-Original responses remain untouched.
+Python is a job-per-process compute engine, not an application backend or daemon.
 
-Suggested detailed stages:
+Electron Main launches either the development Python 3.12 entrypoint or the packaged `survey-synth-engine` executable. Each job owns a directory containing JSON control data and Parquet row data. Cancellation terminates the child process; do not introduce reverse RPC or a long-lived Python service.
+
+Initial boundary:
 
 ```text
-Compiled Targets
-→ FeasibilityChecker
-→ FeatureCompiler
-→ WeightOptimizer
-→ RowAllocator
-→ StructuralMutation
-→ ValueMutation/Repair
-→ GlobalRepair
-→ DeferredFieldGenerator
-→ Validator
+job.json + source.parquet
+        ↓
+survey-synth-engine <command> --job job.json
+        ↓
+result.parquet + report.json
 ```
 
-## Solver boundary
+`job.json` is validated by Pydantic and rejects unknown fields. Relative file paths are resolved from the job file directory. Source, result, and report paths must be distinct.
 
-```ts
-interface OptimizationBackend {
-  solveLinear(problem: LinearProblem, ...): Promise<LinearSolution>
-  solveMixedInteger(problem: MixedIntegerProblem, ...): Promise<MipSolution>
-}
-```
+The M3 `smoke` command only proves the process/data boundary and dependency loading. It round-trips source Parquet to result Parquet and verifies that pandas, PyArrow, SDV `GaussianCopulaSynthesizer`, SciPy `milp`, and SDMetrics `QualityReport` load successfully. It is not a synthesis implementation.
 
-`synthesis-core` defines the interface but does not import a concrete optimization library.
-
-Initial implementation candidate: HiGHS via a TS/Node-compatible WASM package, wrapped inside the sidecar.
-
-## Seed
-
-A synthesis run stores a seed.
-
-Same:
-
-- source revision
-- target snapshot
-- seed
-- engine version
-
-must reproduce the same **structured** synthetic result.
-
-Different seeds are allowed to coincide when the feasible space is constrained.
-
-AI-generated free text is persisted in the run and is not promised to be reproducible from the external model alone.
-
-## Feature space
-
-Each source row maps to selected features such as:
-
-- categorical marginals
-- ordinal/numeric values
-- checkbox option indicators
-- checkbox co-occurrence
-- selection-count distribution
-- important interaction features
-- reachability/answered/skipped indicators
-- temporal bins/features
-- detailed-goal population/outcome indicators
-
-Do not generate every possible pair/cell.
-
-## WeightOptimizer
-
-Solve continuous nonnegative source-template weights:
+## Canonical v2 flow
 
 ```text
-w_i ≥ 0
-Σw_i = syntheticCount
+prepare source scope
+→ fit/sample candidate rows with SDV
+→ hard-validate candidate structure
+→ compile candidate features and targets
+→ select rows with scipy.optimize.milp
+→ if append-only infeasible, solve minimal original replacement plan
+→ evaluate with hard validators + SDMetrics
+→ write result
 ```
 
-Objective combines:
+There is no weighted-resampling/mutation/global-repair pipeline in v2.
 
-- target feature deviations
-- preservation feature deviations
-- concentration penalty so weights do not collapse onto a few source rows
+## Candidate generation
 
-Continuous LP is the main scalable stage.
+Initial implementation uses SDV `GaussianCopulaSynthesizer` unless benchmark results justify a different model.
 
-## RowAllocator
+Candidate generation should include structured answers and response timestamp together where supported so ordinary correlations are learned jointly.
 
-Convert continuous weights to integer template counts:
+Generate a pool larger than the requested synthetic row count. If the solver lacks support for a valid target, regenerate/enrich the pool before adding custom mutation logic.
 
-1. floor
-2. largest remainder
-3. when important exact metrics are damaged, solve a small neighborhood MIP
+Empirical rows may be used as fallback/support but final output must avoid obvious copy artifacts.
 
-## Synthetic drafts
+## Form structure
 
-Synthetic rows start from selected original templates.
+Prefer library-supported metadata/constraints plus the existing conservative Form reachability validator.
 
-Internal `templateResponseId` may be stored for debugging/reproducibility but is not exported by default.
+Complete candidates that violate confirmed routing, required fields, or allowed value domains are rejected.
 
-## Mutation strategies
+Do not implement donor-based structural mutation in v2.
 
-Candidate mutations provide:
+## Selection
 
-- proposed value change
-- cost
-- feature deltas
-- optional structural impact
+Use `scipy.optimize.milp` for integer candidate selection.
 
-Cost examples:
-
-- categorical — conditional rarity / relationship disruption
-- ordinal — normalized score distance
-- numeric — percentile distance
-- checkbox — Jaccard and selection-count change
-- time — circular distance
-
-FeatureAccumulator is updated incrementally rather than fully reprofiling after every candidate.
-
-## Structural mutation
-
-See `05_FORM_LOGIC.md`.
-
-Changing a branch driver requires reachability repair and donor initialization.
-
-Unsafe structural candidates are rejected before GlobalRepair.
-
-## Donor policy
-
-Select structurally compatible donors from a hard filtered pool.
-
-Use seed-stable, distance-weighted selection among top-K similar rows to preserve diversity.
-
-Never automatically donor-copy:
-
-- identifiers
-- personal identifiers
-- free text
-- file uploads
-- timestamps
-
-## Global repair
-
-GlobalRepair may formulate a MIP over mutation candidates:
+Typical variable:
 
 ```text
-minimize
-hard violations
-then user-target error
-then preservation error
-then mutation cost
-then duplicate penalty
+x_j ∈ {0,1}
 ```
 
-The concrete formulation may evolve, but priority semantics are stable.
+where `x_j` selects candidate row `j`.
 
-## Checkbox
+The same formulation is used for target feasibility and final selection. Avoid CVXPY and a direct HiGHS wrapper unless SciPy proves insufficient for a concrete scenario.
 
-Always model:
+## Append-only mode
 
-- option marginals
-- selection-count distribution
+Source-derived rows are fixed in the final dataset. MILP chooses only the requested synthetic additions.
 
-Also preserve important:
+## Replacement mode
 
-- option-option co-occurrence
-- within-question relationship patterns
+If append-only is infeasible, introduce source-row keep/replace decisions and minimize the number of replaced source-derived rows.
 
-When the user changes option A, keep unrelated B/C marginals and original co-selection patterns as stable as possible.
+Replacement candidates are complete generated rows. The result is returned as an `EditPlan` and is not committed until the user approves it.
 
-## Grid
-
-Rows are ordinary question features connected by group metadata.
-
-For ordinal-like multiple-choice grids:
-
-- overall grid mean may be user-facing
-- row means/distributions can be expanded
-- preserve cross-row relationships
-
-Checkbox grids:
-
-- row-level marginals
-- within-row co-selection
-- cross-row structure
-- selection-count behavior
-
-## Numeric
-
-Default user control: mean.
-
-Advanced:
-
-- median
-- range
-- bins
-
-Generated values preserve plausible range/precision patterns unless the user explicitly constrains them.
-
-## Date / time
-
-Date:
-
-- preserve source period, density, weekday/month patterns
-- support general dates and birth-date semantics
-- preserve meaningful intervals/order relationships
-
-Time-of-day:
-
-- preserve time distribution and minute precision
-- use circular distance for repair
-
-Duration:
-
-- preserve duration distribution
-- advanced mean/bins/range
+Imported source observations are never modified.
 
 ## Timestamp
 
-Timestamp is structured, not deferred.
+Timestamp is part of the generated row.
 
-Default synthetic timestamps are within the observed source response period and preserve:
+Default behavior relies on SDV datetime modeling before adding a custom temporal subsystem.
 
-- date density
-- weekday
-- time-of-day
-- burst/inter-arrival tendencies
+Hard checks:
 
-Modes may include:
+- valid timestamp
+- respects frozen time scope when applicable
 
-- within original period
-- after original period
-- manual period
+Quality checks compare synthetic/final temporal behavior with the source scope. Add custom burst/inter-arrival generation only if benchmark evidence shows material failure.
 
-## File upload
+## Short text
 
-Default synthetic answer: blank.
+Low-cardinality repeated short text may be modeled categorically.
 
-Never duplicate/download/create actual Drive files.
+High-cardinality free text is not newly authored by v2. Use blank/reuse/observed-value strategies as required by product behavior. ValueGroup targets operate on derived membership features, not on semantic generation.
 
-Optional placeholder mode creates only synthetic display metadata/filename.
+## Quality
 
-## Deferred fields
+Use SDMetrics for general tabular fidelity diagnostics where appropriate.
 
-Run only after structured rows are final:
+Survey Synth hard validators separately verify:
 
-- new identifiers
-- personal-data-safe placeholders
-- file placeholders
-- free text / AI last
-
-Failure of an optional AI free-text item does not invalidate the already valid structured dataset.
-
-## Validation
-
-Two layers:
-
-### StructuralValidator
-
-Must pass before a run can be considered valid.
-
-Checks:
-
-- question value validity
-- confirmed routing consistency
-- required questions where reachability is confirmed
-- hard row constraints
 - final row count
-- exact user constraints
+- target achievement
+- Form/routing validity
+- allowed values
+- frozen SourceScope
+- approved replacement plan
 
-### StatisticalValidator
+Exact duplicate/concentration checks may be simple dataframe diagnostics. Do not create a separate diversity subsystem without demonstrated need.
 
-Checks:
+## Reproducibility
 
-- approximate target achievement
-- range goals
-- marginals
-- selected relationships
-- temporal preservation
-- duplicate diagnostics
+Freeze source scope, target snapshot, ValueGroup snapshot, seed, engine version, and approved EditPlan in the Run.
 
-Validator and solver must use the same FeatureSpace definitions to avoid metric mismatch.
+Use deterministic seeds for libraries where supported. Reproducibility requirements should reflect the actual guarantees of chosen third-party libraries rather than pretending external algorithms are perfectly deterministic across versions/platforms.
 
-Only structurally valid runs are exportable.
+## Custom-code gate
+
+Do not add a new synthesis subsystem unless a representative scenario/benchmark demonstrates that SDV + SciPy MILP + hard validation + SDMetrics cannot meet the product requirement.

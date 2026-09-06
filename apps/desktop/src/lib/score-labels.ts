@@ -101,7 +101,8 @@ export const ratiosForScoreMean = (
   );
   for (const destination of order) {
     for (const donor of order) {
-      const gap = direction * ((scores.get(destination.label) ?? 3) - (scores.get(donor.label) ?? 3));
+      const gap =
+        direction * ((scores.get(destination.label) ?? 3) - (scores.get(donor.label) ?? 3));
       if (gap <= 0 || remaining <= 0 || destination.index === donor.index) continue;
       const transfer = Math.min(next[donor.index] ?? 0, remaining / gap);
       next[donor.index] = (next[donor.index] ?? 0) - transfer;
@@ -116,7 +117,9 @@ export const recognizeScoreMapping = (labels: readonly string[]): ScoreMapping |
   if (labels.length !== 5) return null;
   const scores = labels.map((label) => {
     const normalized = normalize(label);
-    return scoreLabelGroups.find((group) => (group.labels as readonly string[]).includes(normalized))?.score;
+    return scoreLabelGroups.find((group) =>
+      (group.labels as readonly string[]).includes(normalized),
+    )?.score;
   });
   if (scores.some((score) => score === undefined) || new Set(scores).size !== 5) return null;
   return new Map(labels.map((label, index) => [label, scores[index]!]));

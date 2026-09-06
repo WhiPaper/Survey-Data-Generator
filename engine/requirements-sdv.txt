@@ -1,0 +1,2 @@
+# Install this wheel with --no-deps after requirements-gaussian.txt.
+sdv==1.38.0

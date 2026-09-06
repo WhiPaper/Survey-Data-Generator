@@ -1,184 +1,55 @@
-# Google Form Logic & Reachability Contract
+# Google Form Logic & Structural Validity
 
-Google Forms response data does not expose a complete user path history. The engine must preserve evidence and uncertainty rather than invent routing.
+Google Forms responses do not expose complete path history. Preserve evidence and uncertainty rather than inventing routing.
 
-## Logic representation
+## Internal reachability state
 
-```ts
-interface FormLogic {
-  entrySectionId: SectionId
-  sections: SectionNode[]
-  transitions: LogicTransition[]
-  coverage: "none" | "partial"
-  hasRestartFlow: boolean
-}
+For each question keep:
 
-interface SectionNode {
-  id: SectionId
-  order: number
-  questionIds: QuestionId[]
-  nextSectionId?: SectionId
-}
-
-interface LogicTransition {
-  sourceQuestionId: QuestionId
-  optionKey: OptionKey
-  destination:
-    | { type: "next_section" }
-    | { type: "section"; sectionId: SectionId }
-    | { type: "submit" }
-    | { type: "restart" }
-
-  evidence: "api_confirmed"
-}
+```text
+reached
+not_reached
+indeterminate
 ```
 
-`nextSectionId` represents document sequence, not proof that the submitted response actually followed that route.
+Combined with answer presence this yields the domain answer states `answered`, `skipped`, `not_reached`, and `indeterminate`.
 
-Single-choice questions with navigation are marked:
-
-```ts
-affectsNavigation: true
-```
-
-Checkbox/grid options are not treated as navigation drivers unless the source API actually supports and confirms such behavior.
-
-## Path resolution
-
-```ts
-interface PathResolution {
-  questions: Record<
-    QuestionId,
-    "reached" | "not_reached" | "indeterminate"
-  >
-
-  confidence:
-    | "certain"
-    | "partial"
-    | "ambiguous"
-}
-```
-
-Evidence rules:
+Evidence rules remain conservative:
 
 - an existing answer proves the question was reached
-- any answered question in a section proves that section was reached
-- an absent optional question in a confirmed reached section is `skipped`
-- a submitted response missing a required question can establish `not_reached` when the question would otherwise have required an answer
-- an API-confirmed branch may prove downstream sections were not reached
-- an optional absent question in an otherwise unproven section is `indeterminate`
+- an answered question in a section proves that section was reached
+- a confirmed branch may prove downstream sections were not reached
+- an optional absent answer in an otherwise unproven section remains indeterminate
 
-`indeterminate` is not a convenience synonym for missing.
+Unknown routing is never turned into a confident path merely to make generation easier.
 
-## RESTART_FORM
+## Candidate generation boundary
 
-The API may expose restart navigation but submitted responses do not reveal loop count/history.
+The v2 engine does not mutate an observed row cell-by-cell and then repair the branch.
 
-v1 policy:
+Instead, candidate rows are generated as complete records and validated against the Form logic before final selection.
 
-- rows involving restart may remain ambiguous
-- do not structurally mutate an existing row into/out of a restart path
-- resampling observed patterns is allowed
-- do not invent loop history
+A small internal path/structural feature such as `__path_id` may be used when useful, but it is an implementation detail rather than a public domain hierarchy.
 
-## Structural mutation
+When the generation library supports categorical-combination constraints, prefer those over a custom donor/repair engine.
 
-Changing a branch-driving answer is never a local single-cell edit.
+## Hard validation
 
-Process:
+A final row is invalid when evidence proves a contradiction, including:
 
-```text
-change branch value
-→ recompute reachability evidence
-→ clear newly unreachable answers → not_reached
-→ detect newly reached area
-→ select donor support
-→ initialize required structured answers
-→ validate
-```
+- an answer exists in a confirmed not-reached question
+- a confirmed reached required question is blank
+- a value is outside the Form's allowed structured domain
+- a confirmed branch contradicts downstream answers
 
-```ts
-interface StructuralMutationPolicy {
-  canMutate(
-    response: NormalizedResponse,
-    questionId: QuestionId,
-    nextValue: AnswerValue
-  ):
-    | {
-        allowed: true
-        impact: StructuralImpact
-      }
-    | {
-        allowed: false
-        reason:
-          | "logic_ambiguous"
-          | "restart_flow"
-          | "no_donor_support"
-          | "unsupported_navigation"
-      }
-}
-```
+Ambiguous routing is validation uncertainty, not automatically a hard failure.
 
-Unsafe mutation candidates do not enter global repair.
+## Original replacement
 
-## Donors
+If an approved EditPlan replaces an original-derived row, the replacement is a complete structurally valid candidate row. Do not implement branch-specific cell mutation/donor repair in v2.
 
-Hard donor pool requirements:
+Imported source observations remain unchanged.
 
-- target section is confirmed reached
-- required target-section questions are answered
-- compatible branch
-- prefer excluding indeterminate donor rows
+## Unsupported / restart behavior
 
-Similarity uses mixed distance:
-
-- categorical 0/1
-- ordinal normalized absolute distance
-- numeric percentile distance
-- checkbox Jaccard
-- time circular distance
-
-Compare mainly:
-
-- pre-branch stable answers
-- strong relationship neighbors
-- detailed-goal-related stable fields
-
-Choose from top-K near donors using distance-weighted seeded sampling rather than always taking the nearest row.
-
-Never automatically donor-copy:
-
-- personal identifiers
-- identifiers
-- free text
-- files
-- timestamps
-
-## Structural features
-
-Feature space contains explicit structural indicators such as:
-
-```text
-question:Q:reached
-question:Q:answered
-question:Q:skipped
-```
-
-Structural mutation updates these deltas.
-
-For source rows with indeterminate reachability:
-
-- preserve/resample the observed absence pattern
-- avoid structural mutation affecting the ambiguous region
-- do not invent new uncertainty
-
-## Validation
-
-Hard failures only when evidence proves a violation, e.g.:
-
-- answer exists in confirmed not-reached question
-- confirmed reached required question is blank
-- invalid option
-- confirmed branch contradicts downstream answer
-
-Unknown routing is validation uncertainty, not an automatic hard failure.
+If the Form's routing cannot be represented confidently, prefer observed structural patterns and reject unsafe candidates. Do not invent restart histories or unsupported navigation behavior.

@@ -1,346 +1,135 @@
-# Targets, TargetCompiler & Feasibility
+# Targets & Feasibility
 
 ## Final-dataset semantics
 
-Every user target applies to the final combined dataset.
-
-Example:
+Every target applies to the final result.
 
 ```text
-original = 50
-target final N = 200
-synthetic = 150
+source scope count = N0
+requested final count = Nf
+requested synthetic additions = Nf - N0
 ```
 
-If the user asks for female = 55%, that means 55% of the final 200 rows.
-
-Core equation:
+Target contribution is always:
 
 ```text
-FinalMetric
-=
-OriginalContribution (constant)
-+
-SyntheticContribution (solver-controlled)
+kept source contribution
++ approved replacement contribution
++ synthetic addition contribution
 ```
 
-Original rows are never modified.
+Append-only planning fixes the source contribution. Replacement planning may remove selected source-derived rows from the final dataset only through an approved EditPlan.
 
-## Target model
-
-Unspecified metrics are not user constraints; they are preservation requests.
-
-Exact count is hard.
-
-Percentage and mean targets are approximate in the sense that they resolve to the nearest mathematically representable result.
-
-## Metric abstraction
-
-```ts
-interface CompiledMetric {
-  id: MetricId
-
-  kind:
-    | "count"
-    | "ratio"
-    | "mean"
-    | "sum"
-
-  numerator: MetricAggregate
-  denominator?: MetricAggregate
-
-  scope: MetricScope
-}
-
-interface MetricAggregate {
-  originalValue: number
-  expression: SyntheticMetricExpression
-}
-```
-
-Metric scope:
+## Initial target kinds
 
 ```text
-all responses
-question eligibility
-condition / detailed-goal population
+count
+share
+mean
+conditional_share
 ```
 
-## Count target
+Do not add a generic target language in v2.
 
-Original female = 20, final female target = 110:
+## Metric compilation
+
+Most targets compile to row-level numerator/denominator features.
+
+For a final ratio `r`:
 
 ```text
-20 + syntheticFemale = 110
+N0 + n·x = r(D0 + d·x)
 ```
 
-Therefore syntheticFemale must equal 90.
-
-If original contribution already exceeds an exact final target, the target is infeasible before optimization.
-
-## Ratio target
+which becomes a linear constraint:
 
 ```text
-N / D = r
+(n - r d)·x = rD0 - N0
 ```
 
-Compile as:
+For a mean, numerator is the value/score sum and denominator is the answered/eligible indicator.
+
+For a conditional share, numerator and denominator both include the condition.
+
+## Examples
+
+Likert mean:
 
 ```text
-N - rD = 0
+numerator = satisfaction score
+denominator = answered
 ```
 
-For fixed total final N this is equivalent to a count target, but keeping the ratio form generalizes to conditional populations.
-
-Example:
+ValueGroup share:
 
 ```text
-female AND score5
------------------ = 0.70
-female
+numerator = is_fruit
+denominator = eligible rows
 ```
 
-becomes:
+Checkbox conditional share:
 
 ```text
-femaleScore5 - 0.70*female = 0
+numerator = is_busan AND selected_bus
+denominator = is_busan AND transport_eligible
 ```
+
+Checkbox option shares are independent and need not sum to 100%.
 
 ## Representability
 
-Do not use arbitrary percentage tolerances.
+Counts are exact when feasible.
 
-For final N=37 and target=50%, exact 18.5 rows are impossible. The feasible nearest values are based on integer counts, e.g. 18/37 or 19/37.
+Ratios and means may be impossible to represent exactly with integer rows/score sums. The result should use the nearest feasible representation and report the achieved value rather than apply an arbitrary generic epsilon.
 
-The same principle applies to ordinal means whose score sums are discrete.
+## Semantics of changes
 
-## Ranges
-
-Count range:
+These are different target requests:
 
 ```text
-100 ≤ femaleCount ≤ 120
+final share 25%
++5 percentage points
++5% relative to current share
+final exact count 40
++5 people
 ```
 
-Ratio range:
-
-```text
-0.50 ≤ F/D ≤ 0.60
-```
-
-linearizes to:
-
-```text
-F - 0.50D ≥ 0
-F - 0.60D ≤ 0
-```
-
-Range bounds are hard.
-
-## Means
-
-Target mean:
-
-```text
-sum(values) / answeredCount = 4.2
-```
-
-linearizes to:
-
-```text
-sum(values) - 4.2*answeredCount = 0
-```
-
-The denominator is answered count, not all responses.
-
-Skipped/not_reached/indeterminate do not enter a question mean denominator.
-
-## Response rate
-
-```text
-answered
-----------------
-answered + skipped
-```
-
-Only confirmed eligible responses are in the denominator.
-
-High indeterminate share lowers confidence/reliability.
-
-## Checkbox
-
-Option percentage is an independent marginal. Checkbox percentages do not sum to 100.
-
-Average selection count is a mean:
-
-```text
-sum(selectionCount) / answeredCount
-```
-
-Per-row minimum/maximum selections are row constraints, not aggregate metrics.
-
-## Date/time/numeric row constraints
-
-Examples:
-
-- numeric min/max — row constraint
-- date allowed range — row constraint
-- time allowed range — row constraint
-
-Distribution goals such as month share or time-bin share are aggregate metrics.
-
-## Conditional detailed goals
-
-Population and outcome are compiled into indicators.
-
-Example:
-
-```text
-female AND age30s AND selectedServiceA
-```
-
-can define a population.
-
-A conditional percentage is:
-
-```text
-population AND outcome
-----------------------
-population
-```
-
-A conditional mean is:
-
-```text
-sum(value * populationIndicator)
---------------------------------
-population AND answered
-```
-
-Internal condition AST may support AND/OR; v1 UI should remain simple and need not expose every logical operator.
-
-## Compiled target set
-
-```ts
-interface CompiledTargetSet {
-  targetResponseCount: number
-  syntheticResponseCount: number
-
-  aggregateConstraints: CompiledAggregateConstraint[]
-  rowConstraints: CompiledRowConstraint[]
-
-  preservationRequests: PreservationRequest[]
-}
-```
-
-## Priorities
-
-Expose semantic priority names rather than hard-coded public numeric weights:
-
-```text
-form_hard
-user_exact
-user_approx
-user_range
-preserve_marginal
-preserve_relationship
-preserve_temporal
-diversity
-```
-
-The solver adapter maps these to internal weights/lexicographic behavior.
-
-Higher-priority constraints must not be broken to improve lower-priority goals.
-
-## Preservation
-
-If the user targets female=55%, do not also preserve female=40% as a competing objective.
-
-Unrelated preservation requests remain active.
-
-User adjustment of one metric does not automatically disable all relationships involving that question.
+Resolve the requested semantics before compilation.
 
 ## Feasibility
 
-```ts
-interface FeasibilityReport {
-  status:
-    | "feasible"
-    | "infeasible"
-    | "unknown"
+Use simple static checks when they provide clear diagnostics, then rely on the same SciPy MILP formulation used for selection.
 
-  strategy:
-    | "resampling_only"
-    | "mutation_required"
-    | null
+Do not maintain a separate solver architecture for feasibility.
 
-  issues: FeasibilityIssue[]
-  bounds: FeasibleBound[]
-}
-```
-
-Three stages:
-
-1. analytical/static impossibility
-2. user-goal mathematical conflicts via small LP/MIP
-3. structural/form-routing feasibility
-
-Examples detected without full synthesis:
-
-- target final N < source N
-- exact category count below immutable original contribution
-- mutually inconsistent single-choice counts
-- impossible ratio bounds
-- impossible ordinal mean bounds
-
-## Error locations
-
-```ts
-type TargetLocation =
-  | { type: "question-option"; questionId: QuestionId; optionKey: OptionKey }
-  | { type: "question-mean"; questionId: QuestionId }
-  | { type: "question-response-rate"; questionId: QuestionId }
-  | { type: "group"; groupId: GroupId }
-  | { type: "detailed-goal"; goalId: string }
-  | { type: "target-size" }
-```
-
-Issues map to concrete UI fields.
-
-Suggestions may be typed patches such as:
-
-- set exact
-- set range
-- remove target
-
-Do not silently apply them.
-
-## Solver-independent linear IR
-
-```ts
-interface LinearConstraint {
-  terms: LinearTerm[]
-  relation: "eq" | "lte" | "gte"
-  rhs: number
-}
-
-interface LinearTerm {
-  variableId: string
-  coefficient: number
-}
-```
-
-Flow:
+Planning order:
 
 ```text
-UI
-→ ProjectTargets
-→ TargetCompiler
-→ CompiledMetric
-→ ConstraintCompiler
-→ LinearConstraint IR
-→ OptimizationBackend
-→ HiGHS implementation
+1. validate target semantics and obvious bounds
+2. append-only MILP
+3. if infeasible, replacement-enabled MILP minimizing replaced source rows
+4. if still infeasible, report unsupported candidate/domain requirement
 ```
 
-No HiGHS-specific representation leaks upward.
+Examples of early diagnostics:
+
+- final count below source-scope count
+- requested mean beyond the question's possible score range
+- requested final category count already below immutable append-only source contribution
+- conditional denominator is zero/unsupported
+
+## Original replacement
+
+The replacement-enabled solve should minimize the number of replaced original-derived rows before secondary considerations.
+
+The computed plan is not automatically applied. Return both append-only and replacement-enabled outcomes to the application for user approval.
+
+Start with complete-row replacement. Do not optimize edit distance or individual cell mutations in v2.
+
+## Candidate support
+
+A mathematically valid target can still be infeasible with the available candidate pool.
+
+The engine may regenerate a larger or conditionally enriched candidate pool before declaring final infeasibility. This is preferable to adding a custom repair engine.
+
+Structured Form options may generate values that are valid in the Form schema even when unseen in observed responses. Arbitrary short-text values require observed or explicit user-provided support.

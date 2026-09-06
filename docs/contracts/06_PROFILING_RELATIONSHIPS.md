@@ -1,294 +1,105 @@
-# Profiling, Semantic Inference & Relationship Analysis
+# Derived Features, ValueGroups & Quality Boundaries
 
-## Profiling principle
+This document replaces the old semantic-inference/relationship-analysis architecture. v2 does not require a custom profiler or relationship engine as a synthesis prerequisite.
 
-Observed values may suggest meaning but automatic inference is not a hard business rule.
+## Prepared data
 
-Store inference and user override separately:
+Preparation converts normalized survey rows into the tabular representation needed by the compute engine while preserving raw values for export.
 
-```ts
-interface SemanticInference<T> {
-  inferred: T
-  confidence: number
-  evidence: SemanticEvidence[]
-}
-
-interface SemanticOverride<T> {
-  questionId: QuestionId
-  value: T
-  updatedAt: string
-}
-```
-
-Resolved value:
+Typical derived columns:
 
 ```text
-user override if present
-otherwise inferred value
+__answered_<question>
+__reached_<question>
+__option_<question>_<option>
+__score_<question>
+__valuegroup_<groupId>
+__path_id (when useful)
 ```
 
-Updating an inference never silently deletes an override.
+Keep derived columns internal.
 
-## Short-text inference
+## ValueGroup
 
-Candidate semantics:
-
-```text
-numeric
-categorical
-identifier
-personal_identifier
-formatted_string
-free_text
-unknown
-```
-
-Start with shape statistics:
-
-- answered count
-- unique count / ratio
-- number-parseable ratio
-- mean/median/max length
-- whitespace/multiline rate
-- digit/alphabetic/alphanumeric rates
-- repeated-value rate
-- dominant regex-like patterns
-
-Inference uses multiple signals, not a single threshold.
-
-### Numeric
-
-Positive signals:
-
-- high numeric parseability
-- meaningful numeric variation
-- decimal consistency
-- low identifier-pattern evidence
-
-Leading zero, fixed width, sequence-like values and stable prefixes can indicate identifier rather than numeric.
-
-### Categorical
-
-Signals:
-
-- repeated values
-- relatively small support
-- concentration in top values
-- low string-shape variation
-
-Account for sample size; small samples lower confidence.
-
-### Identifier
-
-Signals:
-
-- high uniqueness
-- fixed width/prefix/suffix
-- leading zeros
-- sequence-like structure
-
-Generation uses new unique values preserving format where practical.
-
-### Personal identifier
-
-Examples:
-
-- name
-- email
-- phone
-- personal address-like data
-
-Use value pattern + question title/description + data shape.
-
-Original personal identifiers are not reused by default.
-
-### Formatted string
-
-Examples such as:
-
-```text
-EMP-00123
-2026-Q1
-A-1234
-```
-
-where formatting is more meaningful than numeric statistics.
-
-### Free text
-
-Signals:
-
-- high unique ratio
-- longer strings
-- multi-token text
-- variable punctuation/length
-- low repeated-value rate
-
-## Question title keywords
-
-A lightweight multilingual keyword dictionary may boost candidate scores but never determines semantics alone.
-
-Example signals:
-
-```text
-나이 / 연령 / age
-이메일 / email
-전화 / 연락처 / phone
-사번 / 학번 / id
-```
-
-Data shape remains primary.
-
-## Confidence
-
-Do not expose raw confidence as routine UI.
-
-Conceptually:
-
-```text
-confidence
-≈ top score
-× separation from second-best
-× sample reliability
-```
-
-High confidence: auto-use.
-
-Ambiguous: mark `needsReview`, ask only when the user interacts with the question or before synthesis if required.
-
-Do not force a review wizard for all questions.
-
-## Date inference
-
-```ts
-type DateSemanticType =
-  | "calendar_date"
-  | "birth_date"
-  | "annual_date"
-  | "date_time"
-  | "unknown"
-```
-
-- `includeTime=true` strongly supports date_time
-- `includeYear=false` supports annual_date
-- birth date needs title/context plus realistic historical/age distribution
-- title alone is insufficient
-
-Annual dates remain month/day values; do not invent a year.
-
-## Numeric profile
-
-Useful profile includes:
-
-- count
-- min/max
-- mean/median
-- p05/p25/p50/p75/p95
-- decimal-place distribution
-- optional inferred plausible bounds
-
-Observed min/max are not automatically hard constraints.
-
-Preserve observed precision tendencies.
-
-## Identifier profile
+A `ValueGroup` is explicitly user-defined.
 
 Example:
 
-```ts
-interface IdentifierPatternProfile {
-  prefix?: string
-  suffix?: string
-  length?: number
-  characterPattern?: string
-  numericWidth?: number
-  uniquenessRate: number
-}
+```text
+과일 = {사과, 오렌지, 귤}
 ```
 
-Synthetic identifiers must avoid collisions with originals.
+The application may normalize trivial formatting for search/display, but must not claim that arbitrary concepts are automatically understood.
 
-## Free-text profile
+Groups may overlap. A raw value can contribute to multiple boolean features.
 
-Base project import computes cheap fields:
+If new raw values arrive after a source refresh, they are not silently added to an existing group.
 
-- response rate
-- length distribution
-- PII risk metadata
+## Short text
 
-Topic/sentiment-style analysis is lazy and should occur only when AI mode actually requires it.
+Use simple data shape to choose treatment:
 
-Do not copy raw PII into profile JSON/logs.
+- low-cardinality repeated text may be treated as categorical for candidate generation
+- high-cardinality free text is not generatively synthesized in v2
 
-## Re-profiling after semantic override
+For targeted high-cardinality text, use ValueGroup membership as the optimization feature and render/generate only from observed or explicitly user-provided values.
 
-A semantic override change may require:
+No LLM, embedding classifier, topic model, or semantic taxonomy is required.
+
+## Numeric/date parsing
+
+Use deterministic parsing only. Unparseable values remain unparsed and may be reviewed/mapped by the user if a target requires them.
+
+Do not implement broad natural-language interpretation merely to classify a value.
+
+## Relationship preservation
+
+Do not compute and preserve a custom catalog of Pearson/Spearman/Cramér's V relationships as part of the core pipeline.
+
+The candidate generator is responsible for learning ordinary joint tabular structure. SDMetrics is responsible for general post-generation quality comparison.
+
+Add a custom relationship metric only after a scenario demonstrates that the dependency-backed approach fails a product requirement.
+
+## Timestamp
+
+Treat the response timestamp as part of the row. Prefer generation through the tabular model's datetime support before introducing a custom temporal model.
+
+Hard rules:
+
+- timestamp must be valid
+- timestamp must respect the frozen SourceScope boundary when the scope constrains time
+
+Quality checks may compare datetime shape and pair trends. A custom inter-arrival/burst model is deferred until benchmark evidence requires it.
+
+## Diversity
+
+Do not create a dedicated diversity optimizer initially.
+
+At evaluation time inspect at least:
+
+- exact duplicate rows/fingerprints excluding provenance
+- concentration of repeated answer patterns when useful
+- SDMetrics new-row/general quality diagnostics where supported
+
+If exact candidate duplicates create obvious artifacts, regenerate a larger candidate pool before inventing a new optimization subsystem.
+
+## Quality ownership
+
+General synthetic quality:
 
 ```text
-question profile refresh
-→ relationship refresh
-→ preservation feature refresh
-→ target compatibility validation
+SDMetrics
 ```
 
-If an existing numeric target becomes incompatible after switching a question to categorical, do not silently delete it; surface a blocking incompatibility.
+Survey Synth hard correctness:
 
-## Relationship contract
-
-Important distinction:
-
-> The statistic used to **select** a relationship is not necessarily the feature used to **preserve** it.
-
-```ts
-interface RelationshipProfile {
-  family: RelationshipFamily
-  method: string
-  supportCount: number
-
-  strength: number
-  signedStrength?: number
-
-  reliability: number
-  selectionScore: number
-
-  preserveRecommended: boolean
-  preservationFeatures: PreservationFeatureSpec[]
-}
+```text
+final N
+target achievement
+Form/routing validity
+allowed values
+SourceScope
+approved EditPlan only
 ```
 
-P-values are optional diagnostics, not the primary ranking signal.
-
-### Candidate measures
-
-- categorical × categorical — Cramér's V; Phi for binary/binary
-- ordinal × ordinal — Spearman
-- numeric × numeric — Pearson + Spearman; use meaningful stronger signal
-- categorical × numeric — eta / correlation ratio
-- categorical × ordinal — rank-based eta or compact joint distribution
-- ordinal × numeric — Spearman
-- binary × numeric — point-biserial
-- checkbox option × option — Phi plus joint rate/lift
-- temporal variables — derived weekday/month/time-bin/interval measures
-
-Use answered×answered support for pair analysis.
-
-Do not treat skipped/not_reached as ordinary categories.
-
-Missingness relationships are modeled separately.
-
-Indeterminate rows reduce reliability.
-
-### Preservation features
-
-- small categorical/ordinal tables — preserve joint cells
-- large tables — keep selected interaction cells
-- numeric — standardized/rank product style features
-- checkbox — marginals + selection-count distribution + important co-occurrence
-- grids — semantic boost for related rows; compact grids may preserve all internal row relationships
-- date pairs — interval/order features where meaningful
-
-Do not generate every possible pair/cell.
-
-Selection score follows effect size × reliability × semantic boost.
-
-Detailed-goal relationships and confirmed grid structure may bypass ordinary caps.
+Do not hide these dimensions inside one user-facing quality number.

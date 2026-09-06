@@ -3,186 +3,121 @@
 ## Process architecture
 
 ```text
-React / TypeScript UI
+React Renderer
+      │
+      │ narrow preload API
+      ▼
+Electron Main
+  ├─ Google OAuth / Forms / Drive
+  ├─ SQLite + Drizzle
+  ├─ projects / source revisions / targets / runs
+  ├─ export
+  ├─ jobs
+  └─ Python compute process
         │
-        │ Tauri invoke
+        ├─ job.json
+        ├─ source.parquet
         ▼
-Thin Rust Host / Backend Bridge
+Packaged Python Engine
+  ├─ prepare
+  ├─ generate
+  ├─ select
+  └─ evaluate
         │
-        │ stdin/stdout NDJSON
-        ▼
-Long-running TypeScript Sidecar
-   ├─ Google OAuth/API
-   ├─ Encrypted SQLite
-   ├─ profiling
-   ├─ relationship analysis
-   ├─ feasibility
-   ├─ synthesis
-   ├─ optional AI
-   └─ export
+        ├─ result.parquet
+        └─ report.json
 ```
 
-## Responsibility boundaries
+There is no Rust host, Tauri bridge, Node sidecar, NDJSON backend protocol, or long-running Python daemon in v2.
 
-### React
+## Renderer
 
 Owns:
 
 - rendering
 - user interaction
-- TanStack Query cache
-- React Hook Form editing draft
-- lightweight view-state
+- target editing draft
+- lightweight view state
+- query cache
 
 Must not own:
 
-- Google tokens
-- direct Google API calls
 - SQLite
-- synthesis/statistics logic
-- raw filesystem access
-- LLM credentials
+- direct Google APIs
+- OAuth tokens
+- filesystem/process primitives
+- Python execution
+- synthesis/statistical logic
 
-### Rust/Tauri host
+Use `contextIsolation: true`, `nodeIntegration: false`, and a narrow preload API.
 
-Owns only boundary capabilities:
+## Electron Main
 
-- sidecar spawn/lifecycle
-- opaque request correlation
-- system browser opener
-- secure secret store integration
-- save dialogs / app paths where needed
-- Tauri capability boundary
+Owns application/product concerns:
 
-Rust does **not** mirror business DTOs such as QuestionTarget or RelationshipProfile.
-
-### TypeScript sidecar
-
-Owns:
-
-- account/session application logic
-- Google Drive/Forms acquisition
-- normalization
-- SQLite repositories and migrations
-- profiling and relationship analysis
-- target compilation/feasibility
-- synthesis
-- optional AI subsystem
+- Google account/session lifecycle
+- Form listing/import/refresh
+- source revision creation
+- local persistence
+- target drafts and run orchestration
+- job registry
+- process spawn/cancel
 - export
+- OS dialogs/paths/secure credential storage
 
-## IPC
+Prefer product-oriented functions over service/factory hierarchies.
 
-Rust exposes a generic opaque backend bridge rather than one Rust command per business action.
+## Python compute engine
 
-Shared TypeScript package `packages/contracts` defines runtime-validated RPC DTOs.
+Python owns heavy tabular compute only.
 
-Example map:
+It must not own:
 
-```ts
-interface BackendRpc {
-  "session.get": {
-    input: void
-    output: SessionView | null
-  }
+- Google OAuth
+- project persistence
+- UI state
+- account/session behavior
+- file dialogs
+- long-lived application state
 
-  "forms.list": {
-    input: { query?: string; cursor?: string }
-    output: {
-      items: FormListItem[]
-      nextCursor?: string
-    }
-  }
+Default execution model:
 
-  "projects.get": {
-    input: { projectId: ProjectId }
-    output: ProjectView
-  }
-}
+```text
+survey-synth-engine synthesize --job job.json
 ```
 
-The frontend uses a typed generic call function.
+The process validates inputs, performs one job, writes outputs, and exits.
 
-## Sidecar protocol
+## Transport
 
-Long-running sidecar. stdin/stdout NDJSON.
+Use:
 
-Request:
+- JSON for configuration, metadata, progress events, and report summaries
+- Parquet for response/candidate/result tables
 
-```json
-{"v":1,"type":"request","id":"r_123","method":"forms.list","params":{}}
-```
+Do not move large row datasets through renderer IPC.
 
-Responses are structured success/error messages.
+Small progress messages may be emitted on stdout as structured JSON lines. Logging goes to stderr. This is not a general request/response RPC protocol.
 
-Rules:
+## Cancellation
 
-- stdout is protocol JSON only.
-- logs go to stderr.
-- long jobs emit small events rather than large row payloads.
-- raw datasets do not cross to React.
+A running compute job has a durable application-level job record independent of renderer request lifetime.
 
-Handshake includes:
+Cancellation may terminate the Python child process and mark the job cancelled. Partial result files are never promoted to a completed Run.
 
-```ts
-interface SidecarReady {
-  type: "ready"
-  appVersion: string
-  protocolVersion: number
-  databaseSchemaVersion: number
-  domainSchemaVersion: number
-  engineVersion: number
-  profilerVersion: number
-}
-```
+## Frontend state
 
-Host and sidecar app/protocol versions are exact-match.
+Use:
 
-## Jobs
+- TanStack Query for persisted/application state views
+- React Hook Form for target editing drafts
+- local component state for ephemeral UI
 
-Short operations are request/response:
+Do not add Redux/Zustand unless a demonstrated state-management problem requires it.
 
-- session.get
-- forms.list
-- projects.list/get
-- targets.save
+## Error categories
 
-Long operations are jobs:
-
-- project import/profiling
-- synthesis
-- large export
-- optional AI generation
-
-Events:
-
-- `job.progress`
-- `job.completed`
-- `job.failed`
-
-Jobs support cancel via `AbortController`.
-
-Heavy profiling/optimization/synthesis runs in Node Worker Threads so the main RPC loop remains responsive.
-
-Start with one heavy worker unless real measurements justify more.
-
-## Crash behavior
-
-If sidecar crashes:
-
-- pending calls fail with `BACKEND_UNAVAILABLE`
-- host may restart once
-- no half-committed domain transaction should survive
-- UI remains able to present a short recoverable error
-
-Shutdown:
-
-1. request clean shutdown
-2. close/checkpoint DB
-3. terminate sidecar if clean exit fails
-
-## Backend errors
-
-Structured codes:
+Prefer a small product-facing error set:
 
 ```text
 UNAUTHENTICATED
@@ -190,35 +125,17 @@ REAUTH_REQUIRED
 PERMISSION_DENIED
 NOT_FOUND
 VALIDATION_FAILED
-TARGET_CONFLICT
-GOOGLE_API_ERROR
-RATE_LIMITED
+TARGET_INFEASIBLE
 JOB_CANCELLED
-BACKEND_UNAVAILABLE
+COMPUTE_FAILED
+EXPORT_FAILED
 INTERNAL
 ```
 
-Statistical infeasibility is not a backend exception; it returns a `FeasibilityReport`.
+Target infeasibility is normally a successful compute/planning outcome with diagnostics, not an unexpected exception.
 
-## Frontend state
+## Extension rule
 
-Use:
+Future computation may replace SDV, SciPy, or timestamp generation internally, but the application-facing compute job contract should remain table/config/result oriented.
 
-- TanStack Query v5 — backend/local persisted state
-- React Hook Form — target editing draft
-- Zod — frontend/runtime validation
-- local `useState` — ephemeral UI
-- `useFieldArray` — dynamic targets/goals
-- Tauri events + custom hook — long job status
-
-Do not add Redux/Zustand initially.
-
-Separate:
-
-1. persisted/backend state
-2. edit draft state
-3. ephemeral UI state
-
-TanStack Query cache is not the target editor's draft state.
-
-Project data can use long/infinite stale times with explicit invalidation because the main source is local SQLite.
+Do not introduce a plugin system or generic backend protocol to prepare for hypothetical future engines.

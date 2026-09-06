@@ -1,184 +1,69 @@
 # Google Authentication & Form Import Contract
 
-## Account model
-
 Google is the only identity provider. Do not create a generic provider abstraction.
 
-```ts
-interface GoogleAccount {
-  id: GoogleAccountId;
-  subject: string; // Google OAuth `sub`, stable identity
-  email: string;
-  displayName?: string;
-  avatarUrl?: string; // HTTPS URL from Google userinfo `picture`
-  createdAt: string;
-  lastUsedAt: string;
-}
-```
+## Account identity
 
-The identity key is Google `sub`, not email.
-
-Projects reference `google_account_id`.
-
-Local table name: `google_accounts`.
+Use Google OpenID Connect `sub` as the stable identity. Email, display name, and picture are display metadata only. Because v2 is Google-only, `GoogleAccountId` may use the `sub` value directly rather than persisting a second duplicate provider identifier.
 
 ## OAuth
 
-Desktop installed-app OAuth:
+Electron Main owns installed-app OAuth:
 
 - system browser
-- loopback callback `127.0.0.1:<random-port>`
-- random ephemeral port
+- loopback callback on `127.0.0.1` random port
 - PKCE S256
 - state validation
-- callback processed once, then listener stops
+- one-shot callback listener
 
-Installed-app client secret is not treated as a meaningful secret/security boundary.
+Use Google's maintained `google-auth-library` for PKCE generation, authorization-code token exchange, access-token refresh, ID-token verification, and revocation. Survey Synth should only own the desktop-specific browser/loopback choreography and local session persistence around that library.
 
-The user already has a Google OAuth installed-app client.
+Refresh tokens live in OS-appropriate secure credential storage. Access tokens live in Electron Main memory. Renderer never receives either.
 
-Likely scope set:
+On API 401, force one refresh and retry once. `invalid_grant` becomes `REAUTH_REQUIRED` while local projects remain available.
 
-```ts
-[
-  "openid",
-  "email",
-  "profile",
-  "https://www.googleapis.com/auth/drive.metadata.readonly",
-  "https://www.googleapis.com/auth/forms.body.readonly",
-  "https://www.googleapis.com/auth/forms.responses.readonly",
-];
-```
+## Form listing
 
-Scope policy must be rechecked against current Google Cloud verification requirements before public release.
+Use the maintained `@googleapis/drive` client to list accessible Google Forms by MIME type. Do not fetch response counts for every list item.
 
-`drive.metadata.readonly` is intentionally accepted because the product requirement is an in-app browser of accessible Forms. A narrower Picker/`drive.file` design would conflict with that requirement.
+Keep provider page tokens opaque. The renderer may search or request another page, but it must not interpret Google pagination tokens.
 
-The `profile` scope also permits reading the standard Google OpenID Connect `picture` claim. When present and HTTPS, it is stored as account metadata and exposed as `avatarUrl` in `GoogleAccountView`/`SessionView`. It is not a credential and is never used for account identity; Google `sub` remains authoritative. Missing or invalid picture values are omitted and the UI uses an initials fallback.
+## Import
 
-## Tokens
+Use the maintained `@googleapis/forms` client for Form structure and response pagination. After Form selection, fetch Form structure and all paginated responses, then normalize them into a `FormSnapshot` and response observations.
 
 ```text
-refresh token → SecureSecretStore
-access token  → TS sidecar memory only
-account metadata → encrypted SQLite
+Google Form + Responses
+→ product-specific normalization
+→ evidence-aware Form routing
+→ create local Project + immutable SourceRevision atomically
+→ local SQLite
 ```
 
-React never receives tokens.
+The Google API transport, pagination requests, token refresh, and provider error transport should remain library-backed. Custom code is justified only for Survey Synth domain normalization, hard Form invariants, and persistence semantics.
 
-```ts
-interface GoogleTokenStore {
-  getRefreshToken(subject: string): Promise<string | null>;
-  setRefreshToken(subject: string, token: string): Promise<void>;
-  deleteRefreshToken(subject: string): Promise<void>;
-}
-```
+Import persists immediately; do not introduce a separate in-memory import-session subsystem before project creation. A successful `forms.import` result identifies the persisted records explicitly with `projectId` and `sourceRevisionId`; do not expose a generic `importId`.
 
-```ts
-interface GoogleAccessTokenProvider {
-  getAccessToken(accountId: GoogleAccountId): Promise<string>;
-}
-```
+Do not run a custom relationship analyzer during import.
 
-Use a refresh safety margin.
+## Normalization
 
-Refresh is single-flight per Google account.
+- Preserve Google question IDs and Form structure as evidence.
+- Unknown Google question types become `unsupported` normalized questions rather than crashing the whole import.
+- Only API-confirmed branching becomes routing evidence.
+- Preserve the distinction between answered, skipped, not reached, and indeterminate responses.
+- File-upload metadata may be normalized; file bytes are never downloaded.
+- Form schema hashes exclude capture-time noise so equivalent structures compare consistently.
 
-API 401:
+## Refresh
 
-1. force refresh
-2. retry the API call exactly once
+Project opening uses local data. Google refresh is explicit.
 
-Refresh failure such as `invalid_grant`:
+A refresh creates a new immutable `SourceRevision`; it does not mutate previous revisions. The current target draft may need revalidation against the new Form/source, but there is no pre-release database compatibility requirement.
 
-- delete invalid local refresh token
-- report `REAUTH_REQUIRED`
-- keep projects intact
+## Rules
 
-## Account actions
-
-```ts
-interface GoogleAuthService {
-  getSession(): Promise<SessionView | null>;
-  login(): Promise<SessionView>;
-  addAccount(): Promise<SessionView>;
-  switchAccount(id: GoogleAccountId): Promise<SessionView>;
-  logout(): Promise<void>;
-  revokeAccess(id: GoogleAccountId): Promise<void>;
-  getAccounts(): Promise<GoogleAccountView[]>;
-}
-```
-
-Semantics:
-
-- switch account — retain tokens and projects
-- logout — remove local active account token/session, preserve project data and Google grant
-- revoke access — explicitly revoke Google grant/token; consequential action
-- same `sub` on OAuth login activates existing account rather than creating a duplicate
-
-## Startup
-
-```text
-last_account_id
-→ refresh token
-→ access token refresh
-→ projects
-
-missing/invalid token
-→ login
-```
-
-Do not add a long auth splash.
-
-## Form list
-
-Use Drive to list:
-
-- MIME: `application/vnd.google-apps.form`
-- `trashed=false`
-- narrow fields
-- Shared Drive support direction via `supportsAllDrives` / `includeItemsFromAllDrives`
-- search and recent ordering
-
-Do not call Forms Responses merely to show a response count beside every Form.
-
-## Form import
-
-After selection, fetch in parallel:
-
-```text
-forms.get(formId)
-forms.responses.list(formId)
-```
-
-Paginate through all responses.
-
-Then:
-
-```text
-Google Raw Form
-  → GoogleFormNormalizer
-  → FormSnapshot
-
-Google Raw Responses
-  → GoogleResponseNormalizer
-  → NormalizedResponse[]
-```
-
-Then:
-
-```text
-PathResolver
-→ Profiler
-→ RelationshipAnalyzer
-→ encrypted SQLite transaction
-→ Target Editor
-```
-
-Rules:
-
-- React never calls Google APIs directly.
-- 0-response Form cannot create an augmentation project.
-- permission errors are short and actionable.
-- unknown future Google question type becomes `UnsupportedQuestion`, never an app crash.
-- file-upload content bytes are not downloaded for this product.
+- Renderer never calls Google APIs directly.
+- A source revision with zero usable responses cannot be synthesized without an explicit future generation policy; v2 should block it.
+- Google API permission failures must be concise and actionable.
+- Do not recreate a sidecar-style Google API client, pagination framework, or import-session store around the official libraries unless a real product failure requires it.

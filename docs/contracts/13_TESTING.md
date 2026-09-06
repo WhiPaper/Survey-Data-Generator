@@ -1,346 +1,171 @@
-# Testing & Quality Gate Contract
+# Testing & Quality Gates
 
-## Test layers
+Tests should enforce product scenarios and invariants, not the removed v1 implementation architecture.
+
+## Core scenario fixtures
+
+At minimum maintain fixtures for:
+
+1. submitted-time SourceScope + final count increase
+2. Likert/ordinal mean target
+3. single-choice share target
+4. user-defined short-text ValueGroup share
+5. conditional checkbox share
+6. overlapping ValueGroups
+7. append-only infeasible target
+8. minimal original-row replacement plan
+9. branching Form with reached/skipped/not_reached/indeterminate states
+10. timestamp distribution and duplicate sanity
+
+## Hard invariants
+
+Every completed Run must satisfy:
 
 ```text
-1. Domain unit tests
-2. Profiler / inference tests
-3. Solver / synthesis tests
-4. Property-based tests
-5. Integration tests
-6. UI / E2E tests
+frozen source scope used consistently
+final row count correct
+only approved original-derived rows replaced
+imported source observations unchanged
+confirmed Form/routing violations = 0
+allowed structured values valid
+exact count targets exact when feasible
+ratio/mean result is the selected feasible representation
 ```
 
-## Global synthesis invariants
+## Target math tests
 
-Every valid run must satisfy:
+Test target compilation with direct expected equations/contributions for:
 
-```text
-original row mutations = 0
-
-final row count
-=
-source row count + synthetic row count
-
-all synthetic rows
-→ supported hard Form rules pass
-
-exact user targets
-→ exact
-
-range targets
-→ within range
-
-approx ratio/mean
-→ nearest feasible representation
-
-confirmed branch contradictions
-→ 0
-
-confirmed required-question violations
-→ 0
-```
-
-## Original immutability
-
-Hash/freeze source rows before synthesis and compare after.
-
-Also verify export does not “normalize” original free text/categorical values.
-
-## Seed reproducibility
-
-Same:
-
-- source revision
-- target snapshot
-- seed
-- engine version
-
-must produce identical structured synthetic rows.
-
-Different seeds are tested only in fixtures with enough feasible freedom; require some variation while keeping all hard constraints satisfied.
-
-## Exact/approx semantics
-
-Exact count uses tolerance zero.
-
-Percentage/mean tests calculate mathematically representable results rather than using arbitrary fixed epsilon.
+- count
+- share
+- mean
+- conditional share
+- checkbox overlap
+- zero/variable denominators
+- percentage points vs relative percent
 
 ## Feasibility tests
 
-Examples:
-
-- source N > target final N
-- immutable original category contribution exceeds target count
-- conflicting single-choice category counts
-- conflicting conditional/global targets
-- impossible ordinal mean bound
-
-Ensure infeasibility is detected before the expensive synthesis path where possible.
-
-## Form logic fixtures
-
-At least:
-
-```text
-no branching
-yes/no to different sections
-option → submit
-next section
-nested branch
-restart flow
-optional-only section
-branch with required question
-```
-
-Snapshot-test PathResolver evidence.
-
-Explicitly test:
-
-```text
-answered
-skipped
-not_reached
-indeterminate
-```
-
-## Structural mutation
+Use the same SciPy MILP path used for final selection where practical.
 
 Test:
 
-- branch change repairs newly reached/unreached answers
-- donor requirements
-- no donor → mutation denied
-- restart/ambiguous path → structural mutation denied
-- PII/free-text/file/timestamp not donor-copied
+- source count greater than requested final count
+- impossible ordinal mean
+- immutable append-only contribution above a requested final share/count
+- mutually conflicting targets
+- candidate-support failure
+- replacement-enabled solution requiring minimum row count
 
-## Profiler golden fixtures
-
-Examples:
-
-```text
-single-choice-balanced
-checkbox-correlated
-ordinal-skewed
-numeric-outliers
-short-text-identifiers
-short-text-categorical
-short-text-free-text
-birth-dates
-branching-missingness
-```
-
-Semantic inference tests should assert class and a confidence range, not brittle exact confidence decimals.
-
-## Relationship tests
-
-Build synthetic fixtures for known expected relationships:
-
-- independent categorical variables → Cramér's V near zero
-- strongly linked categorical variables → high V
-- monotonic ordinal → high |Spearman|
-- linear numeric → high Pearson
-- nonlinear monotonic numeric → Spearman stronger than Pearson where expected
-
-Ensure relationship caps work but explicit detailed-goal relationships are not dropped by ordinary automatic caps.
-
-## Checkbox
+## ValueGroup tests
 
 Verify:
 
-- option marginals
-- selection-count distribution
-- important co-occurrence
+- manual membership
+- overlap
+- frozen group snapshot in a Run
+- source refresh does not silently add new values to a group
 
-## Property-based testing
+Do not test nonexistent automatic semantic understanding.
 
-Use `fast-check` or equivalent.
+## Form logic tests
 
-Separate generators:
-
-```text
-arbitraryFeasibleTargets
-arbitraryPossiblyInfeasibleTargets
-```
-
-Feasible generator tests successful synthesis invariants.
-
-Possibly-infeasible generator tests that FeasibilityChecker never crashes and produces coherent status/issues.
-
-## Metamorphic tests
-
-Examples:
-
-- target N increase with no explicit user targets should preserve source statistics within benchmark tolerances
-- adding one explicit marginal should move that metric while minimizing unrelated degradation
-
-## Regression benchmarks
-
-Internal-only quality metrics may include:
+Keep representative fixtures for:
 
 ```text
-marginalError
-relationshipError
-temporalError
-duplicateRatio
+no branching
+branch to section
+branch to submit
+nested branch
+optional section
+required downstream question
+ambiguous/restart behavior
 ```
 
-These are CI/engineering metrics, not a user-facing “preservation score”.
+Verify conservative evidence and hard final-row validation.
 
-Representative benchmark sizes:
+No donor/mutation tests are required in v2.
+
+## Candidate and quality tests
+
+Use representative datasets to verify that candidate generation and selected results do not collapse into obvious row copies.
+
+Engineering diagnostics may include:
+
+- exact duplicate rate/fingerprint concentration
+- SDMetrics quality outputs
+- datetime distribution comparison
+
+These diagnostics are not themselves universal hard product targets; establish benchmark thresholds from representative fixtures rather than arbitrary global constants.
+
+## Timestamp tests
+
+For a time-bounded SourceScope, all synthetic/replacement timestamps must stay inside the contractually allowed interval.
+
+Include fixtures with uneven date/time density so a uniform timestamp generator would fail quality checks.
+
+## Reproducibility
+
+Freeze Run inputs and seed. Assert deterministic behavior only to the degree guaranteed by the selected library/runtime versions. Always persist the completed result rather than relying on future recomputation.
+
+## Persistence tests
+
+Test the clean v2 schema from `0001` and normal transactional behavior.
+
+Do not keep fixtures for old encrypted-DB migrations or legacy compatibility; the product has not been distributed.
+
+## Compute integration
+
+Test the actual job boundary:
 
 ```text
-Tiny   20 rows / 8 questions
-Small  50 / 20
-Medium 500 / 40
-Large  10,000 / 60
+Electron/application job input
+→ job.json + source.parquet
+→ packaged/dev Python engine
+→ result.parquet + report.json
 ```
 
-Include mixed question kinds, grids, branching and missingness.
-
-Track relative performance regression rather than premature hard wall-clock SLAs.
-
-Track peak memory/RSS where practical.
-
-## Cancellation & transactions
-
-Test:
-
-- cancel long job
-- no partial run
-- worker recovers for next job
-- persistence failure rolls back
-- previous project/run remains intact
-
-## DB migrations
-
-Keep fixtures from historical schema versions.
-
-Test sequential migration to latest while preserving:
-
-- projects
-- source revisions
-- targets
-- runs
-
-Do not silently create a fresh DB on migration failure.
-
-## RPC
-
-Test:
-
-- valid request
-- invalid params
-- unknown method
-- protocol version mismatch
-- JSON split across stream chunks
-- multiple NDJSON messages in one chunk
-- stderr logging does not pollute stdout protocol
-- sidecar unexpected exit
+Cover cancellation, malformed input, engine failure, and cleanup of partial output.
 
 ## Export
 
-For one Run, export both CSV and XLSX, read them back, compare logical table:
+Export the same saved Run to CSV and XLSX and compare the logical table after reading both back.
 
-- rows
-- columns
-- headers
-- values
-- ordering
+Include Korean text, commas/quotes/newlines, spreadsheet-formula prefixes, numeric cells, and timestamps.
 
-CSV fixtures include:
-
-- comma
-- quote
-- newline
-- Korean
-- emoji
-- formula-prefix values
-
-XLSX checks:
-
-- numeric cells are numeric
-- date/time typed cells
-- duration type/format
-- response text not formulas
-- freeze/header/filter contract
-
-Default export must not contain provenance fields.
-
-## AI
-
-CI uses a fake LLM gateway.
-
-Test:
-
-- success
-- malformed output
-- PII output
-- source-copy output
-- rate limit
-- timeout
-- credential error
-- partial failure
-
-Invariant for partial failure:
-
-```text
-structured rows intact
-row count intact
-failed text blank
-warning recorded
-```
-
-AI OFF must result in zero LLM network calls.
+Default export must not expose provenance fields.
 
 ## UI/E2E
 
-Key target-editor tests:
-
-- entering female 55% creates only female ratio constraint
-- auto-derived male is not a user constraint
-- reset removes constraint
-- unit display toggle preserves ratio semantic
-- editing count converts target semantic to count
-
-Core E2E:
+Core E2E should eventually cover:
 
 ```text
-mock Google login
-→ Form list
-→ Form selection
-→ project creation
-→ target N
-→ female %
-→ ordinal mean
-→ synthesize
+Google/mock login
+→ Form selection/import
+→ SourceScope
+→ final N
+→ target
+→ generate
 → result
-→ XLSX export
+→ CSV/XLSX export
 ```
 
-Representative failure E2E:
+Also cover:
 
-- reauth required
-- zero responses
-- infeasible target
-- no donor support
-- sidecar crash
-- export save failure
+- infeasible append-only result
+- original replacement approval
+- target semantic ambiguity where applicable
+- compute cancellation/failure
 
 ## Release gate
 
-Required:
+Before a release candidate:
 
-```text
-all domain/unit tests pass
-property tests pass
-hard constraint fixtures pass
-confirmed Form logic violations = 0
-original mutations = 0
-export contract tests pass
-DB migration tests pass
-core E2E pass
-packaged-install smoke tests pass
-```
+- lint/typecheck pass
+- unit/integration scenario tests pass
+- hard Form/target invariants pass
+- compute-engine packaged smoke passes
+- CSV/XLSX export tests pass
+- installed Electron artifact smoke passes
 
-Coverage percentage is secondary to invariants and regression benchmarks.
+Coverage percentage is secondary to scenario coverage and invariant correctness.

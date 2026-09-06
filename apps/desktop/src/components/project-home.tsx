@@ -13,12 +13,7 @@ import {
 } from "@/components/ui/chart";
 import { Input } from "@/components/ui/input";
 import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTitle,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { getProjectTimeline } from "@/api/backend";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -74,13 +69,7 @@ type DateTimePickerProps = {
   readonly disabled: boolean;
 };
 
-function DateTimePicker({
-  id,
-  label,
-  timestamp,
-  onChange,
-  disabled,
-}: DateTimePickerProps) {
+function DateTimePicker({ id, label, timestamp, onChange, disabled }: DateTimePickerProps) {
   const [open, setOpen] = useState(false);
   const date = new Date(timestamp);
 
@@ -148,8 +137,7 @@ const allocateAddedCounts = (
   if (additionalCount <= 0 || originalCounts.length === 0) return originalCounts.map(() => 0);
   const weights = originalCounts.map((count) => Math.max(0, count));
   const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
-  const normalizedWeights =
-    weightTotal > 0 ? weights : originalCounts.map(() => 1);
+  const normalizedWeights = weightTotal > 0 ? weights : originalCounts.map(() => 1);
   const totalWeight = normalizedWeights.reduce((sum, weight) => sum + weight, 0);
   const quotas = normalizedWeights.map((weight) => (weight / totalWeight) * additionalCount);
   const added = quotas.map((quota) => Math.floor(quota));
@@ -160,8 +148,9 @@ const allocateAddedCounts = (
       fraction: quota - Math.floor(quota),
       weight: normalizedWeights[index] ?? 0,
     }))
-    .sort((left, right) =>
-      right.fraction - left.fraction || right.weight - left.weight || left.index - right.index,
+    .sort(
+      (left, right) =>
+        right.fraction - left.fraction || right.weight - left.weight || left.index - right.index,
     );
   for (let position = 0; position < remainder; position += 1) {
     const index = remainderOrder[position % remainderOrder.length]?.index;
@@ -386,7 +375,8 @@ export const ProjectHomeView = memo(function ProjectHomeView({
   const additionalCount = Math.max(0, totalCount - rangeSourceCount);
 
   const chartData = useMemo(
-    () => (timelineQuery.data ? buildTimelineData(timelineQuery.data, targets.targetResponseCount) : []),
+    () =>
+      timelineQuery.data ? buildTimelineData(timelineQuery.data, targets.targetResponseCount) : [],
     [targets.targetResponseCount, timelineQuery.data],
   );
 
@@ -411,8 +401,8 @@ export const ProjectHomeView = memo(function ProjectHomeView({
             </div>
             <div
               className="home-count-breakdown"
-                aria-label={`원본 ${rangeSourceCount}명, 추가 ${additionalCount}명`}
-              >
+              aria-label={`원본 ${rangeSourceCount}명, 추가 ${additionalCount}명`}
+            >
               <span>{rangeSourceCount}</span>
               <span className="home-count-plus">+</span>
               <label>
@@ -442,7 +432,9 @@ export const ProjectHomeView = memo(function ProjectHomeView({
                 }}
                 disabled={disabled}
               />
-              <span className="hidden text-muted-foreground sm:inline" aria-hidden="true">→</span>
+              <span className="hidden text-muted-foreground sm:inline" aria-hidden="true">
+                →
+              </span>
               <DateTimePicker
                 id="response-period-end"
                 label="응답 기간 끝"
