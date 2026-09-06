@@ -5,9 +5,9 @@
 
 ## Getting help
 
-- [GitHub Issues](https://github.com/WhiPaper/Survey-Data-Generator/issues) for bugs and sanitized crash reports.
-- [GitHub Discussions](https://github.com/WhiPaper/Survey-Data-Generator/discussions) for workflow questions.
-- Support: `support@surveysynth.local`
+- [GitHub Issues](https://github.com/WhiPaper/Survey-Data-Generator/issues) for bugs, workflow questions, and sanitized crash reports.
+
+A dedicated production support contact has not yet been published. Before public release or Google OAuth production verification, the release owner must configure a real externally reachable support contact and stable public support/privacy URLs.
 
 ## Supported platforms
 
@@ -17,6 +17,8 @@
 | Linux (Ubuntu 22.04+ baseline) | x64 | AppImage |
 
 Node.js and Python are not required for installed users.
+
+The Linux package target is configured, but Linux release acceptance is not complete until the packaged application is built and smoke-tested on an actual Linux runner or device. Do not describe Linux packaged smoke as passed without that evidence.
 
 ## Frequently asked questions
 
@@ -38,4 +40,4 @@ Use the project's delete action to remove project-owned records, or the account 
 
 ## Security reports
 
-Do not open a public issue for a credential or data-exposure vulnerability. Use a private GitHub security advisory or contact `security@surveysynth.local`.
+Do not open a public issue for a credential or data-exposure vulnerability. Use a private GitHub security advisory. A dedicated production security contact must be confirmed by the release owner before public release.

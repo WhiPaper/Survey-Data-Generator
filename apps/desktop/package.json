@@ -1,6 +1,7 @@
 {
   "name": "@survey-synth/desktop",
   "version": "0.1.0",
+  "description": "Local-first Electron desktop app for target-constrained survey data synthesis.",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
@@ -45,7 +46,6 @@
     "@types/better-sqlite3": "9.6.0",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
-    "@vitejs/plugin-react": "^5.0.2",
     "drizzle-kit": "0.31.10",
     "electron": "44.2.0",
     "electron-vite": "5.0.0",

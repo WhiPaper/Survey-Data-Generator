@@ -17,6 +17,9 @@ engine/dist/
 .local-engine-smoke/
 .local-engine-binary-smoke/
 
+# Local live verification state may contain Google account metadata.
+.local-live/
+
 # Local OAuth configuration may contain client credentials.
 google_oauth.local.json
 

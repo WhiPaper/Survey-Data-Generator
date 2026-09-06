@@ -35,8 +35,10 @@ Survey Synth does not create or modify Google Forms or responses.
 
 ## 4. Cloud Console checklist
 
-- [ ] App name and support email configured.
-- [ ] Public privacy policy URL published.
-- [ ] Public terms/support URL published.
+- [ ] App name and real externally reachable support contact configured.
+- [ ] Public privacy policy URL published and reviewed against the current implementation.
+- [ ] Public terms/support URL published and reviewed against the current implementation.
+- [ ] Privacy/support pages contain production contact details rather than placeholder addresses.
 - [ ] OAuth redirect/client configuration reviewed for the packaged desktop application.
 - [ ] Demonstration video shows only the scopes and local workflow implemented by the current release.
+- [ ] Actual Google sign-in, Form listing, and Form import are manually accepted with the production OAuth project before release.

@@ -1,8 +1,8 @@
 # Privacy Policy
 
-**Effective Date:** September 6, 2026  
+**Publication Status:** Release-readiness draft  
 **Product Name:** Survey Synth  
-**Publisher:** Survey Synth Team
+**Publisher:** To be confirmed by the release owner before public release
 
 ---
 
@@ -40,8 +40,8 @@ CSV and XLSX files are written locally to the path chosen by the user through th
 
 Deleting a project removes its project-owned records from the local database. Account revocation removes the stored Google refresh token and account-owned local project records according to the application's confirmation flow.
 
-## 7. Contact
+## 7. Contact and publication readiness
 
-- Privacy: `privacy@surveysynth.local`
-- Support: `support@surveysynth.local`
-- Repository: https://github.com/WhiPaper/Survey-Data-Generator
+This file is a release-readiness draft, not evidence that a production privacy policy URL or dedicated privacy/support contact has been published. Before public release or Google OAuth production verification, the release owner must publish stable privacy/support URLs and real externally reachable contact details.
+
+For non-sensitive project questions before that publication step, use the repository's GitHub Issues. Security reports should use a private GitHub security advisory rather than a public issue.
