@@ -21,6 +21,14 @@ This checklist separates repository-automatable validation from release steps th
 
 Until these checks have evidence, do not claim that Linux packaged smoke has passed.
 
+## Packaging metadata and warnings
+
+The desktop package includes a product description and a stable Linux desktop identity. Missing production dependencies are configured to fail packaging instead of being accepted as electron-builder v26 warnings.
+
+- [ ] Confirm the release owner/publisher identity before adding or relying on `author`/publisher metadata. Do not invent this value merely to silence a packaging warning.
+- [ ] Review the final installer/application icon. The current configuration does not provide a custom brand icon, so electron-builder may use its default Electron icon until the release owner supplies or explicitly accepts an asset.
+- [ ] If packaging emits dependency warnings that are not missing production dependencies, classify whether they affect the packaged runtime or are build-tool/transitive warnings before changing product dependencies.
+
 ## Signing and publishing
 
 - [ ] Confirm the release owner/publisher identity used for package metadata.

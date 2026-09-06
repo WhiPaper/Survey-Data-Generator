@@ -60,6 +60,13 @@ describe("M10 release hardening", () => {
     expect(packageJson.description?.trim().length).toBeGreaterThan(0);
   });
 
+  it("fails packaging when a production dependency cannot be resolved", () => {
+    const builder = JSON.parse(readRepositoryFile("apps/desktop/electron-builder.json")) as {
+      allowMissingDependencies?: boolean;
+    };
+    expect(builder.allowMissingDependencies).toBe(false);
+  });
+
   it("keeps Linux desktop window association aligned with the application id", () => {
     const packageJson = JSON.parse(readRepositoryFile("apps/desktop/package.json")) as {
       desktopName?: string;
