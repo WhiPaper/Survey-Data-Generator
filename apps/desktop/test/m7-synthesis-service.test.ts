@@ -163,56 +163,16 @@ const replacementEngine = (): PythonEngine => ({
   synthesize: async (_operationId, jobPath) => {
     const workDir = dirname(jobPath);
     writeResult(join(workDir, "result.parquet"), [
-      {
-        responseId: "source-1",
-        submittedAt: new Date(3000).toISOString(),
-        score: 5,
-        origin: "original",
-      },
-      {
-        responseId: "source-2",
-        submittedAt: new Date(4000).toISOString(),
-        score: 5,
-        origin: "original",
-      },
-      {
-        responseId: "source-3",
-        submittedAt: new Date(5000).toISOString(),
-        score: 5,
-        origin: "original",
-      },
-      {
-        responseId: "synthetic:7:1",
-        submittedAt: new Date(6000).toISOString(),
-        score: 1,
-        origin: "synthetic",
-      },
+      { responseId: "source-1", submittedAt: new Date(3000).toISOString(), score: 5, origin: "original" },
+      { responseId: "source-2", submittedAt: new Date(4000).toISOString(), score: 5, origin: "original" },
+      { responseId: "source-3", submittedAt: new Date(5000).toISOString(), score: 5, origin: "original" },
+      { responseId: "synthetic:7:1", submittedAt: new Date(6000).toISOString(), score: 1, origin: "synthetic" },
     ]);
     writeResult(join(workDir, "result.replacement.parquet"), [
-      {
-        responseId: "source-1",
-        submittedAt: new Date(3000).toISOString(),
-        score: 5,
-        origin: "original",
-      },
-      {
-        responseId: "source-2",
-        submittedAt: new Date(4000).toISOString(),
-        score: 5,
-        origin: "original",
-      },
-      {
-        responseId: "replacement:7:1",
-        submittedAt: new Date(5500).toISOString(),
-        score: 1,
-        origin: "synthetic",
-      },
-      {
-        responseId: "synthetic:7:1",
-        submittedAt: new Date(6000).toISOString(),
-        score: 1,
-        origin: "synthetic",
-      },
+      { responseId: "source-1", submittedAt: new Date(3000).toISOString(), score: 5, origin: "original" },
+      { responseId: "source-2", submittedAt: new Date(4000).toISOString(), score: 5, origin: "original" },
+      { responseId: "replacement:7:1", submittedAt: new Date(5500).toISOString(), score: 1, origin: "synthetic" },
+      { responseId: "synthetic:7:1", submittedAt: new Date(6000).toISOString(), score: 1, origin: "synthetic" },
     ]);
     return {
       status: "success",
@@ -271,7 +231,7 @@ const startPendingPlan = async (database: AppDatabase, workRoot: string, operati
   const started = await service.start({
     projectId: "project-1",
     finalCount: 4,
-    targets: [{ kind: "mean", questionId: "q-score", value: 3 }],
+    targets: [{ id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 3 }],
     sourceScope: { kind: "all" },
     seed: 7,
     operationId,
@@ -299,8 +259,21 @@ describe("M7 synthesis approval gate", () => {
 
     expect(database.db.select().from(runs).all()).toHaveLength(0);
     expect(started.editPlan.replacementCount).toBe(1);
-    expect(started.editPlan.appendOnlyOutcome.mean).toBe(4);
-    expect(started.editPlan.replacementOutcome.mean).toBe(3);
+    expect(started.editPlan.appendOnlyOutcome.targets).toEqual([
+      {
+        targetId: "t-mean",
+        kind: "mean",
+        requested: 3,
+        achieved: 4,
+        absoluteError: 1,
+        exact: false,
+      },
+    ]);
+    expect(started.editPlan.replacementOutcome.targets[0]).toMatchObject({
+      targetId: "t-mean",
+      achieved: 3,
+      exact: true,
+    });
 
     const resolved = await service.resolveEditPlan({
       planId: started.planId,
@@ -311,7 +284,9 @@ describe("M7 synthesis approval gate", () => {
 
     const run = await service.getRun(resolved.runId);
     expect(run.targetSnapshot.editPlan?.replacementCount).toBe(1);
-    expect(run.validation.achieved).toMatchObject({ mean: 3, absoluteError: 0, exact: true });
+    expect(run.validation.achieved).toMatchObject({
+      targets: [{ targetId: "t-mean", achieved: 3, absoluteError: 0, exact: true }],
+    });
     expect(run.validation.validation).toMatchObject({
       replacementApplied: true,
       approvedReplacementCount: 1,
@@ -339,7 +314,9 @@ describe("M7 synthesis approval gate", () => {
     const run = await service.getRun(resolved.runId);
 
     expect(run.targetSnapshot.editPlan).toBeUndefined();
-    expect(run.validation.achieved).toMatchObject({ mean: 4, absoluteError: 1, exact: false });
+    expect(run.validation.achieved).toMatchObject({
+      targets: [{ targetId: "t-mean", achieved: 4, absoluteError: 1, exact: false }],
+    });
     expect(run.validation.validation).toMatchObject({
       replacementApplied: false,
       approvedReplacementCount: 0,
