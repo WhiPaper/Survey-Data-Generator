@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { posix, win32 } from "node:path";
+import { join, posix, win32 } from "node:path";
 
 import { backendFailure } from "../errors";
 import type { JobRegistry } from "../jobs";
