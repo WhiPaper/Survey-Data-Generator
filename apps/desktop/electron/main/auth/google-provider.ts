@@ -165,8 +165,7 @@ const waitForOAuthCode = (
       const result = callbackCode(request, response, state);
       if (result !== null) finish(result);
     };
-    const onError = (): void =>
-      finish(backendFailure("INTERNAL", "Google login callback failed"));
+    const onError = (): void => finish(backendFailure("INTERNAL", "Google login callback failed"));
 
     server.on("request", onRequest);
     server.on("error", onError);
@@ -262,7 +261,8 @@ export const createGoogleProvider = ({
     client.setCredentials({ refresh_token: refreshToken });
     try {
       const result = await client.getAccessToken();
-      if (!result.token) throw backendFailure("REAUTH_REQUIRED", "Google authorization expired. Sign in again.");
+      if (!result.token)
+        throw backendFailure("REAUTH_REQUIRED", "Google authorization expired. Sign in again.");
       return {
         accessToken: result.token,
         expiresAtMs: client.credentials.expiry_date ?? now() + 60 * 60_000,

@@ -5,10 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  createPythonEngine,
-  resolveEngineLaunch,
-} from "../electron/main/compute/python-engine";
+import { createPythonEngine, resolveEngineLaunch } from "../electron/main/compute/python-engine";
 import { createJobRegistry } from "../electron/main/jobs";
 
 const desktopPath = fileURLToPath(new URL("..", import.meta.url));

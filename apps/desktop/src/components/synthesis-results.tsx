@@ -83,10 +83,7 @@ export const formatRequestedTarget = (metric: ValidationMetricView): string => {
   return `${metric.requested.value?.toFixed(2) ?? "-"}`;
 };
 
-export const validationMetricLabel = (
-  form: FormSnapshot,
-  metric: ValidationMetricView,
-): string => {
+export const validationMetricLabel = (form: FormSnapshot, metric: ValidationMetricView): string => {
   const question = form.questions.find((item) => item.id === metric.metric.questionId);
   if (question === undefined) return "삭제된 문항";
   if (metric.metric.optionKey !== undefined) {
@@ -137,15 +134,10 @@ export function SynthesisResultsView({
             </TableHeader>
             <TableBody>
               {(runData.validation.metrics ?? []).map((metric, index) => (
-                <TableRow
-                  key={index}
-                  data-state={metric.satisfied ? undefined : "selected"}
-                >
+                <TableRow key={index} data-state={metric.satisfied ? undefined : "selected"}>
                   <TableCell>{validationMetricLabel(form, metric)}</TableCell>
                   <TableCell>{formatRequestedTarget(metric)}</TableCell>
-                  <TableCell>
-                    {formatMetricValue(metric.metric.kind, metric.actual)}
-                  </TableCell>
+                  <TableCell>{formatMetricValue(metric.metric.kind, metric.actual)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -168,12 +160,9 @@ export function SynthesisResultsView({
                   <dd data-numeric>{runData.validation.originalMutationCount}</dd>
                 </div>
               </dl>
-              {Array.isArray(runData.validation.errors) &&
-                runData.validation.errors.length > 0 && (
-                  <FieldError className="mx-4">
-                    {runData.validation.errors.join(" ")}
-                  </FieldError>
-                )}
+              {Array.isArray(runData.validation.errors) && runData.validation.errors.length > 0 && (
+                <FieldError className="mx-4">{runData.validation.errors.join(" ")}</FieldError>
+              )}
             </SheetContent>
           </Sheet>
         </>
@@ -181,9 +170,7 @@ export function SynthesisResultsView({
       <div className="ai-actions">
         {aiEnabled &&
           (runData?.aiMetadata ? (
-            <span>
-              AI 텍스트 채움 완료 ({runData.aiMetadata.generatedCount}개 항목)
-            </span>
+            <span>AI 텍스트 채움 완료 ({runData.aiMetadata.generatedCount}개 항목)</span>
           ) : (
             <>
               <Button
@@ -237,15 +224,9 @@ export function SynthesisResultsView({
         )}
         {exportError && <FieldError>{exportError}</FieldError>}
       </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onRegenerate}
-        disabled={regeneratePending}
-      >
+      <Button variant="ghost" size="sm" onClick={onRegenerate} disabled={regeneratePending}>
         결과 다시 만들기
       </Button>
     </section>
   );
 }
-

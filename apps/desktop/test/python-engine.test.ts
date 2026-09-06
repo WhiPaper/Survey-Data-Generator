@@ -5,10 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  createPythonEngine,
-  resolveEngineLaunch,
-} from "../electron/main/compute/python-engine";
+import { createPythonEngine, resolveEngineLaunch } from "../electron/main/compute/python-engine";
 import { createJobRegistry } from "../electron/main/jobs";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-engine.cjs", import.meta.url));
@@ -122,7 +119,9 @@ describe("Python compute boundary", () => {
       },
     });
 
-    await expect(engine.synthesize("engine-invalid-edit-plan", jobPath, reportPath)).rejects.toMatchObject({
+    await expect(
+      engine.synthesize("engine-invalid-edit-plan", jobPath, reportPath),
+    ).rejects.toMatchObject({
       backendError: { code: "INTERNAL" },
     });
   });

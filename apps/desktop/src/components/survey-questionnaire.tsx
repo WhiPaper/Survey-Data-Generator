@@ -65,7 +65,6 @@ const textClusterTargetFor = (
 const formatTarget = (ratio: number, unit: "ratio" | "count", total: number): string =>
   unit === "ratio" ? `${Math.round(ratio * 100)}%` : `≈${Math.round(ratio * total)}명`;
 
-
 const choiceRatios = (
   question: Extract<Question, { kind: "single_choice" | "multi_choice" }>,
   choices: QuestionProfile["choices"],
@@ -116,8 +115,7 @@ export function SurveyQuestionEditor({
       : question.options.reduce(
           (sum, option) =>
             sum +
-            (scoreMapping.get(option.label) ?? 3) *
-              (profile?.choices?.[option.key]?.share ?? 0),
+            (scoreMapping.get(option.label) ?? 3) * (profile?.choices?.[option.key]?.share ?? 0),
           0,
         );
 
@@ -126,7 +124,9 @@ export function SurveyQuestionEditor({
     const mean = Number(value);
     if (!Number.isFinite(mean) || mean < 1 || mean > 5) return;
     const optionLabels = question.options.map((option) => option.label);
-    const currentRatios = question.options.map((option) => profile?.choices?.[option.key]?.share ?? 0);
+    const currentRatios = question.options.map(
+      (option) => profile?.choices?.[option.key]?.share ?? 0,
+    );
     const nextRatios = ratiosForScoreMean(optionLabels, currentRatios, scoreMapping, mean);
     onChange({
       ...targets,
@@ -169,9 +169,7 @@ export function SurveyQuestionEditor({
                 : cluster.share;
           const source = unit === "ratio" ? cluster.share * 100 : cluster.count * sourceCountScale;
           const target =
-            unit === "ratio"
-              ? targetRatio * 100
-              : targetRatio * targets.targetResponseCount;
+            unit === "ratio" ? targetRatio * 100 : targetRatio * targets.targetResponseCount;
           return { option: cluster.label, ...splitDistributionAdjustment(source, target) };
         })
       : [];
@@ -289,9 +287,7 @@ export function SurveyQuestionEditor({
                 <TooltipTrigger className="text-xs text-muted-foreground underline decoration-dotted underline-offset-4">
                   점수 기준
                 </TooltipTrigger>
-                <TooltipContent>
-                  선택지 의미를 점수로 해석합니다.
-                </TooltipContent>
+                <TooltipContent>선택지 의미를 점수로 해석합니다.</TooltipContent>
               </Tooltip>
               {scoreMode && currentScoreMean !== null && (
                 <Field orientation="horizontal" className="w-auto items-center gap-1.5">
@@ -452,7 +448,9 @@ export function SurveyQuestionEditor({
                           : String((clusterTarget.target.value / targets.targetResponseCount) * 100)
                         : clusterTarget.target.kind === "count"
                           ? String(clusterTarget.target.value)
-                          : String(Math.round(clusterTarget.target.value * targets.targetResponseCount))
+                          : String(
+                              Math.round(clusterTarget.target.value * targets.targetResponseCount),
+                            )
                       : unit === "ratio"
                         ? String(Math.round(cluster.share * 100))
                         : String(Math.round(cluster.share * targets.targetResponseCount));
@@ -527,8 +525,8 @@ export function SurveyQuestionEditor({
                 분류된 유사 응답 그룹이 아직 없습니다
               </p>
               <p>
-                단답형 응답 텍스트를 분석 중이거나 유효 응답 수가 부족한 상태입니다.
-                합성 시 원본 풀의 단답형 응답이 안전하게 유지·반영됩니다.
+                단답형 응답 텍스트를 분석 중이거나 유효 응답 수가 부족한 상태입니다. 합성 시 원본
+                풀의 단답형 응답이 안전하게 유지·반영됩니다.
               </p>
             </div>
           )}

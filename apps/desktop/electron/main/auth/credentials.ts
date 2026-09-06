@@ -61,7 +61,9 @@ export class FileRefreshTokenStore implements RefreshTokenStore {
       const raw = JSON.parse(await readFile(this.filename, "utf8")) as unknown;
       if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
       return Object.fromEntries(
-        Object.entries(raw).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+        Object.entries(raw).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
       );
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};

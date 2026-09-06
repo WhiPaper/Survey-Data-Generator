@@ -99,12 +99,7 @@ export class GoogleFormNormalizer {
       }
 
       if (item.questionGroupItem !== undefined) {
-        const group = normalizeQuestionGroup(
-          item.questionGroupItem,
-          item,
-          currentSection,
-          state,
-        );
+        const group = normalizeQuestionGroup(item.questionGroupItem, item, currentSection, state);
         state.groups.push(group);
       }
     }
@@ -114,7 +109,9 @@ export class GoogleFormNormalizer {
       questionIds: [...section.questionIds],
     }));
     const transitions = buildTransitions(state.routing, sectionByRawId);
-    const navigationQuestions = new Set(transitions.map((transition) => transition.sourceQuestionId));
+    const navigationQuestions = new Set(
+      transitions.map((transition) => transition.sourceQuestionId),
+    );
     const questions = state.questions.map((question) =>
       navigationQuestions.has(question.id) ? { ...question, affectsNavigation: true } : question,
     );
@@ -129,7 +126,9 @@ export class GoogleFormNormalizer {
     const snapshotWithoutHash: FormSnapshot = {
       formId: asFormId(formId),
       title,
-      ...(optionalString(info.description) ? { description: optionalString(info.description) } : {}),
+      ...(optionalString(info.description)
+        ? { description: optionalString(info.description) }
+        : {}),
       capturedAt,
       schemaHash: "",
       sections: sectionValues,
@@ -168,7 +167,9 @@ export class GoogleResponseNormalizer {
       const path = resolveResponsePath(form, answered);
       return {
         responseId: responseId as NormalizedResponse["responseId"],
-        ...(optionalString(response.createTime) ? { createdAt: optionalString(response.createTime) } : {}),
+        ...(optionalString(response.createTime)
+          ? { createdAt: optionalString(response.createTime) }
+          : {}),
         ...(optionalString(response.lastSubmittedTime)
           ? { lastSubmittedAt: optionalString(response.lastSubmittedTime) }
           : {}),
@@ -712,7 +713,10 @@ const extractFiles = (answer: JsonRecord): { fileName?: string; mimeType?: strin
   });
 };
 
-const matchOption = (options: readonly ChoiceOption[], rawValue: string): ChoiceOption | undefined => {
+const matchOption = (
+  options: readonly ChoiceOption[],
+  rawValue: string,
+): ChoiceOption | undefined => {
   const normalized = rawValue.normalize("NFKC").trim();
   const matches = options.filter((option) => option.label.normalize("NFKC").trim() === normalized);
   if (matches.length > 1) throw invalidImport("Google choice answer is ambiguous");
@@ -724,7 +728,11 @@ const uniqueOtherOption = (options: readonly ChoiceOption[]): ChoiceOption | und
   return others.length === 1 ? others[0] : undefined;
 };
 
-const addQuestion = (state: NormalizationState, section: SectionDraft, question: Question): void => {
+const addQuestion = (
+  state: NormalizationState,
+  section: SectionDraft,
+  question: Question,
+): void => {
   if (state.questionIds.has(question.id as string)) {
     throw invalidImport("Google Form contains duplicate question IDs");
   }
@@ -760,7 +768,9 @@ const ratingPresentation = (
 };
 
 const hashFormSnapshot = (snapshot: FormSnapshot): string =>
-  createHash("sha256").update(JSON.stringify(canonicalForm(snapshot))).digest("hex");
+  createHash("sha256")
+    .update(JSON.stringify(canonicalForm(snapshot)))
+    .digest("hex");
 
 const canonicalForm = (snapshot: FormSnapshot): unknown => ({
   formId: snapshot.formId,
@@ -857,7 +867,8 @@ const canonicalOption = (option: ChoiceOption): unknown => ({
 });
 
 const record = (value: unknown, message: string): JsonRecord => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw invalidImport(message);
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw invalidImport(message);
   return value as JsonRecord;
 };
 

@@ -6,11 +6,7 @@ import { asyncBufferFromFile, parquetReadObjects } from "hyparquet";
 import { parquetWriteFile } from "hyparquet-writer";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type {
-  FormSnapshot,
-  MultiChoiceQuestion,
-  NormalizedResponse,
-} from "@survey-synth/domain";
+import type { FormSnapshot, MultiChoiceQuestion, NormalizedResponse } from "@survey-synth/domain";
 
 import {
   createFlatTablePlan,
@@ -41,9 +37,7 @@ const form = {
   title: "Smoke form",
   capturedAt: "2026-09-01T00:00:00.000Z",
   schemaHash: "schema-1",
-  sections: [
-    { id: "__entry__", title: "", order: 0, questionIds: ["q-score", "q-text"] },
-  ],
+  sections: [{ id: "__entry__", title: "", order: 0, questionIds: ["q-score", "q-text"] }],
   questions: [
     {
       id: "q-score",

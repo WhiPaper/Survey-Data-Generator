@@ -251,7 +251,8 @@ const syntheticResponse = (
   const answers = {} as Record<QuestionId, AnswerSlot>;
   for (const question of form.questions) {
     const slot = provisional[question.id];
-    if (!slot) throw backendFailure("INTERNAL", `Synthetic result is missing question ${question.id}`);
+    if (!slot)
+      throw backendFailure("INTERNAL", `Synthetic result is missing question ${question.id}`);
     if (slot.state === "answered") {
       answers[question.id] = slot;
       continue;
@@ -290,9 +291,13 @@ export const readResultParquet = async (
   plan: FlatTablePlan,
 ): Promise<DecodedRunRow[]> => {
   const originals = new Map(
-    sourceResponses.map((stored) => [stored.responseId, asNormalizedResponse(stored.response)] as const),
+    sourceResponses.map(
+      (stored) => [stored.responseId, asNormalizedResponse(stored.response)] as const,
+    ),
   );
-  const rows = (await parquetReadObjects({ file: await asyncBufferFromFile(path) })) as ParquetRecord[];
+  const rows = (await parquetReadObjects({
+    file: await asyncBufferFromFile(path),
+  })) as ParquetRecord[];
   return rows.map((row) => {
     const responseId = stringValue(row[RESPONSE_ID_COLUMN], "response_id");
     const submittedAtMs = timestampMs(row[TIMESTAMP_COLUMN]);
@@ -302,7 +307,8 @@ export const readResultParquet = async (
     const origin = row[ORIGIN_COLUMN];
     if (origin === "original") {
       const response = originals.get(responseId);
-      if (!response) throw backendFailure("INTERNAL", "Synthetic result references an unknown source row");
+      if (!response)
+        throw backendFailure("INTERNAL", "Synthetic result references an unknown source row");
       return { responseId, submittedAtMs, origin: "original" as const, response };
     }
     if (origin === "synthetic") {

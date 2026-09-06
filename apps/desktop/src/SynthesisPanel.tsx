@@ -105,11 +105,8 @@ const checkboxQuestions = (project: ProjectDetailView): CheckboxQuestionView[] =
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
 
-const conditionalTargetId = (
-  valueGroupId: string,
-  questionId: string,
-  optionKey: string,
-): string => `conditional:${valueGroupId}:${questionId}:${optionKey}`;
+const conditionalTargetId = (valueGroupId: string, questionId: string, optionKey: string): string =>
+  `conditional:${valueGroupId}:${questionId}:${optionKey}`;
 
 function EditPlanOutcomeView({
   label,
@@ -434,7 +431,9 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
 
     if (useConditional) {
       if (!conditionalGroupId || !selectedConditionalQuestion || conditionalDrafts.length === 0) {
-        setError("조건부 share는 Population ValueGroup, checkbox 질문, 하나 이상의 옵션이 필요합니다.");
+        setError(
+          "조건부 share는 Population ValueGroup, checkbox 질문, 하나 이상의 옵션이 필요합니다.",
+        );
         return;
       }
       for (const draft of conditionalDrafts) {
@@ -476,9 +475,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     }
   };
 
-  const handleResolveEditPlan = async (
-    choice: "append_only" | "replacement",
-  ): Promise<void> => {
+  const handleResolveEditPlan = async (choice: "append_only" | "replacement"): Promise<void> => {
     if (result?.status !== "approval_required") return;
     setPlanBusy(true);
     setError(null);
@@ -568,7 +565,9 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                   key={group.id}
                   style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}
                 >
-                  <span>{group.name} · 멤버 {group.members.length}개</span>
+                  <span>
+                    {group.name} · 멤버 {group.members.length}개
+                  </span>
                   <button
                     type="button"
                     disabled={groupBusy}
@@ -645,7 +644,9 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                       disabled={operationId !== null}
                     >
                       {groups.map((group) => (
-                        <option key={group.id} value={group.id}>{group.name}</option>
+                        <option key={group.id} value={group.id}>
+                          {group.name}
+                        </option>
                       ))}
                     </select>
                     <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
@@ -682,7 +683,9 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                         disabled={operationId !== null}
                       >
                         {groups.map((group) => (
-                          <option key={group.id} value={group.id}>{group.name}</option>
+                          <option key={group.id} value={group.id}>
+                            {group.name}
+                          </option>
                         ))}
                       </select>
                     </label>
@@ -697,7 +700,9 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                         disabled={operationId !== null}
                       >
                         {checkbox.map((question) => (
-                          <option key={question.id} value={question.id}>{question.title}</option>
+                          <option key={question.id} value={question.id}>
+                            {question.title}
+                          </option>
                         ))}
                       </select>
                     </label>
@@ -766,11 +771,17 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
           </div>
 
           <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <button type="button" disabled={operationId !== null} onClick={() => void handleStart()}>
+            <button
+              type="button"
+              disabled={operationId !== null}
+              onClick={() => void handleStart()}
+            >
               {operationId ? "합성 중…" : "합성 실행"}
             </button>
             {operationId ? (
-              <button type="button" onClick={() => void handleCancel()}>취소</button>
+              <button type="button" onClick={() => void handleCancel()}>
+                취소
+              </button>
             ) : null}
           </div>
 
@@ -800,7 +811,9 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
               />
               <div style={{ display: "grid", gap: 3 }}>
                 {result.editPlan.proposedReplacements.map((replacement) => (
-                  <span key={`${replacement.sourceResponseId}:${replacement.replacementResponseId}`}>
+                  <span
+                    key={`${replacement.sourceResponseId}:${replacement.replacementResponseId}`}
+                  >
                     {replacement.sourceResponseId} → {replacement.replacementResponseId}
                   </span>
                 ))}
@@ -904,7 +917,11 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
         </section>
       )}
 
-      {error ? <p role="alert" style={{ margin: 0, fontSize: 12 }}>{error}</p> : null}
+      {error ? (
+        <p role="alert" style={{ margin: 0, fontSize: 12 }}>
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

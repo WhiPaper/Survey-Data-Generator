@@ -48,7 +48,9 @@ const accountView = (account: GoogleAccountRecord): GoogleAccountView => ({
   ...(account.displayName ? { displayName: account.displayName } : {}),
 });
 
-const sessionView = (account: GoogleAccountRecord): SessionView => ({ account: accountView(account) });
+const sessionView = (account: GoogleAccountRecord): SessionView => ({
+  account: accountView(account),
+});
 
 export const createGoogleAuthService = ({
   db,
@@ -64,7 +66,10 @@ export const createGoogleAuthService = ({
     const previousRefreshToken = await refreshTokens.get(accountId);
     const refreshToken = grant.refreshToken ?? previousRefreshToken;
     if (!refreshToken) {
-      throw backendFailure("REAUTH_REQUIRED", "Google did not grant offline access. Sign in again.");
+      throw backendFailure(
+        "REAUTH_REQUIRED",
+        "Google did not grant offline access. Sign in again.",
+      );
     }
 
     if (grant.refreshToken) await refreshTokens.set(accountId, grant.refreshToken);

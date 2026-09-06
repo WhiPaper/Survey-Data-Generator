@@ -17,7 +17,10 @@ export const normalizeBackendError = (error: unknown): BackendError => {
   if (error instanceof BackendFailure) return error.backendError;
   return {
     code: "INTERNAL",
-    message: error instanceof Error && error.message.length > 0 ? error.message : "Unexpected backend error",
+    message:
+      error instanceof Error && error.message.length > 0
+        ? error.message
+        : "Unexpected backend error",
     recoverable: true,
   };
 };

@@ -24,23 +24,28 @@ export type BackendServices = {
 };
 
 const requireAuth = (services: BackendServices): GoogleAuthService => {
-  if (!services.auth) throw backendFailure("BACKEND_UNAVAILABLE", "Google authentication is not initialized");
+  if (!services.auth)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Google authentication is not initialized");
   return services.auth;
 };
 const requireForms = (services: BackendServices): FormsService => {
-  if (!services.forms) throw backendFailure("BACKEND_UNAVAILABLE", "Google Forms is not initialized");
+  if (!services.forms)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Google Forms is not initialized");
   return services.forms;
 };
 const requireProjects = (services: BackendServices): ProjectService => {
-  if (!services.projects) throw backendFailure("BACKEND_UNAVAILABLE", "Projects are not initialized");
+  if (!services.projects)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Projects are not initialized");
   return services.projects;
 };
 const requireValueGroups = (services: BackendServices): ValueGroupService => {
-  if (!services.valueGroups) throw backendFailure("BACKEND_UNAVAILABLE", "Value groups are not initialized");
+  if (!services.valueGroups)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Value groups are not initialized");
   return services.valueGroups;
 };
 const requireSynthesis = (services: BackendServices): SynthesisService => {
-  if (!services.synthesis) throw backendFailure("BACKEND_UNAVAILABLE", "Synthesis engine is not initialized");
+  if (!services.synthesis)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Synthesis engine is not initialized");
   return services.synthesis;
 };
 
@@ -94,10 +99,17 @@ export const handleBackendCall = async (
     }
     case "valueGroups.create":
       return requireValueGroups(services).create(
-        request.params as { projectId: string; questionId: string; name: string; members: string[] },
+        request.params as {
+          projectId: string;
+          questionId: string;
+          name: string;
+          members: string[];
+        },
       );
     case "valueGroups.delete":
-      await requireValueGroups(services).delete((request.params as { valueGroupId: string }).valueGroupId);
+      await requireValueGroups(services).delete(
+        (request.params as { valueGroupId: string }).valueGroupId,
+      );
       return { ok: true };
     case "synthesis.start":
       return requireSynthesis(services).start(request.params as SynthesisStartParams);

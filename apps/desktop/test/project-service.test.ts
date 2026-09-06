@@ -16,7 +16,10 @@ const tempDirectories: string[] = [];
 const createDatabase = (): AppDatabase => {
   const directory = mkdtempSync(join(tmpdir(), "survey-synth-project-service-"));
   tempDirectories.push(directory);
-  const database = openAppDatabase({ filename: join(directory, "survey-synth.sqlite"), migrationsFolder });
+  const database = openAppDatabase({
+    filename: join(directory, "survey-synth.sqlite"),
+    migrationsFolder,
+  });
   openDatabases.push(database);
   return database;
 };

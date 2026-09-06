@@ -40,7 +40,8 @@ const electronInvoker: BackendInvoker = {
   invoke: async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
     if (command !== "backend_call") throw new Error(`Unsupported desktop command: ${command}`);
     const request = args?.request;
-    if (typeof request !== "string") throw new Error("Desktop backend request must be serialized JSON");
+    if (typeof request !== "string")
+      throw new Error("Desktop backend request must be serialized JSON");
     return (await window.surveySynth.backendCall(request)) as T;
   },
 };
@@ -147,10 +148,8 @@ export const getProject = (
   projectId: string,
   backend?: BackendInvoker,
 ): Promise<ProjectDetailView | null> => callBackend("projects.get", { projectId }, backend);
-export const deleteProject = (
-  projectId: string,
-  backend?: BackendInvoker,
-): Promise<{ ok: true }> => callBackend("projects.delete", { projectId }, backend);
+export const deleteProject = (projectId: string, backend?: BackendInvoker): Promise<{ ok: true }> =>
+  callBackend("projects.delete", { projectId }, backend);
 
 export const listValueGroups = (
   projectId: string,
@@ -185,7 +184,5 @@ export const cancelSynthesis = (
   operationId: string,
   backend?: BackendInvoker,
 ): Promise<{ ok: true }> => callBackend("synthesis.cancel", { operationId }, backend);
-export const getRun = (
-  runId: string,
-  backend?: BackendInvoker,
-): Promise<RunsGetResult> => callBackend("runs.get", { runId }, backend);
+export const getRun = (runId: string, backend?: BackendInvoker): Promise<RunsGetResult> =>
+  callBackend("runs.get", { runId }, backend);

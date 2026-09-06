@@ -41,17 +41,19 @@ const setup = (): { database: AppDatabase; workRoot: string } => {
         capturedAt: new Date(2).toISOString(),
         schemaHash: "schema-1",
         sections: [{ id: "section-1", title: "Main", order: 0, questionIds: ["q-score"] }],
-        questions: [{
-          id: "q-score",
-          title: "Score",
-          sectionId: "section-1",
-          required: true,
-          affectsNavigation: false,
-          kind: "ordinal",
-          presentation: "linear_scale",
-          min: 1,
-          max: 5,
-        }],
+        questions: [
+          {
+            id: "q-score",
+            title: "Score",
+            sectionId: "section-1",
+            required: true,
+            affectsNavigation: false,
+            kind: "ordinal",
+            presentation: "linear_scale",
+            min: 1,
+            max: 5,
+          },
+        ],
         groups: [],
         logic: {
           entrySectionId: "section-1",
@@ -62,21 +64,28 @@ const setup = (): { database: AppDatabase; workRoot: string } => {
         },
       },
     },
-    responses: [{
-      responseId: "source-1",
-      submittedAtMs: 3,
-      response: {
+    responses: [
+      {
         responseId: "source-1",
-        answers: { "q-score": { state: "answered", value: { kind: "ordinal", value: 4 } } },
-        origin: "original",
-        path: { questions: { "q-score": "reached" }, confidence: "certain" },
+        submittedAtMs: 3,
+        response: {
+          responseId: "source-1",
+          answers: { "q-score": { state: "answered", value: { kind: "ordinal", value: 4 } } },
+          origin: "original",
+          path: { questions: { "q-score": "reached" }, confidence: "certain" },
+        },
       },
-    }],
+    ],
   });
   return { database, workRoot: join(directory, "jobs") };
 };
 
-const start = (database: AppDatabase, workRoot: string, engine: PythonEngine, operationId: string) =>
+const start = (
+  database: AppDatabase,
+  workRoot: string,
+  engine: PythonEngine,
+  operationId: string,
+) =>
   createSynthesisService({ db: database.db, engine, workRoot }).start({
     projectId: "project-1",
     finalCount: 2,
@@ -125,7 +134,9 @@ describe("M8 synthesis cleanup", () => {
     const operationId = "m8-cancel";
     let rejectPending: ((reason: unknown) => void) | undefined;
     let markStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
     const engine: PythonEngine = {
       selftest: unusedSelftest,
       synthesize: async (_id, jobPath) => {
@@ -133,7 +144,9 @@ describe("M8 synthesis cleanup", () => {
         writeFileSync(join(workDir, "result.parquet"), "partial");
         writeFileSync(join(workDir, "report.json"), "partial");
         markStarted?.();
-        return await new Promise<never>((_resolve, reject) => { rejectPending = reject; });
+        return await new Promise<never>((_resolve, reject) => {
+          rejectPending = reject;
+        });
       },
       cancel: () => {
         rejectPending?.(backendFailure("JOB_CANCELLED", "fixture cancellation"));

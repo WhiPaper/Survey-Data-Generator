@@ -56,7 +56,9 @@ const requestOptions = (accessToken: string, signal?: AbortSignal) => ({
   ...(signal ? { signal } : {}),
 });
 
-export const createGoogleFormsClient = ({ auth }: CreateGoogleFormsClientOptions): GoogleFormsClient => {
+export const createGoogleFormsClient = ({
+  auth,
+}: CreateGoogleFormsClientOptions): GoogleFormsClient => {
   const request = async <T>(
     accountId: GoogleAccountId,
     action: (accessToken: string) => Promise<T>,

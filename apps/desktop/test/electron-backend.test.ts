@@ -34,7 +34,9 @@ describe("Electron v2 backend shell", () => {
 
     await expect(
       handleBackendCall(
-        serialize(createRequest("test_project_delete", "projects.delete", { projectId: "project-1" })),
+        serialize(
+          createRequest("test_project_delete", "projects.delete", { projectId: "project-1" }),
+        ),
         { projects },
       ),
     ).resolves.toEqual({ ok: true });
@@ -42,12 +44,19 @@ describe("Electron v2 backend shell", () => {
   });
 
   it("routes ValueGroup creation to the ValueGroup service", async () => {
-    const create = vi.fn(async (input: { projectId: string; questionId: string; name: string; members: string[] }) => ({
-      id: "group-1",
-      ...input,
-      createdAt: "2026-09-06T00:00:00.000Z",
-      updatedAt: "2026-09-06T00:00:00.000Z",
-    }));
+    const create = vi.fn(
+      async (input: {
+        projectId: string;
+        questionId: string;
+        name: string;
+        members: string[];
+      }) => ({
+        id: "group-1",
+        ...input,
+        createdAt: "2026-09-06T00:00:00.000Z",
+        updatedAt: "2026-09-06T00:00:00.000Z",
+      }),
+    );
     const valueGroups = {
       list: async (_projectId: string) => [],
       values: async (_projectId: string, _questionId: string) => [],

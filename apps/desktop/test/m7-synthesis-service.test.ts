@@ -262,11 +262,7 @@ const replacementEngine = (): PythonEngine => ({
   cancel: () => false,
 });
 
-const startPendingPlan = async (
-  database: AppDatabase,
-  workRoot: string,
-  operationId: string,
-) => {
+const startPendingPlan = async (database: AppDatabase, workRoot: string, operationId: string) => {
   const service = createSynthesisService({
     db: database.db,
     engine: replacementEngine(),

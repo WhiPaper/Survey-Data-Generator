@@ -60,7 +60,10 @@ export const createFormsService = ({
       try {
         signal = jobs.start(operationId);
       } catch {
-        throw backendFailure("VALIDATION_FAILED", "A Form import with this operation ID is already running");
+        throw backendFailure(
+          "VALIDATION_FAILED",
+          "A Form import with this operation ID is already running",
+        );
       }
 
       try {
@@ -68,7 +71,10 @@ export const createFormsService = ({
         const rawForm = await google.getForm(account.id, params.formId, signal);
         const form = formNormalizer.normalize(rawForm, new Date(capturedAtMs).toISOString());
         if (form.formId !== params.formId) {
-          throw backendFailure("GOOGLE_API_ERROR", "Google Form identity did not match the selection");
+          throw backendFailure(
+            "GOOGLE_API_ERROR",
+            "Google Form identity did not match the selection",
+          );
         }
 
         const rawResponses = await google.getAllResponses(account.id, params.formId, signal);
@@ -76,7 +82,8 @@ export const createFormsService = ({
           throw backendFailure("VALIDATION_FAILED", "선택한 Google Form에 응답이 없습니다");
         }
         const responses = responseNormalizer.normalizeAll(form, rawResponses);
-        if (signal.aborted) throw backendFailure("JOB_CANCELLED", "Google Form import was cancelled");
+        if (signal.aborted)
+          throw backendFailure("JOB_CANCELLED", "Google Form import was cancelled");
 
         const latestSession = await auth.getSession();
         if (!latestSession || latestSession.account.id !== account.id) {
@@ -136,17 +143,17 @@ const responseTimestamp = (response: NormalizedResponse): number => {
   return timestamp;
 };
 
-const responseSetHash = (
-  form: FormSnapshot,
-  responses: readonly NormalizedResponse[],
-): string => {
+const responseSetHash = (form: FormSnapshot, responses: readonly NormalizedResponse[]): string => {
   const canonical = [...responses]
     .sort((left, right) => String(left.responseId).localeCompare(String(right.responseId)))
     .map((response) => ({
       responseId: response.responseId,
       createdAt: response.createdAt ?? null,
       lastSubmittedAt: response.lastSubmittedAt ?? null,
-      answers: form.questions.map((question) => [question.id, response.answers[question.id] ?? null]),
+      answers: form.questions.map((question) => [
+        question.id,
+        response.answers[question.id] ?? null,
+      ]),
     }));
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 };

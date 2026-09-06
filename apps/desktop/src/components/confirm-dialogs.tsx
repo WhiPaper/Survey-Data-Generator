@@ -33,11 +33,7 @@ export function ConfirmDeleteProjectDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>취소</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={onConfirm}
-            disabled={pending}
-          >
+          <AlertDialogAction variant="destructive" onClick={onConfirm} disabled={pending}>
             {pending ? "삭제 중…" : "영구 삭제"}
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -70,11 +66,7 @@ export function ConfirmDeleteAccountDataDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>취소</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={onConfirm}
-            disabled={pending}
-          >
+          <AlertDialogAction variant="destructive" onClick={onConfirm} disabled={pending}>
             {pending ? "삭제 중…" : "영구 삭제"}
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -107,11 +99,7 @@ export function ConfirmRevokeDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>취소</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={onConfirm}
-            disabled={pending}
-          >
+          <AlertDialogAction variant="destructive" onClick={onConfirm} disabled={pending}>
             권한 해제
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -144,11 +132,7 @@ export function ConfirmAiClearDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>취소</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={onConfirm}
-            disabled={pending}
-          >
+          <AlertDialogAction variant="destructive" onClick={onConfirm} disabled={pending}>
             {pending ? "제거 중…" : "제거"}
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -156,4 +140,3 @@ export function ConfirmAiClearDialog({
     </AlertDialog>
   );
 }
-

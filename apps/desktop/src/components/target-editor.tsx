@@ -606,11 +606,11 @@ export function TargetEditor({
                 );
               }
 
-              const clusters = (
-                profileFor(profiles, question.id) as
-                  | { textClusters?: readonly TextClusterGroup[] }
-                  | undefined
-              )?.textClusters ?? [];
+              const clusters =
+                (
+                  profileFor(profiles, question.id) as
+                    { textClusters?: readonly TextClusterGroup[] } | undefined
+                )?.textClusters ?? [];
 
               if (clusters.length > 0) {
                 return (
@@ -695,7 +695,9 @@ export function TargetEditor({
                                             },
                                           ]
                                         : targets.questionTargets.map((item) =>
-                                            item === target ? { ...item, target: nextTarget } : item,
+                                            item === target
+                                              ? { ...item, target: nextTarget }
+                                              : item,
                                           ),
                                   });
                                 }}

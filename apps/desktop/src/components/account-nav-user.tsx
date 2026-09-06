@@ -38,7 +38,8 @@ export function AccountNavUser({
   showAiClear,
   onDeleteData,
 }: AccountNavUserProps) {
-  const name = session.account.displayName ?? session.account.email.split("@")[0] ?? session.account.email;
+  const name =
+    session.account.displayName ?? session.account.email.split("@")[0] ?? session.account.email;
 
   return (
     <SidebarMenu>
@@ -63,7 +64,9 @@ export function AccountNavUser({
           />
           <DropdownMenuContent side="right" align="end" className="min-w-56">
             <DropdownMenuGroup>
-              <DropdownMenuLabel className="max-w-56 truncate">{session.account.email}</DropdownMenuLabel>
+              <DropdownMenuLabel className="max-w-56 truncate">
+                {session.account.email}
+              </DropdownMenuLabel>
               {accounts.map((account) => (
                 <DropdownMenuItem
                   key={account.id}

@@ -53,7 +53,9 @@ export function AppShell() {
         if (!active) return;
         setSession(restored);
         setRuntimeState("ready");
-        setMessage(result.message === "pong" ? "Electron Main 연결됨" : "Electron Main 응답 확인됨");
+        setMessage(
+          result.message === "pong" ? "Electron Main 연결됨" : "Electron Main 응답 확인됨",
+        );
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -252,7 +254,14 @@ export function AppShell() {
             </button>
 
             <div style={{ marginTop: 28, borderTop: "1px solid currentColor", paddingTop: 20 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                }}
+              >
                 <h2 style={{ margin: 0, fontSize: 18 }}>프로젝트</h2>
                 <button type="button" disabled={projectsBusy} onClick={() => void reloadProjects()}>
                   {projectsBusy ? "불러오는 중…" : "새로고침"}
@@ -284,10 +293,18 @@ export function AppShell() {
                       </p>
                     </div>
                     <div style={{ display: "flex", gap: 8 }}>
-                      <button type="button" disabled={projectsBusy} onClick={() => void openProject(project.id)}>
+                      <button
+                        type="button"
+                        disabled={projectsBusy}
+                        onClick={() => void openProject(project.id)}
+                      >
                         열기
                       </button>
-                      <button type="button" disabled={projectsBusy} onClick={() => void handleDeleteProject(project)}>
+                      <button
+                        type="button"
+                        disabled={projectsBusy}
+                        onClick={() => void handleDeleteProject(project)}
+                      >
                         삭제
                       </button>
                     </div>
@@ -298,13 +315,17 @@ export function AppShell() {
               {selectedProject ? (
                 <div style={{ marginTop: 12 }}>
                   <div style={{ padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
-                    <p style={{ margin: 0, fontWeight: 600 }}>열린 프로젝트: {selectedProject.name}</p>
+                    <p style={{ margin: 0, fontWeight: 600 }}>
+                      열린 프로젝트: {selectedProject.name}
+                    </p>
                     <p style={{ margin: "6px 0 0", fontSize: 13 }}>
-                      SourceRevision {selectedProject.currentSourceRevisionId} · 응답 {selectedProject.responseCount}개
+                      SourceRevision {selectedProject.currentSourceRevisionId} · 응답{" "}
+                      {selectedProject.responseCount}개
                     </p>
                     {selectedProject.responseTimestampRange ? (
                       <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
-                        {selectedProject.responseTimestampRange.start} → {selectedProject.responseTimestampRange.end}
+                        {selectedProject.responseTimestampRange.start} →{" "}
+                        {selectedProject.responseTimestampRange.end}
                       </p>
                     ) : null}
                   </div>
@@ -314,7 +335,14 @@ export function AppShell() {
             </div>
 
             <div style={{ marginTop: 28, borderTop: "1px solid currentColor", paddingTop: 20 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                }}
+              >
                 <h2 style={{ margin: 0, fontSize: 18 }}>Google Forms</h2>
                 <button type="button" disabled={formsBusy} onClick={() => void reloadForms()}>
                   {formsBusy ? "불러오는 중…" : "새로고침"}
@@ -359,16 +387,28 @@ export function AppShell() {
               </div>
 
               {importOperationId ? (
-                <button type="button" style={{ marginTop: 12 }} onClick={() => void handleCancelImport()}>
+                <button
+                  type="button"
+                  style={{ marginTop: 12 }}
+                  onClick={() => void handleCancelImport()}
+                >
                   가져오기 취소
                 </button>
               ) : null}
 
               {importSummary ? (
-                <div style={{ marginTop: 16, padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
+                <div
+                  style={{
+                    marginTop: 16,
+                    padding: 12,
+                    border: "1px solid currentColor",
+                    borderRadius: 8,
+                  }}
+                >
                   <p style={{ margin: 0, fontWeight: 600 }}>프로젝트 생성 완료</p>
                   <p style={{ margin: "6px 0 0", fontSize: 13 }}>
-                    {importSummary.title} · 응답 {importSummary.responseCount}개 · 질문 {importSummary.questionCount}개
+                    {importSummary.title} · 응답 {importSummary.responseCount}개 · 질문{" "}
+                    {importSummary.questionCount}개
                   </p>
                   <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
                     프로젝트 ID: {importSummary.projectId}

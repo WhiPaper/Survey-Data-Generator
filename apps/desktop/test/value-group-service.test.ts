@@ -94,7 +94,11 @@ const setup = (): AppDatabase => {
       {
         responseId: "r2",
         submittedAtMs: 4000,
-        response: normalizedResponse("r2", { optionKey: "family", label: "가족 나들이" }, "불꽃놀이"),
+        response: normalizedResponse(
+          "r2",
+          { optionKey: "family", label: "가족 나들이" },
+          "불꽃놀이",
+        ),
       },
       {
         responseId: "r3",

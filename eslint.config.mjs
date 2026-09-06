@@ -5,7 +5,13 @@ import tsParser from "@typescript-eslint/parser";
 
 export default [
   {
-    ignores: ["**/dist/**", "**/node_modules/**", "**/coverage/**", "src-tauri/gen/**"],
+    ignores: [
+      "**/dist/**",
+      "**/out/**",
+      "**/node_modules/**",
+      "**/coverage/**",
+      "src-tauri/gen/**",
+    ],
   },
   eslint.configs.recommended,
   {
@@ -22,6 +28,7 @@ export default [
     },
     rules: {
       ...tseslint.configs.recommended.rules,
+      "no-undef": "off",
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/no-unused-vars": [
         "error",
@@ -39,6 +46,7 @@ export default [
       "apps/sidecar/**/*.ts",
       "scripts/**/*.{mjs,js}",
       "tests/**/*.{ts,tsx,mjs,js}",
+      "apps/desktop/test/**/*.{js,cjs,mjs}",
     ],
     languageOptions: { globals: globals.node },
   },

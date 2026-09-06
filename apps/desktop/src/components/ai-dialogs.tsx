@@ -20,13 +20,7 @@ export type ApiKeyDialogProps = {
   readonly error?: string;
 };
 
-export function ApiKeyDialog({
-  open,
-  onOpenChange,
-  onSave,
-  pending,
-  error,
-}: ApiKeyDialogProps) {
+export function ApiKeyDialog({ open, onOpenChange, onSave, pending, error }: ApiKeyDialogProps) {
   const [apiKeyInput, setApiKeyInput] = useState("");
 
   const handleClose = () => {
@@ -45,9 +39,7 @@ export function ApiKeyDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>OpenAI API 키 설정</DialogTitle>
-          <DialogDescription>
-            입력한 키는 안전한 저장소에만 보관됩니다.
-          </DialogDescription>
+          <DialogDescription>입력한 키는 안전한 저장소에만 보관됩니다.</DialogDescription>
         </DialogHeader>
         <FieldGroup>
           <Field>
@@ -106,11 +98,7 @@ export function AiDisclosureDialog({
         </DialogHeader>
         {error && <FieldError>{error}</FieldError>}
         <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={pending}
-          >
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
             취소
           </Button>
           <Button onClick={onAgree} disabled={pending}>
@@ -121,4 +109,3 @@ export function AiDisclosureDialog({
     </Dialog>
   );
 }
-

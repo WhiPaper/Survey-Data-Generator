@@ -151,9 +151,7 @@ export type EngineSynthesisInfeasibleReport = {
   issues: Array<{ code: string; message: string }>;
 };
 
-export type EngineSynthesisReport =
-  | EngineSynthesisSuccessReport
-  | EngineSynthesisInfeasibleReport;
+export type EngineSynthesisReport = EngineSynthesisSuccessReport | EngineSynthesisInfeasibleReport;
 
 export type ResolveEngineLaunchOptions = {
   isPackaged: boolean;
@@ -185,8 +183,7 @@ export const resolveEngineLaunch = ({
   }
 
   return {
-    command:
-      env.SURVEY_SYNTH_PYTHON?.trim() || (platform === "win32" ? "python" : "python3"),
+    command: env.SURVEY_SYNTH_PYTHON?.trim() || (platform === "win32" ? "python" : "python3"),
     argsPrefix: [resolve(appPath, "../../engine/main.py")],
   };
 };

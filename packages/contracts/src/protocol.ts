@@ -359,9 +359,7 @@ const EmptyParamsSchema = z.object({}).strict();
 const AccountIdParamsSchema = z.object({ id: GoogleAccountIdSchema }).strict();
 const ProjectParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
 const RunParamsSchema = z.object({ runId: z.string().min(1) }).strict();
-const SynthesisCancelParamsSchema = z
-  .object({ operationId: z.string().min(1).max(200) })
-  .strict();
+const SynthesisCancelParamsSchema = z.object({ operationId: z.string().min(1).max(200) }).strict();
 const ValueGroupsListParamsSchema = ProjectParamsSchema;
 const ValueGroupsValuesParamsSchema = z
   .object({ projectId: ProjectIdSchema, questionId: z.string().min(1) })
@@ -392,7 +390,10 @@ export interface BackendRpc {
   "projects.list": { input: z.infer<typeof EmptyParamsSchema>; output: ProjectSummaryView[] };
   "projects.get": { input: z.infer<typeof ProjectParamsSchema>; output: ProjectDetailView | null };
   "projects.delete": { input: z.infer<typeof ProjectParamsSchema>; output: ActionResult };
-  "valueGroups.list": { input: z.infer<typeof ValueGroupsListParamsSchema>; output: ValueGroupView[] };
+  "valueGroups.list": {
+    input: z.infer<typeof ValueGroupsListParamsSchema>;
+    output: ValueGroupView[];
+  };
   "valueGroups.values": {
     input: z.infer<typeof ValueGroupsValuesParamsSchema>;
     output: ValueGroupObservedValue[];
@@ -401,7 +402,10 @@ export interface BackendRpc {
     input: z.infer<typeof ValueGroupsCreateParamsSchema>;
     output: ValueGroupView;
   };
-  "valueGroups.delete": { input: z.infer<typeof ValueGroupsDeleteParamsSchema>; output: ActionResult };
+  "valueGroups.delete": {
+    input: z.infer<typeof ValueGroupsDeleteParamsSchema>;
+    output: ActionResult;
+  };
   "synthesis.start": { input: SynthesisStartParams; output: SynthesisStartResult };
   "synthesis.resolveEditPlan": {
     input: SynthesisResolveEditPlanParams;
@@ -513,8 +517,7 @@ export const parseRpcRequest = (input: unknown): RequestEnvelope => {
 export const parseRpcResult = <M extends RpcMethod>(
   method: M,
   input: unknown,
-): BackendRpc[M]["output"] =>
-  rpcResultSchemas[method].parse(input) as BackendRpc[M]["output"];
+): BackendRpc[M]["output"] => rpcResultSchemas[method].parse(input) as BackendRpc[M]["output"];
 
 export const createRequest = <M extends RpcMethod>(
   id: string,

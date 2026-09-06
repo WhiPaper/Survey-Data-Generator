@@ -23,11 +23,7 @@ import type { FormSnapshot, QuestionId } from "@survey-synth/domain";
 import type { PythonEngine } from "../compute/python-engine";
 import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
-import {
-  getRunRecord,
-  persistRun,
-  type PersistRunInput,
-} from "../persistence/run-store";
+import { getRunRecord, persistRun, type PersistRunInput } from "../persistence/run-store";
 import { formSnapshots, valueGroups } from "../persistence/schema";
 import {
   getProject,
@@ -205,11 +201,8 @@ const ensureGroupableQuestion = (form: FormSnapshot, questionId: string): void =
   }
 };
 
-const conditionalTargetId = (
-  valueGroupId: string,
-  questionId: string,
-  optionKey: string,
-): string => `conditional:${valueGroupId}:${questionId}:${optionKey}`;
+const conditionalTargetId = (valueGroupId: string, questionId: string, optionKey: string): string =>
+  `conditional:${valueGroupId}:${questionId}:${optionKey}`;
 
 const jsonRecord = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -293,7 +286,9 @@ export const createSynthesisService = ({
       if (scope.responses.length === 0) {
         return {
           status: "infeasible",
-          issues: [{ code: "empty_source_scope", message: "Selected SourceScope has no responses" }],
+          issues: [
+            { code: "empty_source_scope", message: "Selected SourceScope has no responses" },
+          ],
         };
       }
 
@@ -304,7 +299,10 @@ export const createSynthesisService = ({
         throw backendFailure("VALIDATION_FAILED", "M7 requires exactly one ordinal mean target");
       }
       if (shares.length > 1) {
-        throw backendFailure("VALIDATION_FAILED", "M7 supports at most one overall ValueGroup share target");
+        throw backendFailure(
+          "VALIDATION_FAILED",
+          "M7 supports at most one overall ValueGroup share target",
+        );
       }
 
       const mean = means[0]!;
@@ -337,7 +335,10 @@ export const createSynthesisService = ({
         ensureGroupableQuestion(form, row.questionId);
         const column = plan.questionColumns.get(row.questionId as QuestionId);
         if (!column) {
-          throw backendFailure("INTERNAL", "ValueGroup question is not available in the synthesis table");
+          throw backendFailure(
+            "INTERNAL",
+            "ValueGroup question is not available in the synthesis table",
+          );
         }
         const memberValues = valueGroupMemberCells(
           scope.responses,
@@ -355,7 +356,12 @@ export const createSynthesisService = ({
             ],
           };
         }
-        shareJobTargets.push({ id: row.id, column, member_values: memberValues, value: share.value });
+        shareJobTargets.push({
+          id: row.id,
+          column,
+          member_values: memberValues,
+          value: share.value,
+        });
         frozenTargets.push({
           kind: "share",
           value: share.value,
@@ -368,7 +374,10 @@ export const createSynthesisService = ({
         ensureGroupableQuestion(form, row.questionId);
         const populationColumn = plan.questionColumns.get(row.questionId as QuestionId);
         if (!populationColumn) {
-          throw backendFailure("INTERNAL", "Conditional population question is not available in the synthesis table");
+          throw backendFailure(
+            "INTERNAL",
+            "Conditional population question is not available in the synthesis table",
+          );
         }
         const populationMemberValues = valueGroupMemberCells(
           scope.responses,
@@ -395,17 +404,19 @@ export const createSynthesisService = ({
           );
         }
         if (!checkbox.options.some((option) => String(option.key) === target.optionKey)) {
-          throw backendFailure("VALIDATION_FAILED", "Conditional share option was not found in the Form");
+          throw backendFailure(
+            "VALIDATION_FAILED",
+            "Conditional share option was not found in the Form",
+          );
         }
         const optionColumn = plan.questionColumns.get(checkbox.id);
         if (!optionColumn) {
-          throw backendFailure("INTERNAL", "Conditional checkbox question is not available in the synthesis table");
+          throw backendFailure(
+            "INTERNAL",
+            "Conditional checkbox question is not available in the synthesis table",
+          );
         }
-        const optionSupport = multiChoiceOptionSupport(
-          scope.responses,
-          checkbox,
-          target.optionKey,
-        );
+        const optionSupport = multiChoiceOptionSupport(scope.responses, checkbox, target.optionKey);
         if (optionSupport.optionValues.length === 0) {
           throw backendFailure(
             "INTERNAL",
@@ -436,7 +447,10 @@ export const createSynthesisService = ({
         new Set(conditionalJobTargets.map((target) => target.id)).size !==
         conditionalJobTargets.length
       ) {
-        throw backendFailure("VALIDATION_FAILED", "Duplicate conditional share targets are not allowed");
+        throw backendFailure(
+          "VALIDATION_FAILED",
+          "Duplicate conditional share targets are not allowed",
+        );
       }
 
       const targetSnapshot: RunTargetSnapshot = {
@@ -497,8 +511,14 @@ export const createSynthesisService = ({
         }
 
         const appendOnlyRows = await readResultParquet(resultPath, form, scope.responses, plan);
-        if (appendOnlyRows.length !== report.finalCount || appendOnlyRows.length !== params.finalCount) {
-          throw backendFailure("INTERNAL", "Synthesis result row count does not match the frozen target");
+        if (
+          appendOnlyRows.length !== report.finalCount ||
+          appendOnlyRows.length !== params.finalCount
+        ) {
+          throw backendFailure(
+            "INTERNAL",
+            "Synthesis result row count does not match the frozen target",
+          );
         }
 
         const editPlan = availableEditPlan(report);
@@ -510,7 +530,10 @@ export const createSynthesisService = ({
             plan,
           );
           if (replacementRows.length !== params.finalCount) {
-            throw backendFailure("INTERNAL", "Replacement preview row count does not match the frozen target");
+            throw backendFailure(
+              "INTERNAL",
+              "Replacement preview row count does not match the frozen target",
+            );
           }
           const expectedOriginalCount = scope.responseCount - editPlan.replacementCount;
           if (
