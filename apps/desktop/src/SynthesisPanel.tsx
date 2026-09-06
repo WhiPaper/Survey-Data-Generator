@@ -322,16 +322,13 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
           setConditionalDrafts(
             compatible.map((target) => ({
               optionKey: target.kind === "conditional_share" ? target.optionKey : "",
-              percent:
-                target.intent?.kind === "absolute" ? String(target.intent.value * 100) : "",
+              percent: target.intent?.kind === "absolute" ? String(target.intent.value * 100) : "",
             })),
           );
           compatible.forEach((target) => represented.add(String(target.id)));
         }
 
-        setPreservedTargets(
-          saved.targets.filter((target) => !represented.has(String(target.id))),
-        );
+        setPreservedTargets(saved.targets.filter((target) => !represented.has(String(target.id))));
       })
       .catch((cause: unknown) => {
         if (active) setError(errorMessage(cause));
@@ -833,7 +830,9 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                     </select>
                     <select
                       value={shareIntentKind}
-                      onChange={(event) => setShareIntentKind(event.target.value as ShareIntentKind)}
+                      onChange={(event) =>
+                        setShareIntentKind(event.target.value as ShareIntentKind)
+                      }
                       disabled={operationId !== null}
                     >
                       <option value="absolute">최종 비율</option>

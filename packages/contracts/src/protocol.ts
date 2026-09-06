@@ -307,7 +307,9 @@ export const TargetDraftSchema = z
   })
   .strict();
 export type TargetDraft = z.infer<typeof TargetDraftSchema>;
-export const TargetDraftViewSchema = TargetDraftSchema.extend({ updatedAt: z.string().min(1) }).strict();
+export const TargetDraftViewSchema = TargetDraftSchema.extend({
+  updatedAt: z.string().min(1),
+}).strict();
 export type TargetDraftView = z.infer<typeof TargetDraftViewSchema>;
 
 export const TargetProfileMetricSchema = z.discriminatedUnion("kind", [
@@ -425,7 +427,9 @@ export const TargetIssueSchema = z
   })
   .strict();
 export type TargetIssue = z.infer<typeof TargetIssueSchema>;
-export const TargetsValidateResultSchema = z.object({ issues: z.array(TargetIssueSchema) }).strict();
+export const TargetsValidateResultSchema = z
+  .object({ issues: z.array(TargetIssueSchema) })
+  .strict();
 export type TargetsValidateResult = z.infer<typeof TargetsValidateResultSchema>;
 
 export const SynthesisSuccessResultSchema = z
@@ -628,7 +632,10 @@ export interface BackendRpc {
     output: TargetProfileResult;
   };
   "targets.validate": { input: TargetDraft; output: TargetsValidateResult };
-  "targets.draft.get": { input: z.infer<typeof ProjectParamsSchema>; output: TargetDraftView | null };
+  "targets.draft.get": {
+    input: z.infer<typeof ProjectParamsSchema>;
+    output: TargetDraftView | null;
+  };
   "targets.draft.save": { input: TargetDraft; output: TargetDraftView };
   "targets.draft.start": {
     input: z.infer<typeof TargetsDraftStartParamsSchema>;

@@ -34,35 +34,45 @@ export type BackendServices = {
 };
 
 const requireAuth = (services: BackendServices): GoogleAuthService => {
-  if (!services.auth) throw backendFailure("BACKEND_UNAVAILABLE", "Google authentication is not initialized");
+  if (!services.auth)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Google authentication is not initialized");
   return services.auth;
 };
 const requireForms = (services: BackendServices): FormsService => {
-  if (!services.forms) throw backendFailure("BACKEND_UNAVAILABLE", "Google Forms is not initialized");
+  if (!services.forms)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Google Forms is not initialized");
   return services.forms;
 };
 const requireProjects = (services: BackendServices): ProjectService => {
-  if (!services.projects) throw backendFailure("BACKEND_UNAVAILABLE", "Projects are not initialized");
+  if (!services.projects)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Projects are not initialized");
   return services.projects;
 };
 const requireValueGroups = (services: BackendServices): ValueGroupService => {
-  if (!services.valueGroups) throw backendFailure("BACKEND_UNAVAILABLE", "Value groups are not initialized");
+  if (!services.valueGroups)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Value groups are not initialized");
   return services.valueGroups;
 };
 const requireTargets = (services: BackendServices): TargetService => {
-  if (!services.targets) throw backendFailure("BACKEND_UNAVAILABLE", "Target service is not initialized");
+  if (!services.targets)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Target service is not initialized");
   return services.targets;
 };
 const requireSynthesis = (services: BackendServices): SynthesisService => {
-  if (!services.synthesis) throw backendFailure("BACKEND_UNAVAILABLE", "Synthesis engine is not initialized");
+  if (!services.synthesis)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Synthesis engine is not initialized");
   return services.synthesis;
 };
 const requireRunExports = (services: BackendServices): RunExportService => {
-  if (!services.runExports) throw backendFailure("BACKEND_UNAVAILABLE", "Run export is not initialized");
+  if (!services.runExports)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Run export is not initialized");
   return services.runExports;
 };
-const requireRunExportDestinationPicker = (services: BackendServices): RunExportDestinationPicker => {
-  if (!services.pickRunExportDestination) throw backendFailure("BACKEND_UNAVAILABLE", "Run export dialog is not initialized");
+const requireRunExportDestinationPicker = (
+  services: BackendServices,
+): RunExportDestinationPicker => {
+  if (!services.pickRunExportDestination)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Run export dialog is not initialized");
   return services.pickRunExportDestination;
 };
 
@@ -73,43 +83,86 @@ export const handleBackendCall = async (
   const request = parseRpcRequest(JSON.parse(serializedRequest) as unknown);
 
   switch (request.method) {
-    case "system.ping": return { ok: true, message: "pong" };
-    case "session.get": return services.auth ? services.auth.getSession() : null;
-    case "auth.login": return requireAuth(services).login();
-    case "auth.accounts": return requireAuth(services).getAccounts();
-    case "auth.addAccount": return requireAuth(services).addAccount();
-    case "auth.switchAccount": return requireAuth(services).switchAccount((request.params as { id: GoogleAccountId }).id);
-    case "auth.logout": await requireAuth(services).logout(); return { ok: true };
-    case "auth.revokeAccess": await requireAuth(services).revokeAccess((request.params as { id: GoogleAccountId }).id); return { ok: true };
-    case "auth.deleteAccountData": await requireAuth(services).deleteAccountData((request.params as { id: GoogleAccountId }).id); return { ok: true };
-    case "forms.list": return requireForms(services).listForms(request.params as FormsListParams);
-    case "forms.import": return requireForms(services).importForm(request.params as FormsImportParams);
-    case "forms.import.cancel": requireForms(services).cancelImport((request.params as FormsImportCancelParams).operationId); return { ok: true };
-    case "projects.list": return requireProjects(services).list();
-    case "projects.get": return requireProjects(services).get((request.params as { projectId: string }).projectId);
-    case "projects.delete": await requireProjects(services).delete((request.params as { projectId: string }).projectId); return { ok: true };
-    case "valueGroups.list": return requireValueGroups(services).list((request.params as { projectId: string }).projectId);
+    case "system.ping":
+      return { ok: true, message: "pong" };
+    case "session.get":
+      return services.auth ? services.auth.getSession() : null;
+    case "auth.login":
+      return requireAuth(services).login();
+    case "auth.accounts":
+      return requireAuth(services).getAccounts();
+    case "auth.addAccount":
+      return requireAuth(services).addAccount();
+    case "auth.switchAccount":
+      return requireAuth(services).switchAccount((request.params as { id: GoogleAccountId }).id);
+    case "auth.logout":
+      await requireAuth(services).logout();
+      return { ok: true };
+    case "auth.revokeAccess":
+      await requireAuth(services).revokeAccess((request.params as { id: GoogleAccountId }).id);
+      return { ok: true };
+    case "auth.deleteAccountData":
+      await requireAuth(services).deleteAccountData((request.params as { id: GoogleAccountId }).id);
+      return { ok: true };
+    case "forms.list":
+      return requireForms(services).listForms(request.params as FormsListParams);
+    case "forms.import":
+      return requireForms(services).importForm(request.params as FormsImportParams);
+    case "forms.import.cancel":
+      requireForms(services).cancelImport((request.params as FormsImportCancelParams).operationId);
+      return { ok: true };
+    case "projects.list":
+      return requireProjects(services).list();
+    case "projects.get":
+      return requireProjects(services).get((request.params as { projectId: string }).projectId);
+    case "projects.delete":
+      await requireProjects(services).delete((request.params as { projectId: string }).projectId);
+      return { ok: true };
+    case "valueGroups.list":
+      return requireValueGroups(services).list((request.params as { projectId: string }).projectId);
     case "valueGroups.values": {
       const params = request.params as { projectId: string; questionId: string };
       return requireValueGroups(services).values(params.projectId, params.questionId);
     }
-    case "valueGroups.create": return requireValueGroups(services).create(request.params as { projectId: string; questionId: string; name: string; members: string[] });
-    case "valueGroups.delete": await requireValueGroups(services).delete((request.params as { valueGroupId: string }).valueGroupId); return { ok: true };
+    case "valueGroups.create":
+      return requireValueGroups(services).create(
+        request.params as {
+          projectId: string;
+          questionId: string;
+          name: string;
+          members: string[];
+        },
+      );
+    case "valueGroups.delete":
+      await requireValueGroups(services).delete(
+        (request.params as { valueGroupId: string }).valueGroupId,
+      );
+      return { ok: true };
     case "targets.profile": {
       const params = request.params as { projectId: string; sourceScope?: SourceScope };
       return requireTargets(services).profile(params.projectId, params.sourceScope);
     }
-    case "targets.validate": return requireTargets(services).validate(request.params as TargetDraft);
-    case "targets.draft.get": return requireTargets(services).getDraft((request.params as { projectId: string }).projectId);
-    case "targets.draft.save": return requireTargets(services).saveDraft(request.params as TargetDraft);
+    case "targets.validate":
+      return requireTargets(services).validate(request.params as TargetDraft);
+    case "targets.draft.get":
+      return requireTargets(services).getDraft((request.params as { projectId: string }).projectId);
+    case "targets.draft.save":
+      return requireTargets(services).saveDraft(request.params as TargetDraft);
     case "targets.draft.start": {
       const params = request.params as { projectId: string; operationId?: string };
       return requireTargets(services).startDraft(params.projectId, params.operationId);
     }
-    case "synthesis.start": return requireSynthesis(services).start(request.params as SynthesisStartParams);
-    case "synthesis.resolveEditPlan": return requireSynthesis(services).resolveEditPlan(request.params as SynthesisResolveEditPlanParams);
-    case "synthesis.cancel": requireSynthesis(services).cancel((request.params as { operationId: string }).operationId); return { ok: true };
-    case "runs.get": return requireSynthesis(services).getRun((request.params as { runId: string }).runId);
+    case "synthesis.start":
+      return requireSynthesis(services).start(request.params as SynthesisStartParams);
+    case "synthesis.resolveEditPlan":
+      return requireSynthesis(services).resolveEditPlan(
+        request.params as SynthesisResolveEditPlanParams,
+      );
+    case "synthesis.cancel":
+      requireSynthesis(services).cancel((request.params as { operationId: string }).operationId);
+      return { ok: true };
+    case "runs.get":
+      return requireSynthesis(services).getRun((request.params as { runId: string }).runId);
     case "runs.export": {
       const params = request.params as RunsExportParams;
       const destination = await requireRunExportDestinationPicker(services)(params);

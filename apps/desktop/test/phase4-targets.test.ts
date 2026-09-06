@@ -145,7 +145,10 @@ afterEach(() => {
 describe("Phase 4 target profile and draft lifecycle", () => {
   it("profiles the authoritative current values for the selected SourceScope", async () => {
     const database = setup();
-    const service = createTargetService(database.db, captureSynthesis(() => undefined));
+    const service = createTargetService(
+      database.db,
+      captureSynthesis(() => undefined),
+    );
 
     const all = await service.profile("project-1", { kind: "all" });
     const femaleAll = all.metrics.find(

@@ -146,10 +146,8 @@ const projectGroups = (db: SurveyDatabase, projectId: string): ValueGroupRecord[
     .orderBy(asc(valueGroups.createdAtMs), asc(valueGroups.id))
     .all();
 
-const groupById = (
-  groups: readonly ValueGroupRecord[],
-  id: string,
-): ValueGroupRecord | undefined => groups.find((group) => group.id === id);
+const groupById = (groups: readonly ValueGroupRecord[], id: string): ValueGroupRecord | undefined =>
+  groups.find((group) => group.id === id);
 
 const answers = (responses: readonly StoredSourceResponse[], questionId: string) =>
   responses.map((stored) => normalizedResponse(stored.response).answers[questionId as QuestionId]);
@@ -157,10 +155,12 @@ const answers = (responses: readonly StoredSourceResponse[], questionId: string)
 const subjectMetric = (
   context: ScopeContext,
   groups: readonly ValueGroupRecord[],
-  subject: Extract<TargetDraftTarget, { kind: "count" | "share" }>['subject'],
+  subject: Extract<TargetDraftTarget, { kind: "count" | "share" }>["subject"],
 ): { count: number; denominatorCount: number; share: number } | null => {
   if (subject.kind === "option") {
-    const question = context.form.questions.find((candidate) => candidate.id === subject.questionId);
+    const question = context.form.questions.find(
+      (candidate) => candidate.id === subject.questionId,
+    );
     if (!question || question.kind !== "single_choice") return null;
     if (!question.options.some((option) => String(option.key) === subject.optionKey)) return null;
     let count = 0;
@@ -170,11 +170,17 @@ const subjectMetric = (
       denominatorCount += 1;
       if (String(slot.value.optionKey) === subject.optionKey) count += 1;
     }
-    return { count, denominatorCount, share: denominatorCount === 0 ? 0 : count / denominatorCount };
+    return {
+      count,
+      denominatorCount,
+      share: denominatorCount === 0 ? 0 : count / denominatorCount,
+    };
   }
 
   if (subject.kind === "checkbox_option") {
-    const question = context.form.questions.find((candidate) => candidate.id === subject.questionId);
+    const question = context.form.questions.find(
+      (candidate) => candidate.id === subject.questionId,
+    );
     if (!question || question.kind !== "multi_choice") return null;
     if (!question.options.some((option) => String(option.key) === subject.optionKey)) return null;
     let count = 0;
@@ -184,7 +190,11 @@ const subjectMetric = (
       denominatorCount += 1;
       if (slot.value.optionKeys.some((key) => String(key) === subject.optionKey)) count += 1;
     }
-    return { count, denominatorCount, share: denominatorCount === 0 ? 0 : count / denominatorCount };
+    return {
+      count,
+      denominatorCount,
+      share: denominatorCount === 0 ? 0 : count / denominatorCount,
+    };
   }
 
   const group = groupById(groups, subject.valueGroupId);
@@ -256,7 +266,10 @@ const conditionalMetric = (
     const population = response.answers[populationQuestion.id];
     let raw: string | null = null;
     if (population?.state === "answered") {
-      if (populationQuestion.kind === "single_choice" && population.value.kind === "single_choice") {
+      if (
+        populationQuestion.kind === "single_choice" &&
+        population.value.kind === "single_choice"
+      ) {
         raw = String(population.value.optionKey);
       } else if (populationQuestion.kind === "text" && population.value.kind === "text") {
         raw = population.value.value;
@@ -293,35 +306,69 @@ const validateDraft = (
 
     if (target.intent === null) continue;
     if (target.kind === "mean") {
-      const question = context.form.questions.find((candidate) => candidate.id === target.questionId);
+      const question = context.form.questions.find(
+        (candidate) => candidate.id === target.questionId,
+      );
       if (!question || question.kind !== "ordinal") {
-        issues.push(targetIssue([id], "invalid_subject", "Mean target must reference an ordinal question"));
+        issues.push(
+          targetIssue([id], "invalid_subject", "Mean target must reference an ordinal question"),
+        );
       } else if (target.intent.kind !== "absolute") {
-        issues.push(targetIssue([id], "domain_unsupported", "Mean targets support absolute intent only"));
+        issues.push(
+          targetIssue([id], "domain_unsupported", "Mean targets support absolute intent only"),
+        );
       } else if (target.intent.value < question.min || target.intent.value > question.max) {
-        issues.push(targetIssue([id], "out_of_range", "Mean target is outside the ordinal question range"));
+        issues.push(
+          targetIssue([id], "out_of_range", "Mean target is outside the ordinal question range"),
+        );
       }
       continue;
     }
 
     if (target.kind === "conditional_share") {
       if (!conditionalMetric(context, groups, target)) {
-        issues.push(targetIssue([id], "invalid_subject", "Conditional share target is not valid for this Form"));
+        issues.push(
+          targetIssue(
+            [id],
+            "invalid_subject",
+            "Conditional share target is not valid for this Form",
+          ),
+        );
       }
       if (target.intent.kind === "count_delta") {
-        issues.push(targetIssue([id], "domain_unsupported", "Conditional share does not support count delta intent"));
+        issues.push(
+          targetIssue(
+            [id],
+            "domain_unsupported",
+            "Conditional share does not support count delta intent",
+          ),
+        );
       }
       continue;
     }
 
     if (!subjectMetric(context, groups, target.subject)) {
-      issues.push(targetIssue([id], "invalid_subject", "Target subject is not valid for this Form"));
+      issues.push(
+        targetIssue([id], "invalid_subject", "Target subject is not valid for this Form"),
+      );
     }
-    if (target.kind === "count" && target.intent.kind !== "absolute" && target.intent.kind !== "count_delta") {
-      issues.push(targetIssue([id], "domain_unsupported", "Count target requires absolute or count_delta intent"));
+    if (
+      target.kind === "count" &&
+      target.intent.kind !== "absolute" &&
+      target.intent.kind !== "count_delta"
+    ) {
+      issues.push(
+        targetIssue(
+          [id],
+          "domain_unsupported",
+          "Count target requires absolute or count_delta intent",
+        ),
+      );
     }
     if (target.kind === "share" && target.intent.kind === "count_delta") {
-      issues.push(targetIssue([id], "domain_unsupported", "Share target does not support count_delta intent"));
+      issues.push(
+        targetIssue([id], "domain_unsupported", "Share target does not support count_delta intent"),
+      );
     }
   }
 
@@ -342,7 +389,12 @@ const resolveTarget = (
     if (target.intent.kind !== "absolute") {
       return targetIssue([id], "domain_unsupported", "Mean targets support absolute intent only");
     }
-    return { id: target.id, kind: "mean", questionId: target.questionId, value: target.intent.value };
+    return {
+      id: target.id,
+      kind: "mean",
+      questionId: target.questionId,
+      value: target.intent.value,
+    };
   }
 
   const metric =
@@ -358,19 +410,31 @@ const resolveTarget = (
       break;
     case "count_delta":
       if (target.kind !== "count") {
-        return targetIssue([id], "domain_unsupported", "count_delta is valid only for count targets");
+        return targetIssue(
+          [id],
+          "domain_unsupported",
+          "count_delta is valid only for count targets",
+        );
       }
       value = metric.count + target.intent.value;
       break;
     case "percentage_point_delta":
       if (target.kind === "count") {
-        return targetIssue([id], "domain_unsupported", "percentage_point_delta is valid only for ratio targets");
+        return targetIssue(
+          [id],
+          "domain_unsupported",
+          "percentage_point_delta is valid only for ratio targets",
+        );
       }
       value = metric.share + target.intent.value;
       break;
     case "relative_percent_delta":
       if (target.kind === "count") {
-        return targetIssue([id], "domain_unsupported", "relative_percent_delta is valid only for ratio targets");
+        return targetIssue(
+          [id],
+          "domain_unsupported",
+          "relative_percent_delta is valid only for ratio targets",
+        );
       }
       value = metric.share * (1 + target.intent.value);
       break;
@@ -378,7 +442,11 @@ const resolveTarget = (
 
   if (target.kind === "count") {
     if (!Number.isInteger(value) || value < 0) {
-      return targetIssue([id], "out_of_range", "Resolved count target must be a non-negative integer");
+      return targetIssue(
+        [id],
+        "out_of_range",
+        "Resolved count target must be a non-negative integer",
+      );
     }
     return { id: target.id, kind: "count", subject: target.subject, value };
   }
@@ -398,7 +466,11 @@ const resolveTarget = (
   };
 };
 
-const profile = (db: SurveyDatabase, projectId: string, sourceScope?: SourceScope): TargetProfileResult => {
+const profile = (
+  db: SurveyDatabase,
+  projectId: string,
+  sourceScope?: SourceScope,
+): TargetProfileResult => {
   const context = scopeContext(db, projectId, sourceScope);
   const groups = projectGroups(db, projectId);
   const metrics: TargetProfileResult["metrics"] = [];
@@ -454,7 +526,10 @@ export interface TargetService {
   startDraft(projectId: string, operationId?: string): Promise<SynthesisStartResult>;
 }
 
-export const createTargetService = (db: SurveyDatabase, synthesis: SynthesisService): TargetService => ({
+export const createTargetService = (
+  db: SurveyDatabase,
+  synthesis: SynthesisService,
+): TargetService => ({
   profile: async (projectId, sourceScope) => profile(db, projectId, sourceScope),
 
   validate: async (draft) => ({ issues: validateDraft(db, draft).issues }),
@@ -469,7 +544,8 @@ export const createTargetService = (db: SurveyDatabase, synthesis: SynthesisServ
   },
 
   saveDraft: async (draft) => {
-    if (!getProject(db, draft.projectId)) throw backendFailure("NOT_FOUND", "Project was not found");
+    if (!getProject(db, draft.projectId))
+      throw backendFailure("NOT_FOUND", "Project was not found");
     const nowMs = Date.now();
     db.insert(targetDrafts)
       .values({ projectId: draft.projectId, draftJson: JSON.stringify(draft), updatedAtMs: nowMs })
