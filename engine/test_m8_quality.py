@@ -37,32 +37,30 @@ class RowQualityDiagnosticsTest(unittest.TestCase):
         self.assertAlmostEqual(diagnostics[4], 0.25)
 
     def test_scales_exact_clone_and_concentration_counts_on_larger_fixture(self) -> None:
-        source_count = 5_000
-        synthetic_count = 1_500
-        clone_count = 120
-        concentration_count = 100
+        source_count, synthetic_count = 5_000, 1_500
+        clone_count, concentration_count = 120, 100
         source = pd.DataFrame(
             {
-                "response_id": [f"source-{index}" for index in range(source_count)],
-                "score": [(index % 5) + 1 for index in range(source_count)],
-                "segment": [f"source-segment-{index}" for index in range(source_count)],
+                "response_id": [f"source-{i}" for i in range(source_count)],
+                "score": [(i % 5) + 1 for i in range(source_count)],
+                "segment": [f"source-segment-{i}" for i in range(source_count)],
             }
         )
         clones = source.iloc[:clone_count].copy()
-        clones["response_id"] = [f"synthetic-clone-{index}" for index in range(clone_count)]
+        clones["response_id"] = [f"synthetic-clone-{i}" for i in range(clone_count)]
         concentrated = pd.DataFrame(
             {
-                "response_id": [f"synthetic-repeat-{index}" for index in range(concentration_count)],
-                "score": [5] * concentration_count,
-                "segment": ["novel-repeat"] * concentration_count,
+                "response_id": [f"synthetic-repeat-{i}" for i in range(concentration_count)],
+                "score": 5,
+                "segment": "novel-repeat",
             }
         )
         unique_count = synthetic_count - clone_count - concentration_count
         unique = pd.DataFrame(
             {
-                "response_id": [f"synthetic-unique-{index}" for index in range(unique_count)],
-                "score": [(index % 5) + 1 for index in range(unique_count)],
-                "segment": [f"novel-{index}" for index in range(unique_count)],
+                "response_id": [f"synthetic-unique-{i}" for i in range(unique_count)],
+                "score": [(i % 5) + 1 for i in range(unique_count)],
+                "segment": [f"novel-{i}" for i in range(unique_count)],
             }
         )
         synthetic = pd.concat([clones, concentrated, unique], ignore_index=True)
