@@ -366,9 +366,7 @@ export const RunsExportParamsSchema = z
   .strict();
 export type RunsExportParams = z.infer<typeof RunsExportParamsSchema>;
 
-export const RunsExportResultSchema = z
-  .object({ status: z.enum(["saved", "cancelled"]) })
-  .strict();
+export const RunsExportResultSchema = z.object({ status: z.enum(["saved", "cancelled"]) }).strict();
 export type RunsExportResult = z.infer<typeof RunsExportResultSchema>;
 
 const EmptyParamsSchema = z.object({}).strict();
