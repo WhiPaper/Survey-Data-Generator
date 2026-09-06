@@ -5,10 +5,12 @@ import type {
   ProjectDetailView,
   RunsGetResult,
   SourceScope,
-  SynthesisStartParams,
   SynthesisStartResult,
+  TargetDraft,
+  TargetDraftTarget,
   TargetId,
   TargetOutcome,
+  TargetProfileResult,
   ValueGroupObservedValue,
   ValueGroupView,
 } from "@survey-synth/contracts";
@@ -19,10 +21,13 @@ import {
   deleteValueGroup,
   exportRun,
   getRun,
+  getTargetDraft,
+  getTargetProfile,
   listValueGroups,
   listValueGroupValues,
   resolveSynthesisEditPlan,
-  startSynthesis,
+  saveTargetDraft,
+  startTargetDraft,
 } from "./api/backend";
 
 type OrdinalQuestionView = { id: string; title: string; min: number; max: number };
@@ -37,6 +42,7 @@ type CheckboxQuestionView = {
   options: Array<{ key: string; label: string }>;
 };
 type ConditionalDraft = { optionKey: string; percent: string };
+type ShareIntentKind = "absolute" | "percentage_point_delta" | "relative_percent_delta";
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -176,6 +182,12 @@ const frozenTargetLabel = (
   return String(outcome.targetId);
 };
 
+const shareIntentLabel = (kind: ShareIntentKind): string => {
+  if (kind === "percentage_point_delta") return "현재값에서 증감 (%p)";
+  if (kind === "relative_percent_delta") return "현재값 대비 증감 (%)";
+  return "최종 share (%)";
+};
+
 export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   const ordinal = useMemo(() => ordinalQuestions(project), [project]);
   const groupable = useMemo(() => groupableQuestions(project), [project]);
@@ -194,11 +206,16 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   const [groupMembers, setGroupMembers] = useState<string[]>([]);
   const [useShare, setUseShare] = useState(false);
   const [shareGroupId, setShareGroupId] = useState("");
+  const [shareIntentKind, setShareIntentKind] = useState<ShareIntentKind>("absolute");
   const [targetSharePercent, setTargetSharePercent] = useState("35");
   const [useConditional, setUseConditional] = useState(false);
   const [conditionalGroupId, setConditionalGroupId] = useState("");
   const [conditionalQuestionId, setConditionalQuestionId] = useState("");
   const [conditionalDrafts, setConditionalDrafts] = useState<ConditionalDraft[]>([]);
+  const [preservedTargets, setPreservedTargets] = useState<TargetDraftTarget[]>([]);
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<string | null>(null);
+  const [profile, setProfile] = useState<TargetProfileResult | null>(null);
   const [groupBusy, setGroupBusy] = useState(false);
   const [operationId, setOperationId] = useState<string | null>(null);
   const [planBusy, setPlanBusy] = useState(false);
@@ -221,6 +238,8 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
   };
 
   useEffect(() => {
+    let active = true;
+    setDraftReady(false);
     setQuestionId(ordinal[0]?.id ?? "");
     setFinalCount(String(project.responseCount + 40));
     setTargetMean("4.7");
@@ -232,10 +251,14 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     setGroupName("");
     setGroupMembers([]);
     setUseShare(false);
+    setShareIntentKind("absolute");
     setTargetSharePercent("35");
     setUseConditional(false);
     setConditionalQuestionId(checkbox[0]?.id ?? "");
     setConditionalDrafts([]);
+    setPreservedTargets([]);
+    setDraftStatus(null);
+    setProfile(null);
     setOperationId(null);
     setPlanBusy(false);
     setExportBusy(false);
@@ -243,7 +266,83 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     setResult(null);
     setRun(null);
     setError(null);
-    void reloadGroups().catch((cause: unknown) => setError(errorMessage(cause)));
+
+    void Promise.all([reloadGroups(), getTargetDraft(project.id)])
+      .then(([, saved]) => {
+        if (!active || !saved) return;
+        setFinalCount(saved.finalCount === null ? "" : String(saved.finalCount));
+        setUseRange(saved.sourceScope.kind === "submitted_between");
+        if (saved.sourceScope.kind === "submitted_between") {
+          setRangeStart(saved.sourceScope.start);
+          setRangeEnd(saved.sourceScope.end);
+        }
+
+        const represented = new Set<string>();
+        const mean = saved.targets.find(
+          (target) => target.kind === "mean" && target.intent?.kind === "absolute",
+        );
+        if (mean?.kind === "mean" && mean.intent?.kind === "absolute") {
+          setQuestionId(mean.questionId);
+          setTargetMean(String(mean.intent.value));
+          represented.add(String(mean.id));
+        }
+
+        const share = saved.targets.find(
+          (target) =>
+            target.kind === "share" &&
+            target.subject.kind === "value_group" &&
+            target.intent !== null &&
+            (target.intent.kind === "absolute" ||
+              target.intent.kind === "percentage_point_delta" ||
+              target.intent.kind === "relative_percent_delta"),
+        );
+        if (share?.kind === "share" && share.subject.kind === "value_group" && share.intent) {
+          setUseShare(true);
+          setShareGroupId(share.subject.valueGroupId);
+          setShareIntentKind(share.intent.kind as ShareIntentKind);
+          setTargetSharePercent(String(share.intent.value * 100));
+          represented.add(String(share.id));
+        }
+
+        const conditionals = saved.targets.filter(
+          (target) => target.kind === "conditional_share" && target.intent?.kind === "absolute",
+        );
+        const firstConditional = conditionals[0];
+        if (firstConditional?.kind === "conditional_share") {
+          setUseConditional(true);
+          setConditionalGroupId(firstConditional.population.valueGroupId);
+          setConditionalQuestionId(firstConditional.questionId);
+          const compatible = conditionals.filter(
+            (target) =>
+              target.kind === "conditional_share" &&
+              target.population.valueGroupId === firstConditional.population.valueGroupId &&
+              target.questionId === firstConditional.questionId &&
+              target.intent?.kind === "absolute",
+          );
+          setConditionalDrafts(
+            compatible.map((target) => ({
+              optionKey: target.kind === "conditional_share" ? target.optionKey : "",
+              percent:
+                target.intent?.kind === "absolute" ? String(target.intent.value * 100) : "",
+            })),
+          );
+          compatible.forEach((target) => represented.add(String(target.id)));
+        }
+
+        setPreservedTargets(
+          saved.targets.filter((target) => !represented.has(String(target.id))),
+        );
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(errorMessage(cause));
+      })
+      .finally(() => {
+        if (active) setDraftReady(true);
+      });
+
+    return () => {
+      active = false;
+    };
   }, [project.id, project.currentSourceRevisionId, project.responseCount]);
 
   useEffect(() => {
@@ -286,6 +385,115 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
         value.value.toLocaleLowerCase().includes(query),
     );
   }, [groupValueQuery, groupValues]);
+
+  const sourceScope = useMemo<SourceScope>(
+    () =>
+      useRange
+        ? { kind: "submitted_between", start: rangeStart.trim(), end: rangeEnd.trim() }
+        : { kind: "all" },
+    [rangeEnd, rangeStart, useRange],
+  );
+
+  const currentDraft = useMemo<TargetDraft>(() => {
+    const parsedFinalCount = Number(finalCount);
+    const parsedMean = Number(targetMean);
+    const targets: TargetDraftTarget[] = [...preservedTargets];
+
+    if (selectedQuestion) {
+      targets.push({
+        id: targetId(`mean:${selectedQuestion.id}`),
+        kind: "mean",
+        questionId: selectedQuestion.id,
+        intent: Number.isFinite(parsedMean) ? { kind: "absolute", value: parsedMean } : null,
+      });
+    }
+
+    if (useShare && shareGroupId) {
+      const value = Number(targetSharePercent) / 100;
+      targets.push({
+        id: targetId(`share:value-group:${shareGroupId}`),
+        kind: "share",
+        subject: { kind: "value_group", valueGroupId: shareGroupId },
+        intent: Number.isFinite(value) ? { kind: shareIntentKind, value } : null,
+      });
+    }
+
+    if (useConditional && conditionalGroupId && selectedConditionalQuestion) {
+      for (const conditional of conditionalDrafts) {
+        const value = Number(conditional.percent) / 100;
+        targets.push({
+          id: targetId(
+            `conditional:${conditionalGroupId}:${selectedConditionalQuestion.id}:${conditional.optionKey}`,
+          ),
+          kind: "conditional_share",
+          population: { kind: "value_group", valueGroupId: conditionalGroupId },
+          questionId: selectedConditionalQuestion.id,
+          optionKey: conditional.optionKey,
+          intent: Number.isFinite(value) ? { kind: "absolute", value } : null,
+        });
+      }
+    }
+
+    return {
+      projectId: project.id,
+      finalCount:
+        Number.isInteger(parsedFinalCount) && parsedFinalCount > 0 ? parsedFinalCount : null,
+      sourceScope,
+      seed: 42,
+      targets,
+    };
+  }, [
+    conditionalDrafts,
+    conditionalGroupId,
+    finalCount,
+    preservedTargets,
+    project.id,
+    selectedConditionalQuestion,
+    selectedQuestion,
+    shareGroupId,
+    shareIntentKind,
+    sourceScope,
+    targetMean,
+    targetSharePercent,
+    useConditional,
+    useShare,
+  ]);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    if (
+      sourceScope.kind === "submitted_between" &&
+      (sourceScope.start.length === 0 || sourceScope.end.length === 0)
+    ) {
+      setProfile(null);
+      return;
+    }
+    let active = true;
+    void getTargetProfile(project.id, sourceScope)
+      .then((next) => {
+        if (active) setProfile(next);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(errorMessage(cause));
+      });
+    return () => {
+      active = false;
+    };
+  }, [draftReady, project.id, sourceScope]);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    setDraftStatus("저장 중…");
+    const timer = window.setTimeout(() => {
+      void saveTargetDraft(currentDraft)
+        .then(() => setDraftStatus("자동 저장됨"))
+        .catch((cause: unknown) => {
+          setDraftStatus(null);
+          setError(errorMessage(cause));
+        });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [currentDraft, draftReady]);
 
   const handleCreateGroup = async (): Promise<void> => {
     if (!groupQuestionId || !groupName.trim() || groupMembers.length === 0) {
@@ -352,71 +560,41 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
 
   const handleStart = async (): Promise<void> => {
     if (!selectedQuestion) return;
-    const parsedFinalCount = Number(finalCount);
-    const parsedMean = Number(targetMean);
-    if (!Number.isInteger(parsedFinalCount) || parsedFinalCount <= 0) {
+    if (currentDraft.finalCount === null) {
       setError("최종 응답 수는 1 이상의 정수여야 합니다.");
       return;
     }
-    if (!Number.isFinite(parsedMean)) {
+    const meanTarget = currentDraft.targets.find(
+      (target) => target.kind === "mean" && target.questionId === selectedQuestion.id,
+    );
+    if (!meanTarget || meanTarget.intent === null) {
       setError("목표 평균은 유한한 숫자여야 합니다.");
       return;
     }
-
-    const sourceScope: SourceScope = useRange
-      ? { kind: "submitted_between", start: rangeStart.trim(), end: rangeEnd.trim() }
-      : { kind: "all" };
     if (sourceScope.kind === "submitted_between" && (!sourceScope.start || !sourceScope.end)) {
       setError("시간 범위를 사용할 때는 시작과 종료 timestamp가 모두 필요합니다.");
       return;
     }
-
-    const targets: SynthesisStartParams["targets"] = [
-      {
-        id: targetId(`mean:${selectedQuestion.id}`),
-        kind: "mean",
-        questionId: selectedQuestion.id,
-        value: parsedMean,
-      },
-    ];
     if (useShare) {
-      const parsedShare = Number(targetSharePercent) / 100;
-      if (!shareGroupId || !Number.isFinite(parsedShare) || parsedShare < 0 || parsedShare > 1) {
-        setError("share target은 ValueGroup과 0–100 사이의 비율이 필요합니다.");
+      const shareTarget = currentDraft.targets.find(
+        (target) =>
+          target.kind === "share" &&
+          target.subject.kind === "value_group" &&
+          target.subject.valueGroupId === shareGroupId,
+      );
+      if (!shareGroupId || !shareTarget || shareTarget.intent === null) {
+        setError("share target은 ValueGroup과 유효한 목표값이 필요합니다.");
         return;
       }
-      targets.push({
-        id: targetId(`share:value-group:${shareGroupId}`),
-        kind: "share",
-        subject: { kind: "value_group", valueGroupId: shareGroupId },
-        value: parsedShare,
-      });
     }
-
-    if (useConditional) {
-      if (!conditionalGroupId || !selectedConditionalQuestion || conditionalDrafts.length === 0) {
-        setError(
-          "조건부 share는 Population ValueGroup, checkbox 질문, 하나 이상의 옵션이 필요합니다.",
-        );
-        return;
-      }
-      for (const draft of conditionalDrafts) {
-        const value = Number(draft.percent) / 100;
-        if (!Number.isFinite(value) || value < 0 || value > 1) {
-          setError("조건부 share 비율은 0–100 사이여야 합니다.");
-          return;
-        }
-        targets.push({
-          id: targetId(
-            `conditional:${conditionalGroupId}:${selectedConditionalQuestion.id}:${draft.optionKey}`,
-          ),
-          kind: "conditional_share",
-          population: { kind: "value_group", valueGroupId: conditionalGroupId },
-          questionId: selectedConditionalQuestion.id,
-          optionKey: draft.optionKey,
-          value,
-        });
-      }
+    if (
+      useConditional &&
+      (!conditionalGroupId || !selectedConditionalQuestion || conditionalDrafts.length === 0)
+    ) {
+      setError(
+        "조건부 share는 Population ValueGroup, checkbox 질문, 하나 이상의 옵션이 필요합니다.",
+      );
+      return;
     }
 
     const nextOperationId = `synthesis-${Date.now()}`;
@@ -426,15 +604,12 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
     setExportMessage(null);
     setError(null);
     try {
-      const next = await startSynthesis({
-        projectId: project.id,
-        finalCount: parsedFinalCount,
-        targets,
-        sourceScope,
-        seed: 42,
-        operationId: nextOperationId,
-      });
+      setDraftStatus("실행 전 저장 중…");
+      await saveTargetDraft(currentDraft);
+      setDraftStatus("저장 완료 · 실행 중");
+      const next = await startTargetDraft(project.id, nextOperationId);
       setResult(next);
+      setDraftStatus("자동 저장됨");
       if (next.status === "success") setRun(await getRun(next.runId));
     } catch (cause: unknown) {
       setError(errorMessage(cause));
@@ -486,6 +661,16 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
       setExportBusy(false);
     }
   };
+
+  const shareBaseline = profile?.metrics.find(
+    (metric) =>
+      metric.kind === "subject" &&
+      metric.subject.kind === "value_group" &&
+      metric.subject.valueGroupId === shareGroupId,
+  );
+  const meanBaseline = profile?.metrics.find(
+    (metric) => metric.kind === "mean" && metric.questionId === questionId,
+  );
 
   return (
     <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
@@ -581,6 +766,10 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
           <p style={{ margin: 0, fontWeight: 600 }}>
             최종 N + targets + 승인형 original replacement
           </p>
+          <p style={{ margin: "6px 0 0", fontSize: 12 }}>
+            SourceScope {profile ? `${profile.responseCount}개 응답` : "계산 중…"}
+            {draftStatus ? ` · ${draftStatus}` : ""}
+          </p>
           <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
             <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
               평균을 맞출 점수 질문
@@ -611,6 +800,11 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                 onChange={(event) => setTargetMean(event.target.value)}
                 disabled={operationId !== null}
               />
+              {meanBaseline?.kind === "mean" ? (
+                <span>
+                  현재 {meanBaseline.mean.toFixed(3)} · 응답 {meanBaseline.denominatorCount}개
+                </span>
+              ) : null}
             </label>
 
             {groups.length > 0 ? (
@@ -637,13 +831,28 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
                         </option>
                       ))}
                     </select>
+                    <select
+                      value={shareIntentKind}
+                      onChange={(event) => setShareIntentKind(event.target.value as ShareIntentKind)}
+                      disabled={operationId !== null}
+                    >
+                      <option value="absolute">최종 비율</option>
+                      <option value="percentage_point_delta">현재값에서 %p 증감</option>
+                      <option value="relative_percent_delta">현재값 대비 % 증감</option>
+                    </select>
                     <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
-                      최종 share (%)
+                      {shareIntentLabel(shareIntentKind)}
                       <input
                         value={targetSharePercent}
                         onChange={(event) => setTargetSharePercent(event.target.value)}
                         disabled={operationId !== null}
                       />
+                      {shareBaseline?.kind === "subject" ? (
+                        <span>
+                          현재 {(shareBaseline.share * 100).toFixed(2)}% · {shareBaseline.count}/
+                          {shareBaseline.denominatorCount}
+                        </span>
+                      ) : null}
                     </label>
                   </div>
                 ) : null}
@@ -761,7 +970,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
           <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
             <button
               type="button"
-              disabled={operationId !== null}
+              disabled={operationId !== null || !draftReady}
               onClick={() => void handleStart()}
             >
               {operationId ? "합성 중…" : "합성 실행"}
