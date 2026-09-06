@@ -388,7 +388,7 @@ def select_for_targets(
     if len(share_targets) > 1:
         raise TargetInfeasible(
             "too_many_share_targets",
-            "M6 currently supports at most one overall ValueGroup share target per Run",
+            "The current synthesis engine supports at most one unconditional share target per Run",
         )
     if len({target.id for target in conditional_share_targets}) != len(conditional_share_targets):
         raise TargetInfeasible(
