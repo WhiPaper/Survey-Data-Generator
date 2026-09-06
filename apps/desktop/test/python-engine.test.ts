@@ -65,6 +65,16 @@ describe("Python compute boundary", () => {
         env: {},
       }).command.replaceAll("\\", "/"),
     ).toBe("C:/resources/engine/survey-synth-engine.exe");
+
+    expect(
+      resolveEngineLaunch({
+        isPackaged: true,
+        appPath: "/opt/survey-synth/resources/app.asar",
+        resourcesPath: "/opt/survey-synth/resources",
+        platform: "linux",
+        env: {},
+      }).command,
+    ).toBe("/opt/survey-synth/resources/engine/survey-synth-engine");
   });
 
   it("spawns one job process and parses report.json", async () => {
