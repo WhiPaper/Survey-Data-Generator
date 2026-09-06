@@ -73,8 +73,7 @@ def solve_binary_selection(
         mean_ranges = tuple(1.0 for _ in target_means)
     if len(mean_ranges) != len(target_means):
         raise ValueError("mean ranges and mean targets must have equal length")
-    if any(value <= 0 for value in mean_ranges):
-        raise ValueError("mean ranges must be positive")
+    mean_ranges = tuple(max(float(value), 1.0) for value in mean_ranges)
 
     if len(share_memberships) != len(share_values):
         raise ValueError("share memberships and values must have equal length")
@@ -95,13 +94,17 @@ def solve_binary_selection(
         _vector(values, row_count, "count membership") for values in count_memberships
     )
 
+    normalized_conditionals: list[ConditionalMetric] = []
     conditional_groups: dict[PopulationKey, list[ConditionalMetric]] = {}
     for metric in conditionals:
-        population = _vector(metric.population, row_count, "conditional population")
-        numerator = _vector(metric.numerator, row_count, "conditional numerator")
-        conditional_groups.setdefault(metric.population_key, []).append(
-            ConditionalMetric(metric.population_key, metric.value, population, numerator)
+        normalized = ConditionalMetric(
+            metric.population_key,
+            metric.value,
+            _vector(metric.population, row_count, "conditional population"),
+            _vector(metric.numerator, row_count, "conditional numerator"),
         )
+        normalized_conditionals.append(normalized)
+        conditional_groups.setdefault(metric.population_key, []).append(normalized)
 
     denominator_vectors: dict[Hashable, np.ndarray] = {}
     denominator_values: dict[Hashable, list[int]] = {}
@@ -126,7 +129,7 @@ def solve_binary_selection(
     mean_slack_start = row_count
     share_slack_start = mean_slack_start + len(target_means)
     conditional_slack_start = share_slack_start + len(share_values)
-    selector_start = conditional_slack_start + len(conditionals)
+    selector_start = conditional_slack_start + len(normalized_conditionals)
     selector_count = sum(len(values) for values in denominator_values.values())
     variable_count = selector_start + selector_count
 
@@ -233,18 +236,14 @@ def solve_binary_selection(
             big_m=float(final_count) * 2.0,
         )
 
-    conditional_by_key: dict[PopulationKey, list[ConditionalMetric]] = conditional_groups
-    conditional_index = 0
-    for key, metrics in conditional_by_key.items():
-        for metric in metrics:
-            ratio_constraints(
-                key=key,
-                numerator=metric.numerator,
-                target=metric.value,
-                slack_index=conditional_slack_start + conditional_index,
-                big_m=float(final_count) * 2.0,
-            )
-            conditional_index += 1
+    for index, metric in enumerate(normalized_conditionals):
+        ratio_constraints(
+            key=metric.population_key,
+            numerator=metric.numerator,
+            target=metric.value,
+            slack_index=conditional_slack_start + index,
+            big_m=float(final_count) * 2.0,
+        )
 
     if target_limit is not None:
         constrain(target_objective.copy(), -np.inf, target_limit)
