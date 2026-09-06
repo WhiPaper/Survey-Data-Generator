@@ -54,6 +54,8 @@ export type EngineQualityDiagnostics = {
   maxFingerprintShare?: number;
   sourceCloneCount?: number;
   sourceCloneRate?: number;
+  timestampKsStatistic?: number | null;
+  timestampMedianDeltaSeconds?: number | null;
 };
 
 export type EngineEditPlanShareOutcome = {
