@@ -32,10 +32,12 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: |
-            engine/requirements.txt
+            engine/requirements-gaussian.txt
+            engine/requirements-sdv.txt
             engine/requirements-build.txt
       - run: pnpm install --frozen-lockfile
-      - run: python -m pip install -r engine/requirements.txt -r engine/requirements-build.txt
+      - run: pnpm run engine:install:packaged
+      - run: pnpm run engine:check:packaged-deps
       - run: pnpm run check
       - run: pnpm run engine:test
       - run: pnpm run engine:build

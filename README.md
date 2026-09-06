@@ -35,11 +35,13 @@ pnpm run dev
 For the Python engine:
 
 ```powershell
-python -m pip install -r engine/requirements.txt -r engine/requirements-build.txt
+pnpm run engine:install
 pnpm run engine:test
 pnpm run engine:build
 pnpm run engine:binary-smoke
 ```
+
+`engine:install` keeps the complete upstream SDV dependency graph for general development. The packaged-artifact workflow instead uses `engine:install:packaged`, which installs the SDV 1.38.0 Gaussian Copula runtime without the unused CTGAN/DeepEcho neural dependency branch and verifies that Torch/CUDA distributions are absent before packaging.
 
 ## Packaging
 
@@ -52,7 +54,7 @@ pnpm run package:desktop:smoke
 pnpm run package:desktop:artifact
 ```
 
-Initial artifact targets are Windows x64 NSIS and Linux x64 AppImage. Local artifacts are validation outputs; release signing and publishing require the configured release process.
+Initial artifact targets are Windows x64 NSIS and Linux x64 AppImage. Local artifacts are validation outputs; release publishing requires the configured release process.
 
 ## Google OAuth development
 

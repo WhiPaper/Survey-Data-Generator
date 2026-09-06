@@ -105,6 +105,13 @@ describe("M10 release hardening", () => {
     const spec = readRepositoryFile("engine/survey-synth-engine.spec");
     const generator = readRepositoryFile("engine/generate.py");
     const requirements = readRepositoryFile("engine/requirements.txt");
+    const gaussianRequirements = readRepositoryFile("engine/requirements-gaussian.txt");
+    const sdvRequirements = readRepositoryFile("engine/requirements-sdv.txt");
+    const dependencyCheck = readRepositoryFile("engine/check_packaged_dependencies.py");
+    const workflow = readRepositoryFile(".github/workflows/release.yml");
+    const rootPackage = JSON.parse(readRepositoryFile("package.json")) as {
+      scripts?: Record<string, string>;
+    };
 
     for (const moduleName of ["ctgan", "deepecho", "torch", "triton", "nvidia", "cuda"]) {
       expect(spec).toContain(`"${moduleName}"`);
@@ -115,6 +122,48 @@ describe("M10 release hardening", () => {
     expect(generator).not.toContain("TVAESynthesizer");
     expect(generator).not.toContain("PARSynthesizer");
     expect(requirements).toContain("sdv==1.38.0");
+    expect(sdvRequirements).toContain("sdv==1.38.0");
+
+    for (const forbidden of ["ctgan", "deepecho", "torch", "triton", "nvidia-", "cuda-"]) {
+      expect(gaussianRequirements).not.toContain(forbidden);
+    }
+    for (const required of [
+      "boto3",
+      "botocore",
+      "cloudpickle",
+      "graphviz",
+      "numpy",
+      "pandas",
+      "tqdm",
+      "copulas",
+      "rdt",
+      "sdmetrics",
+      "platformdirs",
+      "pyyaml",
+    ]) {
+      expect(gaussianRequirements).toContain(required);
+    }
+
+    expect(rootPackage.scripts?.["engine:install:packaged"]).toContain(
+      "engine/requirements-gaussian.txt",
+    );
+    expect(rootPackage.scripts?.["engine:install:packaged"]).toContain("--no-deps");
+    expect(rootPackage.scripts?.["engine:check:packaged-deps"]).toContain(
+      "engine/check_packaged_dependencies.py",
+    );
+    expect(workflow).toContain("pnpm run engine:install:packaged");
+    expect(workflow).toContain("pnpm run engine:check:packaged-deps");
+    expect(workflow).toContain("engine/requirements-gaussian.txt");
+    expect(workflow).toContain("engine/requirements-sdv.txt");
+    expect(workflow).not.toContain(
+      "python -m pip install -r engine/requirements.txt -r engine/requirements-build.txt",
+    );
+    expect(dependencyCheck).toContain(
+      'ALLOWED_MISSING_SDV_REQUIREMENTS = {"ctgan", "deepecho"}',
+    );
+    expect(dependencyCheck).toContain(
+      'FORBIDDEN_DISTRIBUTIONS = {"ctgan", "deepecho", "torch", "triton"}',
+    );
   });
 
   it("keeps Linux desktop window association aligned with the application id", () => {
