@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { posix, win32 } from "node:path";
 
 import { backendFailure } from "../errors";
 import type { JobRegistry } from "../jobs";
@@ -168,12 +168,13 @@ export const resolveEngineLaunch = ({
   platform = process.platform,
   env = process.env,
 }: ResolveEngineLaunchOptions): EngineLaunch => {
+  const pathApi = platform === "win32" ? win32 : posix;
   const explicit = env.SURVEY_SYNTH_ENGINE_EXECUTABLE?.trim();
   if (explicit) return { command: explicit, argsPrefix: [] };
 
   if (isPackaged) {
     return {
-      command: join(
+      command: pathApi.join(
         resourcesPath,
         "engine",
         platform === "win32" ? "survey-synth-engine.exe" : "survey-synth-engine",
@@ -184,7 +185,7 @@ export const resolveEngineLaunch = ({
 
   return {
     command: env.SURVEY_SYNTH_PYTHON?.trim() || (platform === "win32" ? "python" : "python3"),
-    argsPrefix: [resolve(appPath, "../../engine/main.py")],
+    argsPrefix: [pathApi.resolve(appPath, "../../engine/main.py")],
   };
 };
 
