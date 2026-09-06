@@ -184,26 +184,19 @@ const frozenValueGroup = (row: ValueGroupRecord, members: string[]): FrozenValue
   members,
 });
 
-const loadValueGroup = (
+const findValueGroup = (
   db: SurveyDatabase,
   projectId: string,
   valueGroupId: string,
-): { row: ValueGroupRecord; members: string[] } => {
+): { row: ValueGroupRecord; members: string[] } | null => {
   const row = db.select().from(valueGroups).where(eq(valueGroups.id, valueGroupId)).get();
-  if (!row || row.projectId !== projectId) {
-    throw backendFailure("VALIDATION_FAILED", "Target ValueGroup was not found in this project");
-  }
+  if (!row || row.projectId !== projectId) return null;
   return { row, members: parseMembers(row.membersJson) };
 };
 
-const ensureGroupableQuestion = (form: FormSnapshot, questionId: string): void => {
+const isGroupableQuestion = (form: FormSnapshot, questionId: string): boolean => {
   const question = form.questions.find((candidate) => candidate.id === questionId);
-  if (!question || (question.kind !== "single_choice" && question.kind !== "text")) {
-    throw backendFailure(
-      "VALIDATION_FAILED",
-      "ValueGroup targets require a single-choice or text population question",
-    );
-  }
+  return question?.kind === "single_choice" || question?.kind === "text";
 };
 
 const jsonRecord = (value: unknown): Record<string, unknown> =>
@@ -234,7 +227,7 @@ const normalizeEngineIssue = (
         ? "immutable_source_conflict"
         : raw.code.includes("out_of_range")
           ? "out_of_range"
-          : raw.code.includes("denominator")
+          : raw.code.includes("denominator") || raw.code.includes("population_empty")
             ? "zero_denominator"
             : raw.code.includes("missing") || raw.code.includes("requires")
               ? "domain_unsupported"
@@ -421,7 +414,10 @@ export const createSynthesisService = ({
       const form = loadForm(db, revision.formSnapshotId);
       const meanQuestion = form.questions.find((question) => question.id === mean.questionId);
       if (!meanQuestion || meanQuestion.kind !== "ordinal") {
-        throw backendFailure("VALIDATION_FAILED", "Mean target question is not ordinal");
+        return {
+          status: "infeasible",
+          issues: [issue([mean], "invalid_subject", "Mean target must reference an ordinal question")],
+        };
       }
       if (mean.value < meanQuestion.min || mean.value > meanQuestion.max) {
         return {
@@ -456,8 +452,20 @@ export const createSynthesisService = ({
         let frozenSubject: FrozenTargetSubject;
 
         if (share.subject.kind === "value_group") {
-          const { row, members } = loadValueGroup(db, project.id, share.subject.valueGroupId);
-          ensureGroupableQuestion(form, row.questionId);
+          const group = findValueGroup(db, project.id, share.subject.valueGroupId);
+          if (!group) {
+            return {
+              status: "infeasible",
+              issues: [issue([share], "invalid_subject", "Share target ValueGroup was not found in this project")],
+            };
+          }
+          const { row, members } = group;
+          if (!isGroupableQuestion(form, row.questionId)) {
+            return {
+              status: "infeasible",
+              issues: [issue([share], "invalid_subject", "Share target ValueGroup must reference a single-choice or text question")],
+            };
+          }
           column = plan.questionColumns.get(row.questionId as QuestionId);
           memberValues = valueGroupMemberCells(
             scope.responses,
@@ -485,19 +493,19 @@ export const createSynthesisService = ({
             (candidate) => candidate.id === share.subject.questionId,
           );
           if (!question || question.kind !== "single_choice") {
-            throw backendFailure(
-              "VALIDATION_FAILED",
-              "Option share subject must reference a single-choice question",
-            );
+            return {
+              status: "infeasible",
+              issues: [issue([share], "invalid_subject", "Option share subject must reference a single-choice question")],
+            };
           }
           const option = question.options.find(
             (candidate) => String(candidate.key) === share.subject.optionKey,
           );
           if (!option) {
-            throw backendFailure(
-              "VALIDATION_FAILED",
-              "Option share subject was not found in the Form",
-            );
+            return {
+              status: "infeasible",
+              issues: [issue([share], "invalid_subject", "Option share subject was not found in the Form")],
+            };
           }
           column = plan.questionColumns.get(question.id);
           memberValues = valueGroupMemberCells(scope.responses, question.id, [
@@ -521,16 +529,16 @@ export const createSynthesisService = ({
             (candidate) => candidate.id === share.subject.questionId,
           );
           if (!question || question.kind !== "multi_choice") {
-            throw backendFailure(
-              "VALIDATION_FAILED",
-              "Checkbox option share subject must reference a checkbox question",
-            );
+            return {
+              status: "infeasible",
+              issues: [issue([share], "invalid_subject", "Checkbox option share subject must reference a checkbox question")],
+            };
           }
           if (!question.options.some((option) => String(option.key) === share.subject.optionKey)) {
-            throw backendFailure(
-              "VALIDATION_FAILED",
-              "Checkbox option share subject was not found in the Form",
-            );
+            return {
+              status: "infeasible",
+              issues: [issue([share], "invalid_subject", "Checkbox option share subject was not found in the Form")],
+            };
           }
           column = plan.questionColumns.get(question.id);
           memberValues = multiChoiceOptionSupport(
@@ -563,12 +571,20 @@ export const createSynthesisService = ({
       }
 
       for (const target of conditionals) {
-        const { row, members } = loadValueGroup(
-          db,
-          project.id,
-          target.population.valueGroupId,
-        );
-        ensureGroupableQuestion(form, row.questionId);
+        const group = findValueGroup(db, project.id, target.population.valueGroupId);
+        if (!group) {
+          return {
+            status: "infeasible",
+            issues: [issue([target], "invalid_subject", "Conditional population ValueGroup was not found in this project")],
+          };
+        }
+        const { row, members } = group;
+        if (!isGroupableQuestion(form, row.questionId)) {
+          return {
+            status: "infeasible",
+            issues: [issue([target], "invalid_subject", "Conditional population ValueGroup must reference a single-choice or text question")],
+          };
+        }
         const populationColumn = plan.questionColumns.get(row.questionId as QuestionId);
         if (!populationColumn) {
           throw backendFailure(
@@ -596,16 +612,16 @@ export const createSynthesisService = ({
 
         const checkbox = form.questions.find((question) => question.id === target.questionId);
         if (!checkbox || checkbox.kind !== "multi_choice") {
-          throw backendFailure(
-            "VALIDATION_FAILED",
-            "Conditional share targets require a checkbox question",
-          );
+          return {
+            status: "infeasible",
+            issues: [issue([target], "invalid_subject", "Conditional share target must reference a checkbox question")],
+          };
         }
         if (!checkbox.options.some((option) => String(option.key) === target.optionKey)) {
-          throw backendFailure(
-            "VALIDATION_FAILED",
-            "Conditional share option was not found in the Form",
-          );
+          return {
+            status: "infeasible",
+            issues: [issue([target], "invalid_subject", "Conditional share option was not found in the Form")],
+          };
         }
         const optionColumn = plan.questionColumns.get(checkbox.id);
         if (!optionColumn) {
