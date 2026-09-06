@@ -18,7 +18,7 @@ A dedicated production support contact has not yet been published. Before public
 
 Node.js and Python are not required for installed users.
 
-The Linux package target is configured, but Linux release acceptance is not complete until the packaged application is built and smoke-tested on an actual Linux runner or device. Do not describe Linux packaged smoke as passed without that evidence.
+The Linux package target is configured, but representative Linux desktop acceptance is currently deferred. GitHub-hosted Linux packaged smoke is automated evidence only and does not establish representative device acceptance, secure `safeStorage` backend acceptance, or launcher/taskbar association.
 
 ## Frequently asked questions
 
@@ -28,11 +28,13 @@ Projects, imported source revisions, targets, runs, and local results are stored
 
 ### Does Survey Synth upload survey data?
 
-No. Survey data is processed locally. Network access is limited to Google OAuth and Google Drive/Forms requests required by the selected import workflow. There is no developer backend, telemetry, cloud synchronization, or AI/LLM transfer path.
+No. Survey data is processed locally. Network access is limited to Google OAuth and Google Drive/Forms requests required by the selected import workflow plus, on packaged Windows builds, GitHub Release requests used to check for and download application updates. Update requests do not contain survey data. There is no developer backend, telemetry, cloud synchronization, or AI/LLM transfer path.
 
 ### How do updates work?
 
-The current v2 package does not install updates automatically. Obtain release artifacts from the project's GitHub Releases page and verify the published release information before installation.
+Packaged Windows builds check the private repository's latest non-prerelease GitHub Release. When a newer stable version exists, Survey Synth downloads the NSIS installer, verifies the SHA-256 digest reported by GitHub, and asks whether to restart. Choosing to restart launches the per-user installer silently and starts the updated application. Users do not enter a GitHub credential.
+
+Linux automatic updating is not enabled in the current release plan; distribute a new AppImage manually when Linux distribution resumes.
 
 ### How do I delete data?
 

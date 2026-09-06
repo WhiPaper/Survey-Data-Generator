@@ -8,6 +8,8 @@ import { join } from "node:path";
 
 import { app, dialog } from "electron";
 
+import { isNewerStableVersion } from "./version";
+
 declare const __SURVEY_SYNTH_UPDATE_GITHUB_TOKEN__: string;
 
 const UPDATE_OWNER = "WhiPaper";
@@ -30,27 +32,6 @@ type LatestRelease = {
   draft: boolean;
   prerelease: boolean;
   assets: ReleaseAsset[];
-};
-
-type ParsedVersion = readonly [number, number, number];
-
-const parseStableVersion = (value: string): ParsedVersion | null => {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(value.trim());
-  if (!match) return null;
-  const parts = match.slice(1).map(Number);
-  if (parts.some((part) => !Number.isSafeInteger(part))) return null;
-  return [parts[0]!, parts[1]!, parts[2]!];
-};
-
-export const isNewerStableVersion = (candidate: string, current: string): boolean => {
-  const next = parseStableVersion(candidate);
-  const installed = parseStableVersion(current);
-  if (!next || !installed) return false;
-  for (let index = 0; index < next.length; index += 1) {
-    if (next[index]! > installed[index]!) return true;
-    if (next[index]! < installed[index]!) return false;
-  }
-  return false;
 };
 
 const getBuildUpdateToken = (): string =>
@@ -98,7 +79,9 @@ const requestJson = <T>(path: string, token: string): Promise<T | null> =>
         });
       },
     );
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error("GitHub update request timed out")));
+    req.setTimeout(REQUEST_TIMEOUT_MS, () =>
+      req.destroy(new Error("GitHub update request timed out")),
+    );
     req.on("error", reject);
     req.end();
   });
@@ -137,7 +120,9 @@ const downloadToFile = async (
   token: string,
   redirectCount = 0,
 ): Promise<void> => {
-  if (redirectCount > MAX_REDIRECTS) throw new Error("GitHub update download redirected too many times");
+  if (redirectCount > MAX_REDIRECTS) {
+    throw new Error("GitHub update download redirected too many times");
+  }
 
   await new Promise<void>((resolve, reject) => {
     const isGitHubApi = url.hostname === "api.github.com";
@@ -186,7 +171,9 @@ const downloadToFile = async (
         }
       },
     );
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error("GitHub update download timed out")));
+    req.setTimeout(REQUEST_TIMEOUT_MS, () =>
+      req.destroy(new Error("GitHub update download timed out")),
+    );
     req.on("error", reject);
     req.end();
   });

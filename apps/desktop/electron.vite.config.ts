@@ -15,12 +15,14 @@ const bundledPackages = [
 
 const buildGoogleClientId = process.env.SURVEY_SYNTH_GOOGLE_CLIENT_ID?.trim() ?? "";
 const buildGoogleClientSecret = process.env.SURVEY_SYNTH_GOOGLE_CLIENT_SECRET?.trim() ?? "";
+const buildUpdateGithubToken = process.env.SURVEY_SYNTH_UPDATE_GITHUB_TOKEN?.trim() ?? "";
 
 export default defineConfig({
   main: {
     define: {
       __SURVEY_SYNTH_GOOGLE_CLIENT_ID__: JSON.stringify(buildGoogleClientId),
       __SURVEY_SYNTH_GOOGLE_CLIENT_SECRET__: JSON.stringify(buildGoogleClientSecret),
+      __SURVEY_SYNTH_UPDATE_GITHUB_TOKEN__: JSON.stringify(buildUpdateGithubToken),
     },
     plugins: [externalizeDepsPlugin({ exclude: bundledPackages })],
     build: {

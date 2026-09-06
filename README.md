@@ -13,6 +13,7 @@ Electron Main
     ├─ Google integration
     ├─ SQLite + Drizzle
     ├─ projects / sources / runs / export
+    ├─ Windows private GitHub Release updater
     └─ packaged Python compute process
           ├─ pandas / PyArrow
           ├─ SDV
@@ -20,7 +21,7 @@ Electron Main
           └─ SDMetrics
 ```
 
-The renderer never accesses SQLite, Google APIs, filesystem primitives, OAuth tokens, or Python directly. The Python executable runs one job and exits; it is not a daemon or application backend.
+The renderer never accesses SQLite, Google APIs, filesystem primitives, OAuth tokens, update credentials, or Python directly. The Python executable runs one job and exits; it is not a daemon or application backend.
 
 ## Development
 
@@ -54,7 +55,11 @@ pnpm run package:desktop:smoke
 pnpm run package:desktop:artifact
 ```
 
-Initial artifact targets are Windows x64 NSIS and Linux x64 AppImage. Local artifacts are validation outputs; release publishing requires the configured release process.
+Initial artifact targets are Windows x64 NSIS and Linux x64 AppImage. Local artifacts are validation outputs. The packaged-artifacts workflow keeps normal builds unpublished; its explicit `publish_release` input creates a GitHub Release only after both configured artifact jobs succeed.
+
+Official Windows packaged builds require `SURVEY_SYNTH_UPDATE_GITHUB_TOKEN`, a fine-grained token limited to this repository with `Contents: Read-only`. It is injected into Electron Main only. Because a desktop binary can be inspected, this updater credential is treated as extractable rather than confidential; it must never have write permission. Linux builds do not receive the updater credential.
+
+The Windows packaged app checks the repository's latest non-prerelease GitHub Release, downloads a newer NSIS installer, verifies the SHA-256 digest reported by GitHub, and asks the user whether to restart. Approval launches the per-user installer silently. Linux automatic updating is not enabled in the current release plan.
 
 ## Google OAuth development
 

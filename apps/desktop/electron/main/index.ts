@@ -17,6 +17,7 @@ import { runPackagedSmoke } from "./packaged-smoke";
 import { openAppDatabase, type AppDatabase } from "./persistence/database";
 import { createProjectService } from "./projects/service";
 import { createSynthesisService } from "./synthesis/service";
+import { schedulePrivateGitHubUpdateCheck } from "./updater/github-release-updater";
 import { createValueGroupService } from "./value-groups/service";
 
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
@@ -141,6 +142,7 @@ void app
     }
 
     createWindow();
+    schedulePrivateGitHubUpdateCheck();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

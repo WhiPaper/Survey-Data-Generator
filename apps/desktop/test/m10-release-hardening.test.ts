@@ -17,8 +17,34 @@ describe("M10 release hardening", () => {
     expect(existsSync(repositoryFile(".local-live/google-accounts.json"))).toBe(false);
   });
 
-  it("does not retain updater publishing plumbing before an updater decision", () => {
-    expect(existsSync(repositoryFile("scripts/create-github-updater-manifest.mjs"))).toBe(false);
+  it("keeps private GitHub update access in packaged Electron Main only", () => {
+    const config = readRepositoryFile("apps/desktop/electron.vite.config.ts");
+    const updater = readRepositoryFile(
+      "apps/desktop/electron/main/updater/github-release-updater.ts",
+    );
+    const workflow = readRepositoryFile(".github/workflows/release.yml");
+    const builder = JSON.parse(readRepositoryFile("apps/desktop/electron-builder.json")) as {
+      nsis?: { perMachine?: boolean };
+    };
+    const preloadOffset = config.indexOf("preload:");
+    const rendererOffset = config.indexOf("renderer:");
+    const updateTokenDefine = config.indexOf("__SURVEY_SYNTH_UPDATE_GITHUB_TOKEN__");
+
+    expect(updateTokenDefine).toBeGreaterThanOrEqual(0);
+    expect(updateTokenDefine).toBeLessThan(preloadOffset);
+    expect(config.slice(rendererOffset)).not.toContain("__SURVEY_SYNTH_UPDATE_GITHUB_TOKEN__");
+    expect(updater).toContain('const UPDATE_OWNER = "WhiPaper";');
+    expect(updater).toContain('const UPDATE_REPOSITORY = "Survey-Data-Generator";');
+    expect(updater).toContain("Authorization: `Bearer ${token}`");
+    expect(updater).toContain('digest?.trim().toLowerCase()');
+    expect(updater).toContain('["--updated", "/S", "--force-run"]');
+    expect(updater).not.toContain("process.env.GH_TOKEN");
+    expect(updater).not.toContain("process.env.GITHUB_TOKEN");
+    expect(workflow).toContain("Require Windows updater credential");
+    expect(workflow).toContain("secrets.SURVEY_SYNTH_UPDATE_GITHUB_TOKEN");
+    expect(workflow).toContain("if: ${{ inputs.publish_release }}");
+    expect(workflow).toContain("contents: write");
+    expect(builder.nsis?.perMachine).toBe(false);
   });
 
   it("keeps release contact copy free of unavailable or placeholder support channels", () => {

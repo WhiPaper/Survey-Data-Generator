@@ -13,6 +13,8 @@ This checklist separates repository-automatable validation from release steps th
 
 ## Linux x64 package acceptance
 
+Representative Linux device/VM acceptance is deferred from the current limited-distribution plan and is not a current release gate. Automated Linux CI may continue to build and smoke-test the configured AppImage target, but that evidence does not complete the deferred manual items below.
+
 GitHub Actions run `34031785177` checked out `2cb06f528d87f8c0b8bc0087ee7d6f74e5926d54` on the Ubuntu 22.04 release runner and completed the full configured Linux x64 artifact workflow after the packaged-engine neural/GPU exclusion. It provides concrete runner-level evidence for Python engine tests 29/29, packaged Python binary smoke, packaged Electron smoke (`PACKAGED_SMOKE_OK`), AppImage creation, and artifact upload. The uploaded `linux-x64` artifact recorded archive size `343640297` bytes and SHA-256 digest `4ec343159497e664515600574594b3e2e88d221ff858cd501fbb555f486ef146`.
 
 The previous fully successful Linux artifact on run `34029637890` was `3180625317` bytes. The neural/GPU exclusion therefore reduced the uploaded archive by about 89.2% while preserving the exercised Gaussian Copula runtime path.
@@ -41,13 +43,18 @@ Run `34031785177` proves the optimized bundle works on both configured target ru
 
 Certificate/code-signing is outside the current release plan and is not a release acceptance gate.
 
-- [ ] Confirm the release owner/publisher identity used for package metadata.
-- [ ] Confirm GitHub Release publishing permissions and any required release secrets if repository publishing is enabled.
-- [ ] Review the final installer/application icon and other brand assets supplied by the release owner.
-- [ ] Verify final artifact names, version metadata, published checksums, and release notes.
+The packaged-artifacts workflow keeps normal builds unpublished. GitHub Release creation is enabled only when the release owner explicitly dispatches the workflow with `publish_release` selected; the dedicated publish job receives `contents: write` only after both configured artifact jobs succeed and refuses to replace an existing release.
 
-Publishing and release secrets must not be enabled or invented by repository code before the release owner explicitly approves the process.
+- [ ] Confirm the release owner/publisher identity used for package metadata when that metadata is added.
+- [ ] Exercise one explicit GitHub Release publication and verify artifact names, version metadata, GitHub asset SHA-256 digests, and generated release notes.
+- [ ] Review the final installer/application icon and other brand assets supplied or accepted by the release owner.
 
-## Updater decision
+## Windows private-repository updater
 
-The v2 application does not currently include an automatic updater. Do not add updater code, manifests, or publishing steps unless a future release process explicitly decides that an updater is required and defines its publishing and trust model.
+The limited-distribution Windows build uses the private GitHub repository as its update source without asking end users for GitHub credentials. `SURVEY_SYNTH_UPDATE_GITHUB_TOKEN` is a fine-grained token restricted to `WhiPaper/Survey-Data-Generator` with `Contents: Read-only`; it is injected into packaged Electron Main only. Because the value is recoverable from a distributed desktop binary, it is deliberately treated as extractable and must never receive write authority.
+
+The updater checks only the latest non-prerelease stable version, downloads the NSIS installer through the GitHub Release API, verifies its reported SHA-256 digest and size, then asks the user whether to restart. Approval launches the per-user NSIS installer with the silent update path and restarts the application. Linux automatic updating remains outside the current plan.
+
+- [ ] Run the full packaged-artifacts workflow on the exact updater head and confirm the Windows credential requirement, checks, packaged smoke, and installer artifact succeed.
+- [ ] Publish a newer test version and manually accept an installed-version upgrade end to end: update discovery, download, digest verification, restart prompt, silent NSIS replacement, relaunch, and preservation of the existing local application profile.
+- [ ] Confirm the fine-grained updater token still has only the selected repository plus `Contents: Read-only`, with all write/admin/workflow permissions absent.
