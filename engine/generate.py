@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import random
 from dataclasses import dataclass
@@ -39,6 +40,16 @@ class ConditionalCandidateSupport:
     option_values: frozenset[str]
     target_value: float
     schema_option_values: frozenset[str] = frozenset()
+
+
+def _schema_backed_answer_slot(value: str) -> bool:
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(parsed, dict) or parsed.get("state") != "answered":
+        return False
+    return isinstance(parsed.get("value"), dict)
 
 
 def _model_frame(source: pd.DataFrame, id_column: str) -> pd.DataFrame:
@@ -431,7 +442,7 @@ def generate_candidates(
             raise ValueError("share support column must be one of categorical_columns")
         observed_share_values = allowed_values[share_support.column]
         share_schema_member_values = share_support.member_values - observed_share_values
-        if any(not answer_cell_eligible(value) for value in share_schema_member_values):
+        if any(not _schema_backed_answer_slot(value) for value in share_schema_member_values):
             raise ValueError("share support outside observed source support must be schema-backed AnswerSlots")
         if share_support.synthetic_member_count < 0 or share_support.synthetic_nonmember_count < 0:
             raise ValueError("share support counts must be non-negative")
@@ -446,8 +457,8 @@ def generate_candidates(
         observed_option_values = support.option_values - support.schema_option_values
         if not observed_option_values <= allowed_values[support.option_column]:
             raise ValueError("conditional option support is outside observed or schema-backed support")
-        if any(not answer_cell_eligible(value) for value in support.schema_option_values):
-            raise ValueError("schema option support must represent an eligible AnswerSlot")
+        if any(not _schema_backed_answer_slot(value) for value in support.schema_option_values):
+            raise ValueError("schema option support must represent an answered AnswerSlot")
         if not 0 <= support.target_value <= 1:
             raise ValueError("conditional support target must be between 0 and 1")
 
