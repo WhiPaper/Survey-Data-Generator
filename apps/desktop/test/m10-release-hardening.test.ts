@@ -53,6 +53,15 @@ describe("M10 release hardening", () => {
     });
   });
 
+  it("uses sanitized startup diagnostics instead of logging raw initialization errors", () => {
+    const main = readRepositoryFile("apps/desktop/electron/main/index.ts");
+    expect(main).toContain("const normalized = normalizeBackendError(error);");
+    expect(main).toContain(
+      'console.error("Failed to initialize Survey Synth:", normalized.code, normalized.message);',
+    );
+    expect(main).not.toContain('console.error("Failed to initialize Survey Synth:", error);');
+  });
+
   it("provides package description metadata without inventing release authority", () => {
     const packageJson = JSON.parse(readRepositoryFile("apps/desktop/package.json")) as {
       description?: string;

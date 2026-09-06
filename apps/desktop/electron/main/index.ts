@@ -146,7 +146,8 @@ void app
     });
   })
   .catch((error: unknown) => {
-    console.error("Failed to initialize Survey Synth:", error);
+    const normalized = normalizeBackendError(error);
+    console.error("Failed to initialize Survey Synth:", normalized.code, normalized.message);
     app.quit();
   });
 
