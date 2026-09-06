@@ -188,6 +188,18 @@ describe("typed v2 desktop backend client", () => {
           runId: "run-1",
           syntheticResponseCount: 40,
           finalResponseCount: 120,
+          outcome: {
+            targets: [
+              {
+                targetId: "t-mean",
+                kind: "mean",
+                requested: 4.3,
+                achieved: 4.3,
+                absoluteError: 0,
+                exact: true,
+              },
+            ],
+          },
         };
       }
       throw new Error(`Unexpected method ${request.method}`);
