@@ -17,6 +17,9 @@ engine/dist/
 .local-engine-smoke/
 .local-engine-binary-smoke/
 
+# Packaged desktop smoke output includes a local SQLite DB and export fixtures.
+.local-desktop-packaged-smoke/
+
 # Local live verification state may contain Google account metadata.
 .local-live/
 
@@ -26,4 +29,3 @@ google_oauth.local.json
 # Local agent skills and configuration.
 .agents/
 skills-lock.json
-

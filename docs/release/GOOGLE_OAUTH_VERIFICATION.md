@@ -21,7 +21,7 @@ Survey Synth does not create or modify Google Forms or responses.
 
 1. Responses are processed locally by Electron Main and the packaged Python compute process.
 2. Local application data uses plain SQLite in v2; no encrypted-database guarantee is made.
-3. Refresh tokens are stored in the OS secure credential store, while access tokens remain in memory.
+3. Refresh tokens are stored as Electron `safeStorage`-encrypted values in the local application data directory. Credential persistence is refused when secure storage is unavailable, including the Linux `basic_text` backend; access tokens remain in Electron Main memory.
 4. No survey data is sent to Survey Synth servers, telemetry services, advertising networks, or AI/LLM providers.
 
 ## 3. Demonstration flow

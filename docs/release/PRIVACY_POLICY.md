@@ -20,7 +20,7 @@ Survey Synth uses Google OAuth and the Google Drive/Forms APIs to:
 
 OAuth and API requests are made directly from Electron Main to Google. Imported metadata and responses are stored locally in the application's plain SQLite database. Survey data is not sent to Survey Synth servers or to an LLM provider.
 
-Refresh tokens are stored in the operating system's secure credential store. Access tokens remain in Electron Main memory and are never exposed to the renderer.
+Refresh tokens are stored locally in the application data directory only after encryption through Electron `safeStorage`. The application refuses credential persistence when secure storage is unavailable, including the Linux `basic_text` backend. Access tokens remain in Electron Main memory and are never exposed to the renderer.
 
 ## 3. Local Processing
 

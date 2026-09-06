@@ -10,8 +10,10 @@ const repositoryFile = (path: string): string =>
 const readRepositoryFile = (path: string): string => readFileSync(repositoryFile(path), "utf8");
 
 describe("M10 release hardening", () => {
-  it("keeps live Google verification state out of source control", () => {
-    expect(readRepositoryFile(".gitignore").split(/\r?\n/)).toContain(".local-live/");
+  it("keeps local verification outputs out of source control", () => {
+    const ignored = readRepositoryFile(".gitignore").split(/\r?\n/);
+    expect(ignored).toContain(".local-live/");
+    expect(ignored).toContain(".local-desktop-packaged-smoke/");
     expect(existsSync(repositoryFile(".local-live/google-accounts.json"))).toBe(false);
   });
 
@@ -25,6 +27,17 @@ describe("M10 release hardening", () => {
     expect(support).not.toContain("/discussions");
     expect(support).not.toContain("@surveysynth.local");
     expect(privacy).not.toContain("@surveysynth.local");
+  });
+
+  it("describes refresh-token storage as safeStorage-encrypted local state", () => {
+    const privacy = readRepositoryFile("docs/release/PRIVACY_POLICY.md");
+    const oauth = readRepositoryFile("docs/release/GOOGLE_OAUTH_VERIFICATION.md");
+    for (const copy of [privacy, oauth]) {
+      expect(copy).toContain("safeStorage");
+      expect(copy).toContain("basic_text");
+      expect(copy).not.toContain("stored in the OS secure credential store");
+      expect(copy).not.toContain("stored in the operating system's secure credential store");
+    }
   });
 
   it("does not expose internal error details across the Electron IPC boundary", () => {

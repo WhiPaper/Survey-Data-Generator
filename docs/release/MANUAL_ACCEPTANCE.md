@@ -7,6 +7,7 @@ This checklist separates repository-automatable validation from release steps th
 - [ ] Confirm the production Google Cloud OAuth project, consent-screen configuration, and desktop client settings.
 - [ ] Publish stable privacy/support URLs and real externally reachable contact details.
 - [ ] Complete any Google OAuth production review required for the requested scopes.
+- [ ] On each release target, confirm Electron `safeStorage` encryption is available; on Linux, confirm the selected backend is not `basic_text` before accepting persistent Google credentials.
 - [ ] On a packaged build, sign in with a real Google account, list accessible Forms, import a selected Form, and verify the immutable SourceRevision created from that observation.
 - [ ] Revoke/logout and confirm the expected local token/account cleanup behavior.
 
@@ -15,6 +16,7 @@ This checklist separates repository-automatable validation from release steps th
 - [ ] Build the x64 AppImage on an actual Linux runner matching the release baseline.
 - [ ] Run the packaged Electron smoke under that Linux environment and record the successful evidence.
 - [ ] Launch the AppImage on a representative Linux device or VM and verify the packaged Python engine is discovered without a system Python dependency.
+- [ ] Confirm the representative Linux environment provides a secure Electron `safeStorage` backend rather than `basic_text`; if it does not, credential persistence must fail safely and the environment must not be accepted for Google login.
 
 Until these checks have evidence, do not claim that Linux packaged smoke has passed.
 
