@@ -62,6 +62,15 @@ describe("M10 release hardening", () => {
     expect(main).not.toContain('console.error("Failed to initialize Survey Synth:", error);');
   });
 
+  it("declares the renderer build plugin used by the Electron Vite config", () => {
+    const config = readRepositoryFile("apps/desktop/electron.vite.config.ts");
+    const packageJson = JSON.parse(readRepositoryFile("apps/desktop/package.json")) as {
+      devDependencies?: Record<string, string>;
+    };
+    expect(config).toContain('from "@vitejs/plugin-react"');
+    expect(packageJson.devDependencies?.["@vitejs/plugin-react"]).toBe("^5.0.2");
+  });
+
   it("provides package description metadata without inventing release authority", () => {
     const packageJson = JSON.parse(readRepositoryFile("apps/desktop/package.json")) as {
       description?: string;
