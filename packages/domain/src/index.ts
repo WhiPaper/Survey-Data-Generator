@@ -14,6 +14,7 @@ export type GoogleAccountId = Brand<string, "GoogleAccountId">;
 export type SourceRevisionId = Brand<string, "SourceRevisionId">;
 export type FormSnapshotId = Brand<string, "FormSnapshotId">;
 export type ValueGroupId = Brand<string, "ValueGroupId">;
+export type TargetId = Brand<string, "TargetId">;
 
 export interface ValueGroup {
   readonly id: ValueGroupId;
