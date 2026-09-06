@@ -218,12 +218,10 @@ const normalizeEngineIssue = (
   targets: readonly OutcomeTarget[],
 ): TargetIssue => {
   const code: TargetIssue["code"] =
-    raw.code === "candidate_support" ||
-    raw.code === "share_member_support" ||
-    raw.code === "conditional_population_support"
-      ? "candidate_support"
-      : raw.code === "final_count_below_source"
-        ? "immutable_source_conflict"
+    raw.code === "final_count_below_source"
+      ? "immutable_source_conflict"
+      : raw.code.includes("candidate") || raw.code.endsWith("_support")
+        ? "candidate_support"
         : raw.code.includes("out_of_range")
           ? "out_of_range"
           : raw.code.includes("denominator") || raw.code.includes("population_empty")
@@ -234,9 +232,30 @@ const normalizeEngineIssue = (
   return issue(targets, code, raw.message);
 };
 
+const completeOutcome = (
+  outcome: TargetSetOutcome,
+  targets: readonly OutcomeTarget[],
+): TargetSetOutcome => {
+  if (outcome.targets.length !== targets.length) {
+    throw backendFailure("INTERNAL", "Synthesis outcome is missing one or more target results");
+  }
+  const expected = new Map(targets.map((target) => [String(target.id), target.kind] as const));
+  const seen = new Set<string>();
+  for (const result of outcome.targets) {
+    const id = String(result.targetId);
+    if (seen.has(id) || expected.get(id) !== result.kind) {
+      throw backendFailure("INTERNAL", "Synthesis outcome contains invalid target identity");
+    }
+    seen.add(id);
+  }
+  return outcome;
+};
+
 const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]): TargetSetOutcome => {
   const record = jsonRecord(value);
-  if (Array.isArray(record.targets)) return TargetSetOutcomeSchema.parse(record);
+  if (Array.isArray(record.targets)) {
+    return completeOutcome(TargetSetOutcomeSchema.parse(record), targets);
+  }
 
   const rawShares = Array.isArray(record.shares) ? record.shares.map(jsonRecord) : [];
   const rawCounts = Array.isArray(record.counts) ? record.counts.map(jsonRecord) : [];
@@ -245,12 +264,13 @@ const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]): Ta
     : [];
   const rawMeans = Array.isArray(record.means) ? record.means.map(jsonRecord) : [];
 
-  return TargetSetOutcomeSchema.parse({
+  const outcome = TargetSetOutcomeSchema.parse({
     targets: targets.flatMap((target) => {
       if (target.kind === "count") {
         const raw = rawCounts.find((candidate) => String(candidate.id) === String(target.id));
-        if (!raw || typeof raw.count !== "number" || typeof raw.absoluteError !== "number")
+        if (!raw || typeof raw.count !== "number" || typeof raw.absoluteError !== "number") {
           return [];
+        }
         return [
           {
             targetId: target.id,
@@ -274,6 +294,9 @@ const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]): Ta
               achieved: raw.mean,
               absoluteError: raw.absoluteError,
               exact: typeof raw.exact === "boolean" ? raw.exact : raw.absoluteError <= 1e-9,
+              ...(typeof raw.denominatorCount === "number"
+                ? { denominatorCount: raw.denominatorCount }
+                : {}),
             },
           ];
         }
@@ -317,6 +340,7 @@ const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]): Ta
       ];
     }),
   });
+  return completeOutcome(outcome, targets);
 };
 
 const availableEditPlan = (
@@ -411,19 +435,24 @@ export const createSynthesisService = ({
           (candidate) =>
             candidate.subject.kind === "option" && candidate.subject.questionId === questionId,
         );
-        const requestedCount = peers.reduce(
-          (sum, peer) =>
-            sum + (peer.kind === "count" ? peer.value : peer.value * params.finalCount),
-          0,
-        );
-        if (requestedCount > params.finalCount + 1e-9) {
+        const sharePeers = peers.filter((peer) => peer.kind === "share");
+        if (sharePeers.reduce((sum, peer) => sum + peer.value, 0) > 1 + 1e-9) {
+          return {
+            status: "infeasible",
+            issues: [
+              issue(sharePeers, "target_conflict", "Single-choice share targets exceed 100%"),
+            ],
+          };
+        }
+        const countPeers = peers.filter((peer) => peer.kind === "count");
+        if (countPeers.reduce((sum, peer) => sum + peer.value, 0) > params.finalCount) {
           return {
             status: "infeasible",
             issues: [
               issue(
-                peers,
+                countPeers,
                 "target_conflict",
-                "Single-choice option targets exceed the final response count",
+                "Single-choice count targets exceed the final response count",
               ),
             ],
           };
@@ -433,20 +462,22 @@ export const createSynthesisService = ({
       const form = loadForm(db, revision.formSnapshotId);
       for (const mean of means) {
         const question = form.questions.find((candidate) => candidate.id === mean.questionId);
-        if (!question || question.kind !== "ordinal")
+        if (!question || question.kind !== "ordinal") {
           return {
             status: "infeasible",
             issues: [
               issue([mean], "invalid_subject", "Mean target must reference an ordinal question"),
             ],
           };
-        if (mean.value < question.min || mean.value > question.max)
+        }
+        if (mean.value < question.min || mean.value > question.max) {
           return {
             status: "infeasible",
             issues: [
               issue([mean], "out_of_range", "Mean target is outside the ordinal question range"),
             ],
           };
+        }
       }
       const plan = createFlatTablePlan(
         form,
@@ -773,14 +804,16 @@ export const createSynthesisService = ({
                 const question = form.questions.find(
                   (candidate) => candidate.id === mean.questionId,
                 );
-                if (!question || question.kind !== "ordinal")
+                if (!question || question.kind !== "ordinal") {
                   throw backendFailure("INTERNAL", "Validated mean question was lost");
+                }
                 const column = plan.targetScoreColumns.get(mean.questionId as QuestionId);
-                if (!column)
+                if (!column) {
                   throw backendFailure(
                     "INTERNAL",
                     "Mean question is unavailable in the synthesis table",
                   );
+                }
                 return {
                   id: String(mean.id),
                   column,
@@ -849,6 +882,13 @@ export const createSynthesisService = ({
           ) {
             throw backendFailure("INTERNAL", "Replacement preview does not match its EditPlan");
           }
+          if (
+            editPlan.replacementOutcome.targets.some(
+              (target) => target.kind === "count" && !target.exact,
+            )
+          ) {
+            throw backendFailure("INTERNAL", "Replacement plan does not satisfy exact count targets");
+          }
 
           const planId = randomUUID();
           pendingPlans.set(planId, {
@@ -867,6 +907,9 @@ export const createSynthesisService = ({
         }
 
         const outcome = targetSetOutcome(report.achieved, frozenTargets);
+        if (outcome.targets.some((target) => target.kind === "count" && !target.exact)) {
+          throw backendFailure("INTERNAL", "Successful synthesis returned an inexact count target");
+        }
         const engineReport: Record<string, unknown> = {
           ...jsonRecord(report),
           achieved: outcome,
@@ -894,6 +937,17 @@ export const createSynthesisService = ({
       const pending = pendingPlans.get(planId);
       if (!pending) {
         throw backendFailure("NOT_FOUND", "EditPlan is no longer available");
+      }
+      if (
+        choice === "append_only" &&
+        pending.editPlan.appendOnlyOutcome.targets.some(
+          (target) => target.kind === "count" && !target.exact,
+        )
+      ) {
+        throw backendFailure(
+          "TARGET_CONFLICT",
+          "Append-only cannot be approved because count targets are exact; choose replacement",
+        );
       }
 
       const useReplacement = choice === "replacement";
