@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
+from scipy.stats import ks_2samp
 from sdmetrics.reports import QualityReport
 
 
@@ -17,6 +18,8 @@ class Evaluation:
     max_fingerprint_share: float
     source_clone_count: int
     source_clone_rate: float
+    timestamp_ks_statistic: float | None
+    timestamp_median_delta_seconds: float | None
     quality_score: float | None
     quality_warning: str | None
 
@@ -58,6 +61,46 @@ def _row_diagnostics(
     )
 
 
+def _timestamps(data: pd.DataFrame, column: str, label: str) -> pd.Series:
+    if column not in data.columns:
+        raise RuntimeError(f"{label} dataset is missing timestamp column: {column}")
+    values = pd.to_datetime(data[column], utc=True, errors="coerce")
+    if values.isna().any():
+        raise RuntimeError(f"{label} dataset contains invalid timestamps")
+    return values
+
+
+def _timestamp_diagnostics(
+    source: pd.DataFrame,
+    synthetic: pd.DataFrame,
+    final: pd.DataFrame,
+    *,
+    timestamp_column: str | None,
+    timestamp_start: pd.Timestamp | None = None,
+    timestamp_end: pd.Timestamp | None = None,
+) -> tuple[float | None, float | None]:
+    if timestamp_column is None:
+        return None, None
+
+    source_values = _timestamps(source, timestamp_column, "SourceScope")
+    final_values = _timestamps(final, timestamp_column, "Final")
+    if timestamp_start is not None and (final_values < timestamp_start).any():
+        raise RuntimeError("Final dataset contains a timestamp before the frozen time scope")
+    if timestamp_end is not None and (final_values > timestamp_end).any():
+        raise RuntimeError("Final dataset contains a timestamp after the frozen time scope")
+    if synthetic.empty:
+        return None, None
+
+    synthetic_values = _timestamps(synthetic, timestamp_column, "Synthetic")
+    source_ns = source_values.astype("int64").to_numpy(dtype=float)
+    synthetic_ns = synthetic_values.astype("int64").to_numpy(dtype=float)
+    ks_statistic = float(ks_2samp(source_ns, synthetic_ns, method="auto").statistic)
+    median_delta_seconds = float(
+        (synthetic_values.median() - source_values.median()).total_seconds()
+    )
+    return ks_statistic, median_delta_seconds
+
+
 def evaluate_result(
     source: pd.DataFrame,
     synthetic: pd.DataFrame,
@@ -70,6 +113,9 @@ def evaluate_result(
     target_min: int,
     target_max: int,
     expected_final_count: int,
+    timestamp_column: str | None = None,
+    timestamp_start: pd.Timestamp | None = None,
+    timestamp_end: pd.Timestamp | None = None,
 ) -> Evaluation:
     if len(final) != expected_final_count:
         raise RuntimeError(
@@ -91,6 +137,14 @@ def evaluate_result(
         source_clone_count,
         source_clone_rate,
     ) = _row_diagnostics(source, synthetic, final, id_column=id_column)
+    timestamp_ks_statistic, timestamp_median_delta_seconds = _timestamp_diagnostics(
+        source,
+        synthetic,
+        final,
+        timestamp_column=timestamp_column,
+        timestamp_start=timestamp_start,
+        timestamp_end=timestamp_end,
+    )
 
     quality_score: float | None = None
     quality_warning: str | None = None
@@ -119,6 +173,8 @@ def evaluate_result(
         max_fingerprint_share=max_fingerprint_share,
         source_clone_count=source_clone_count,
         source_clone_rate=source_clone_rate,
+        timestamp_ks_statistic=timestamp_ks_statistic,
+        timestamp_median_delta_seconds=timestamp_median_delta_seconds,
         quality_score=quality_score,
         quality_warning=quality_warning,
     )
