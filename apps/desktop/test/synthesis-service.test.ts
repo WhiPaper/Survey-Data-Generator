@@ -276,6 +276,46 @@ describe("target synthesis service", () => {
     expect(share).toMatchObject({ id: "t-checkbox-a", column: "q_2", value: 0.5 });
   });
 
+  it("returns a structured invalid_subject issue for an invalid option reference", async () => {
+    const { database, workRoot } = setup();
+    let engineCalled = false;
+    const service = createSynthesisService({
+      db: database.db,
+      engine: captureEngine(() => {
+        engineCalled = true;
+      }),
+      workRoot,
+    });
+
+    await expect(
+      service.start({
+        projectId: "project-1",
+        finalCount: 4,
+        targets: [
+          { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.5 },
+          {
+            id: "t-bad-option" as never,
+            kind: "share",
+            subject: { kind: "option", questionId: "q-region", optionKey: "missing" },
+            value: 0.5,
+          },
+        ],
+        sourceScope: { kind: "all" },
+        seed: 42,
+      }),
+    ).resolves.toEqual({
+      status: "infeasible",
+      issues: [
+        {
+          targetIds: ["t-bad-option"],
+          code: "invalid_subject",
+          message: "Option share subject was not found in the Form",
+        },
+      ],
+    });
+    expect(engineCalled).toBe(false);
+  });
+
   it("keeps CountTarget in the public contract while reporting the Phase 2 execution boundary", async () => {
     const { database, workRoot } = setup();
     let engineCalled = false;
