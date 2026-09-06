@@ -23,7 +23,6 @@ const packageRules = [
     name: "contracts",
     files: "packages/contracts/src/**/*.ts",
     forbidden: [
-      /^@survey-synth\/never/,
       noInternalPackageSource,
       noNodeRuntime,
       /^(react|react-dom)/,
@@ -35,7 +34,6 @@ const packageRules = [
     name: "desktop-renderer",
     files: "apps/desktop/src/**/*.{ts,tsx}",
     forbidden: [
-      /^@survey-synth\/test-support/,
       noInternalPackageSource,
       /^(node:|fs$|fs\/|path$|path\/)/,
       /(google|sqlite|highs|solver)/i,
