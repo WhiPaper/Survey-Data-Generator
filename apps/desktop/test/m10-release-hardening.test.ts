@@ -32,9 +32,7 @@ describe("M10 release hardening", () => {
 
     expect(updateTokenDefine).toBeGreaterThanOrEqual(0);
     expect(updateTokenDefine).toBeLessThan(preloadOffset);
-    expect(config.slice(rendererOffset)).not.toContain(
-      "__SURVEY_SYNTH_UPDATE_GITHUB_TOKEN__",
-    );
+    expect(config.slice(rendererOffset)).not.toContain("__SURVEY_SYNTH_UPDATE_GITHUB_TOKEN__");
     expect(updater).toContain('const UPDATE_OWNER = "WhiPaper";');
     expect(updater).toContain('const UPDATE_REPOSITORY = "Survey-Data-Generator";');
     expect(updater).toContain("Authorization: `Bearer ${token}`");
