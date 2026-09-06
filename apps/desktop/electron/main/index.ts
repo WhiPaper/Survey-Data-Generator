@@ -13,12 +13,17 @@ import { createRunExportService } from "./export/service";
 import { createGoogleFormsClient } from "./forms/google-client";
 import { createFormsService } from "./forms/service";
 import { createJobRegistry } from "./jobs";
+import { runPackagedSmoke } from "./packaged-smoke";
 import { openAppDatabase, type AppDatabase } from "./persistence/database";
 import { createProjectService } from "./projects/service";
 import { createSynthesisService } from "./synthesis/service";
 import { createValueGroupService } from "./value-groups/service";
 
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
+const packagedSmoke = app.isPackaged && process.env.SURVEY_SYNTH_PACKAGED_SMOKE === "1";
+const packagedSmokeUserData = process.env.SURVEY_SYNTH_PACKAGED_SMOKE_DIR?.trim();
+if (packagedSmoke && packagedSmokeUserData) app.setPath("userData", packagedSmokeUserData);
+
 let appDatabase: AppDatabase | null = null;
 let backendServices: BackendServices = {};
 
@@ -59,7 +64,7 @@ ipcMain.handle(BACKEND_CALL_CHANNEL, async (_event, serializedRequest: string) =
 
 void app
   .whenReady()
-  .then(() => {
+  .then(async () => {
     const userDataPath = app.getPath("userData");
     appDatabase = openAppDatabase({
       filename: join(userDataPath, "survey-synth.sqlite"),
@@ -80,6 +85,12 @@ void app
     });
     const jobs = createJobRegistry();
     const googleForms = createGoogleFormsClient({ auth });
+    const forms = createFormsService({
+      auth,
+      google: googleForms,
+      db: appDatabase.db,
+      jobs,
+    });
     const engine = createPythonEngine({
       jobs,
       launch: resolveEngineLaunch({
@@ -92,12 +103,7 @@ void app
 
     backendServices = {
       auth,
-      forms: createFormsService({
-        auth,
-        google: googleForms,
-        db: appDatabase.db,
-        jobs,
-      }),
+      forms,
       projects: createProjectService({ db: appDatabase.db }),
       valueGroups: createValueGroupService(appDatabase.db),
       synthesis: createSynthesisService({
@@ -120,6 +126,19 @@ void app
         return result.canceled ? null : (result.filePath ?? null);
       },
     };
+
+    if (packagedSmoke) {
+      await runPackagedSmoke({
+        appPath: app.getAppPath(),
+        database: appDatabase,
+        engine,
+        forms,
+        workRoot: join(userDataPath, "packaged-smoke"),
+      });
+      console.log("PACKAGED_SMOKE_OK");
+      app.quit();
+      return;
+    }
 
     createWindow();
     app.on("activate", () => {
