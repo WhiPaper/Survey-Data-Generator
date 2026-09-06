@@ -24,6 +24,14 @@ class CandidatePool:
 
 
 @dataclass(frozen=True)
+class MeanCandidateSupport:
+    column: str
+    minimum: int
+    maximum: int
+    score_counts: dict[int, int]
+
+
+@dataclass(frozen=True)
 class ShareCandidateSupport:
     column: str
     member_values: frozenset[str]
@@ -102,6 +110,7 @@ def _build_metadata(
     model_data: pd.DataFrame,
     *,
     target_column: str,
+    mean_columns: tuple[str, ...],
     categorical_columns: list[str],
     timestamp_column: str | None,
 ) -> tuple[Metadata, dict[str, object]]:
@@ -110,11 +119,12 @@ def _build_metadata(
         table_name=TABLE_NAME,
         infer_keys=None,
     )
-    metadata.update_column(
-        column_name=target_column,
-        sdtype="numerical",
-        table_name=TABLE_NAME,
-    )
+    for column in (target_column, *mean_columns):
+        metadata.update_column(
+            column_name=column,
+            sdtype="numerical",
+            table_name=TABLE_NAME,
+        )
     if timestamp_column is not None:
         metadata.update_column(
             column_name=timestamp_column,
@@ -391,6 +401,20 @@ def _sample_schema_option_candidates(
     return batches
 
 
+def _normalize_mean_columns(
+    data: pd.DataFrame,
+    supports: tuple[MeanCandidateSupport, ...],
+) -> pd.DataFrame:
+    normalized = data.copy()
+    for support in supports:
+        numeric = pd.to_numeric(normalized[support.column], errors="coerce")
+        answered = numeric.notna()
+        if answered.any():
+            rounded = numeric.loc[answered].round().clip(support.minimum, support.maximum).astype(int)
+            normalized.loc[answered, support.column] = rounded
+    return normalized
+
+
 def generate_candidates(
     source: pd.DataFrame,
     *,
@@ -405,6 +429,7 @@ def generate_candidates(
     timestamp_column: str | None = None,
     timestamp_start: pd.Timestamp | None = None,
     timestamp_end: pd.Timestamp | None = None,
+    mean_supports: tuple[MeanCandidateSupport, ...] = (),
     share_supports: tuple[ShareCandidateSupport, ...] = (),
     share_support: ShareCandidateSupport | None = None,
     conditional_supports: tuple[ConditionalCandidateSupport, ...] = (),
@@ -417,6 +442,15 @@ def generate_candidates(
         raise ValueError(f"source is missing timestamp column: {timestamp_column}")
     if any(score < target_min or score > target_max for score in target_score_counts):
         raise ValueError("target score support contains a value outside the ordinal range")
+    for support in mean_supports:
+        if support.column == target_column:
+            raise ValueError("extra mean support must not duplicate the primary target column")
+        if support.column not in source.columns:
+            raise ValueError(f"source is missing mean target column: {support.column}")
+        if support.minimum > support.maximum:
+            raise ValueError("mean support minimum must not exceed maximum")
+        if any(score < support.minimum or score > support.maximum for score in support.score_counts):
+            raise ValueError("mean support contains a score outside the ordinal range")
 
     categorical_columns = categorical_columns or []
     missing_categorical = [column for column in categorical_columns if column not in source.columns]
@@ -441,15 +475,18 @@ def generate_candidates(
         share_supports = (*share_supports, share_support)
 
     share_schema_members: list[tuple[ShareCandidateSupport, frozenset[str]]] = []
-    for share_support in share_supports:
-        if share_support.column not in allowed_values:
+    for current_share_support in share_supports:
+        if current_share_support.column not in allowed_values:
             raise ValueError("share support column must be one of categorical_columns")
-        observed_share_values = allowed_values[share_support.column]
-        share_schema_member_values = share_support.member_values - observed_share_values
-        share_schema_members.append((share_support, share_schema_member_values))
+        observed_share_values = allowed_values[current_share_support.column]
+        share_schema_member_values = current_share_support.member_values - observed_share_values
+        share_schema_members.append((current_share_support, share_schema_member_values))
         if any(not _schema_backed_answer_slot(value) for value in share_schema_member_values):
             raise ValueError("share support outside observed source support must be schema-backed AnswerSlots")
-        if share_support.synthetic_member_count < 0 or share_support.synthetic_nonmember_count < 0:
+        if (
+            current_share_support.synthetic_member_count < 0
+            or current_share_support.synthetic_nonmember_count < 0
+        ):
             raise ValueError("share support counts must be non-negative")
 
     for support in conditional_supports:
@@ -470,6 +507,7 @@ def generate_candidates(
     metadata, quality_metadata = _build_metadata(
         model_data,
         target_column=target_column,
+        mean_columns=tuple(support.column for support in mean_supports),
         categorical_columns=categorical_columns,
         timestamp_column=timestamp_column,
     )
@@ -490,6 +528,7 @@ def generate_candidates(
         if sampled.empty:
             raise RuntimeError("SDV did not produce valid candidates for a target-free run")
         sampled[target_column] = 0
+        sampled = _normalize_mean_columns(sampled, mean_supports)
         if timestamp_column is not None:
             sampled[timestamp_column] = pd.to_datetime(sampled[timestamp_column], utc=True)
         return CandidatePool(data=sampled, metadata=quality_metadata)
@@ -521,23 +560,56 @@ def generate_candidates(
             )
         )
 
-    for share_support, share_schema_member_values in share_schema_members:
-        observed = allowed_values[share_support.column]
-        observed_member_values = share_support.member_values - share_schema_member_values
+    # Each additional mean receives schema-backed ordinal support rather than relying on
+    # accidental SDV samples from the primary score distribution. Pairing every extra
+    # target with each primary score keeps the pool polynomial while preserving enough
+    # joint support for the MILP to optimize all means together.
+    for support in mean_supports:
+        extra_score_counts = _expanded_score_support(
+            model_data,
+            target_column=support.column,
+            target_min=support.minimum,
+            target_max=support.maximum,
+            target_score_counts=support.score_counts,
+        )
+        for primary_score, primary_required in candidate_score_counts.items():
+            for extra_score, extra_required in extra_score_counts.items():
+                requested = max(min(max(primary_required, extra_required) * 2, pool_size), 4)
+                sampled = _sample_condition(
+                    synthesizer,
+                    requested=requested,
+                    condition_values={target_column: primary_score},
+                    target_column=target_column,
+                    target_score=primary_score,
+                    target_min=target_min,
+                    target_max=target_max,
+                    allowed_values=allowed_values,
+                    timestamp_column=timestamp_column,
+                    timestamp_start=timestamp_start,
+                    timestamp_end=timestamp_end,
+                )
+                sampled[support.column] = extra_score
+                accepted.append(sampled)
+
+    for current_share_support, share_schema_member_values in share_schema_members:
+        observed = allowed_values[current_share_support.column]
+        observed_member_values = current_share_support.member_values - share_schema_member_values
         nonmember_values = observed - observed_member_values
         for score, required_score_count in candidate_score_counts.items():
             state_requests = [
                 (
                     observed_member_values,
                     max(
-                        min(required_score_count, share_support.synthetic_member_count),
+                        min(required_score_count, current_share_support.synthetic_member_count),
                         1 if observed_member_values else 0,
-                    ) if observed_member_values else 0,
+                    )
+                    if observed_member_values
+                    else 0,
                 ),
                 (
                     nonmember_values,
                     max(
-                        min(required_score_count, share_support.synthetic_nonmember_count),
+                        min(required_score_count, current_share_support.synthetic_nonmember_count),
                         1 if nonmember_values else 0,
                     ),
                 ),
@@ -548,7 +620,7 @@ def generate_candidates(
                 directed_total = max(required_capacity * 3, 20)
                 for value, requested in _weighted_requests(
                     model_data,
-                    share_support.column,
+                    current_share_support.column,
                     values,
                     directed_total,
                 ):
@@ -558,7 +630,7 @@ def generate_candidates(
                             requested=requested,
                             condition_values={
                                 target_column: score,
-                                share_support.column: value,
+                                current_share_support.column: value,
                             },
                             target_column=target_column,
                             target_score=score,
@@ -571,9 +643,9 @@ def generate_candidates(
                         )
                     )
 
-            if share_support.synthetic_member_count > 0 and share_schema_member_values:
+            if current_share_support.synthetic_member_count > 0 and share_schema_member_values:
                 directed_total = max(
-                    min(required_score_count, share_support.synthetic_member_count) * 3,
+                    min(required_score_count, current_share_support.synthetic_member_count) * 3,
                     20,
                 )
                 schema_requested = max(1, math.ceil(directed_total / len(share_schema_member_values)))
@@ -581,7 +653,7 @@ def generate_candidates(
                     accepted.append(
                         _sample_schema_share_candidates(
                             synthesizer,
-                            column=share_support.column,
+                            column=current_share_support.column,
                             schema_value=schema_value,
                             requested=schema_requested,
                             target_column=target_column,
@@ -658,4 +730,5 @@ def generate_candidates(
         raise RuntimeError("SDV did not produce any target-directed candidates")
 
     data = pd.concat(accepted, ignore_index=True) if accepted else model_data.iloc[0:0].copy()
+    data = _normalize_mean_columns(data, mean_supports)
     return CandidatePool(data=data, metadata=quality_metadata)
