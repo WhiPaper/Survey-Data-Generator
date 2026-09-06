@@ -163,16 +163,56 @@ const replacementEngine = (): PythonEngine => ({
   synthesize: async (_operationId, jobPath) => {
     const workDir = dirname(jobPath);
     writeResult(join(workDir, "result.parquet"), [
-      { responseId: "source-1", submittedAt: new Date(3000).toISOString(), score: 5, origin: "original" },
-      { responseId: "source-2", submittedAt: new Date(4000).toISOString(), score: 5, origin: "original" },
-      { responseId: "source-3", submittedAt: new Date(5000).toISOString(), score: 5, origin: "original" },
-      { responseId: "synthetic:7:1", submittedAt: new Date(6000).toISOString(), score: 1, origin: "synthetic" },
+      {
+        responseId: "source-1",
+        submittedAt: new Date(3000).toISOString(),
+        score: 5,
+        origin: "original",
+      },
+      {
+        responseId: "source-2",
+        submittedAt: new Date(4000).toISOString(),
+        score: 5,
+        origin: "original",
+      },
+      {
+        responseId: "source-3",
+        submittedAt: new Date(5000).toISOString(),
+        score: 5,
+        origin: "original",
+      },
+      {
+        responseId: "synthetic:7:1",
+        submittedAt: new Date(6000).toISOString(),
+        score: 1,
+        origin: "synthetic",
+      },
     ]);
     writeResult(join(workDir, "result.replacement.parquet"), [
-      { responseId: "source-1", submittedAt: new Date(3000).toISOString(), score: 5, origin: "original" },
-      { responseId: "source-2", submittedAt: new Date(4000).toISOString(), score: 5, origin: "original" },
-      { responseId: "replacement:7:1", submittedAt: new Date(5500).toISOString(), score: 1, origin: "synthetic" },
-      { responseId: "synthetic:7:1", submittedAt: new Date(6000).toISOString(), score: 1, origin: "synthetic" },
+      {
+        responseId: "source-1",
+        submittedAt: new Date(3000).toISOString(),
+        score: 5,
+        origin: "original",
+      },
+      {
+        responseId: "source-2",
+        submittedAt: new Date(4000).toISOString(),
+        score: 5,
+        origin: "original",
+      },
+      {
+        responseId: "replacement:7:1",
+        submittedAt: new Date(5500).toISOString(),
+        score: 1,
+        origin: "synthetic",
+      },
+      {
+        responseId: "synthetic:7:1",
+        submittedAt: new Date(6000).toISOString(),
+        score: 1,
+        origin: "synthetic",
+      },
     ]);
     return {
       status: "success",

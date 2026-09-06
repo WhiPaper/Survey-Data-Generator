@@ -405,6 +405,7 @@ def generate_candidates(
     timestamp_column: str | None = None,
     timestamp_start: pd.Timestamp | None = None,
     timestamp_end: pd.Timestamp | None = None,
+    share_supports: tuple[ShareCandidateSupport, ...] = (),
     share_support: ShareCandidateSupport | None = None,
     conditional_supports: tuple[ConditionalCandidateSupport, ...] = (),
 ) -> CandidatePool:
@@ -436,12 +437,16 @@ def generate_candidates(
             raise ValueError(f"categorical source column must contain strings only: {column}")
         allowed_values[column] = frozenset(values.tolist())
 
-    share_schema_member_values: frozenset[str] = frozenset()
     if share_support is not None:
+        share_supports = (*share_supports, share_support)
+
+    share_schema_members: list[tuple[ShareCandidateSupport, frozenset[str]]] = []
+    for share_support in share_supports:
         if share_support.column not in allowed_values:
             raise ValueError("share support column must be one of categorical_columns")
         observed_share_values = allowed_values[share_support.column]
         share_schema_member_values = share_support.member_values - observed_share_values
+        share_schema_members.append((share_support, share_schema_member_values))
         if any(not _schema_backed_answer_slot(value) for value in share_schema_member_values):
             raise ValueError("share support outside observed source support must be schema-backed AnswerSlots")
         if share_support.synthetic_member_count < 0 or share_support.synthetic_nonmember_count < 0:
@@ -504,7 +509,7 @@ def generate_candidates(
             )
         )
 
-    if share_support is not None:
+    for share_support, share_schema_member_values in share_schema_members:
         observed = allowed_values[share_support.column]
         observed_member_values = share_support.member_values - share_schema_member_values
         nonmember_values = observed - observed_member_values
@@ -515,7 +520,7 @@ def generate_candidates(
                     max(
                         min(required_score_count, share_support.synthetic_member_count),
                         1 if observed_member_values else 0,
-                    ),
+                    ) if observed_member_values else 0,
                 ),
                 (
                     nonmember_values,

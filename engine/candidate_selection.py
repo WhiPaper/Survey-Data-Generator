@@ -32,6 +32,22 @@ class ShareTarget:
 
 
 @dataclass(frozen=True)
+class CountTarget:
+    id: str
+    column: str
+    member_values: frozenset[str]
+    value: int
+
+
+@dataclass(frozen=True)
+class CountAchievement:
+    id: str
+    value: int
+    achieved_count: int
+    absolute_error: int
+
+
+@dataclass(frozen=True)
 class ShareSupportPlan:
     id: str
     source_member_count: int
@@ -85,6 +101,7 @@ class TargetSelection:
     mean_exact: bool
     shares: tuple[ShareAchievement, ...]
     conditional_shares: tuple[ConditionalShareAchievement, ...]
+    counts: tuple[CountAchievement, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -179,6 +196,15 @@ def _membership(data: pd.DataFrame, target: ShareTarget) -> np.ndarray:
         column=target.column,
         values=target.member_values,
         missing_code="share_column_missing",
+    )
+
+
+def _count_membership(data: pd.DataFrame, target: CountTarget) -> np.ndarray:
+    return _categorical_membership(
+        data,
+        column=target.column,
+        values=target.member_values,
+        missing_code="count_column_missing",
     )
 
 
@@ -382,14 +408,18 @@ def select_for_targets(
     target_mean: float,
     target_min: int,
     target_max: int,
+    count_targets: tuple[CountTarget, ...] = (),
+    enforce_counts: bool = True,
     share_targets: tuple[ShareTarget, ...] = (),
     conditional_share_targets: tuple[ConditionalShareTarget, ...] = (),
 ) -> TargetSelection:
-    if len(share_targets) > 1:
-        raise TargetInfeasible(
-            "too_many_share_targets",
-            "The current synthesis engine supports at most one unconditional share target per Run",
-        )
+    if len({target.id for target in (*count_targets, *share_targets)}) != len(count_targets) + len(share_targets):
+        raise TargetInfeasible("duplicate_categorical_target", "Categorical target ids must be unique")
+    for target in count_targets:
+        if not 0 <= target.value <= final_count:
+            raise TargetInfeasible("count_out_of_range", f"Requested count {target.value} is outside [0, {final_count}]")
+        if not target.member_values:
+            raise TargetInfeasible("count_member_support", f"Count target {target.id} has no supported member values")
     if len({target.id for target in conditional_share_targets}) != len(conditional_share_targets):
         raise TargetInfeasible(
             "duplicate_conditional_share_target",
@@ -474,6 +504,10 @@ def select_for_targets(
             achieved_mean=mean_support.achieved_mean,
             mean_absolute_error=mean_support.absolute_error,
             mean_exact=mean_support.absolute_error <= 1e-9,
+            counts=tuple(
+                CountAchievement(target.id, target.value, int(_count_membership(source, target).sum()), abs(int(_count_membership(source, target).sum()) - target.value))
+                for target in count_targets
+            ),
             shares=shares,
             conditional_shares=tuple(conditional_results),
         )
@@ -493,6 +527,8 @@ def select_for_targets(
     candidate_score_values = candidate_scores.to_numpy(dtype=float)
     source_memberships = [_membership(source, share) for share in share_targets]
     candidate_memberships = [_membership(candidates, share) for share in share_targets]
+    source_count_memberships = [_count_membership(source, target) for target in count_targets]
+    candidate_count_memberships = [_count_membership(candidates, target) for target in count_targets]
     candidate_conditional = [
         _conditional_vectors(candidates, target) for target in conditional_share_targets
     ]
@@ -522,6 +558,11 @@ def select_for_targets(
             )
         ),
         share_values=tuple(target.value for target in share_targets),
+        count_memberships=tuple(
+            np.concatenate([source_membership, candidate_membership])
+            for source_membership, candidate_membership in zip(source_count_memberships, candidate_count_memberships, strict=True)
+        ) if enforce_counts else (),
+        count_values=tuple(target.value for target in count_targets) if enforce_counts else (),
         conditionals=tuple(
             ConditionalMetric(
                 population_key=_conditional_group_key(target),
@@ -635,6 +676,15 @@ def select_for_targets(
         achieved_mean=achieved_mean,
         mean_absolute_error=mean_error,
         mean_exact=mean_error <= 1e-9,
+        counts=tuple(
+            CountAchievement(
+                target.id,
+                target.value,
+                (achieved := int(_count_membership(source, target).sum() + _count_membership(candidates, target)[selected].sum())),
+                abs(achieved - target.value),
+            )
+            for target in count_targets
+        ),
         shares=share_results,
         conditional_shares=tuple(conditional_results),
     )

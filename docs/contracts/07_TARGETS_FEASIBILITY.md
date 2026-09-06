@@ -68,11 +68,9 @@ type ConditionalShareTarget = {
 
 Target cardinality is a product semantic, not a permanent API restriction. Compatible target sets should eventually flow to the feasibility solver rather than being rejected simply because several targets were supplied.
 
-The current engine still has staged execution limits:
+The engine supports multiple depth-1 categorical `count` and `share` targets in one Run. Count targets are exact constraints; share targets use the nearest integer-row representation. Both participate in candidate support, append-only selection, evaluation, and replacement planning.
 
-- CountTarget is accepted by the public contract but executable count compilation is deferred to Phase 2.
-- The current candidate generator executes at most one unconditional share target. Removing that temporary execution boundary is Phase 2.
-- The current engine requires exactly one mean target. Mean cardinality `0..N` is Phase 3 because it requires a vertical refactor of synthesis, evaluation, and replacement paths.
+The remaining staged execution limit is that the engine requires exactly one mean target. Mean cardinality `0..N` is Phase 3 because it requires a vertical refactor of synthesis, evaluation, and replacement paths.
 
 These are engine capability boundaries. They are surfaced as structured `domain_unsupported` issues rather than encoded as permanent public-schema restrictions.
 

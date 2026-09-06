@@ -40,6 +40,7 @@ from generate import (  # noqa: E402
 from prepare import read_source, smoke_source, write_parquet  # noqa: E402
 from replacement import EditPlanSelection, plan_replacements  # noqa: E402
 from candidate_selection import (  # noqa: E402
+    CountTarget,
     ConditionalShareTarget,
     ShareTarget,
     TargetInfeasible,
@@ -82,6 +83,15 @@ class ShareTargetSpec(BaseModel):
     value: float
 
 
+class CountTargetSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    column: str
+    member_values: list[str] = Field(min_length=1)
+    value: int = Field(ge=0)
+
+
 class ConditionalShareTargetSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -98,6 +108,7 @@ class SynthesizeJob(JobPaths):
     kind: Literal["synthesize"]
     final_count: int
     mean_target: MeanTargetSpec
+    count_targets: list[CountTargetSpec] = Field(default_factory=list)
     share_targets: list[ShareTargetSpec] = Field(default_factory=list)
     conditional_share_targets: list[ConditionalShareTargetSpec] = Field(default_factory=list)
     seed: int
@@ -221,6 +232,10 @@ def _infeasible_report(job: SynthesizeJob, issue: TargetInfeasible) -> dict[str,
             {"id": target.id, "column": target.column, "value": target.value}
             for target in job.share_targets
         ],
+        "countTargets": [
+            {"id": target.id, "column": target.column, "value": target.value}
+            for target in job.count_targets
+        ],
         "conditionalShareTargets": [
             {
                 "id": target.id,
@@ -243,6 +258,13 @@ def _share_targets(job: SynthesizeJob) -> tuple[ShareTarget, ...]:
             value=target.value,
         )
         for target in job.share_targets
+    )
+
+
+def _count_targets(job: SynthesizeJob) -> tuple[CountTarget, ...]:
+    return tuple(
+        CountTarget(target.id, target.column, frozenset(target.member_values), target.value)
+        for target in job.count_targets
     )
 
 
@@ -286,6 +308,16 @@ def _target_outcome(selection: TargetSelection) -> dict[str, object]:
                 "exact": target.absolute_error <= 1e-9,
             }
             for target in selection.shares
+        ],
+        "counts": [
+            {
+                "id": target.id,
+                "value": target.value,
+                "count": target.achieved_count,
+                "absoluteError": target.absolute_error,
+                "exact": target.absolute_error == 0,
+            }
+            for target in selection.counts
         ],
         "conditionalShares": [
             {
@@ -380,8 +412,8 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         raise ValueError("categorical_columns must not contain duplicates")
     if len({target.id for target in job.share_targets}) != len(job.share_targets):
         raise ValueError("share target ids must be unique")
-    if len(job.share_targets) > 1:
-        raise ValueError("The current synthesis engine supports at most one unconditional share target per Run")
+    if len({target.id for target in job.count_targets}) != len(job.count_targets):
+        raise ValueError("count target ids must be unique")
     if len({target.id for target in job.conditional_share_targets}) != len(
         job.conditional_share_targets
     ):
@@ -406,6 +438,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
         job.mean_target.column,
         *job.categorical_columns,
         *(target.column for target in job.share_targets),
+        *(target.column for target in job.count_targets),
         *(target.population_column for target in job.conditional_share_targets),
         *(target.option_column for target in job.conditional_share_targets),
     }
@@ -440,6 +473,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
     source_count = len(source)
     additions = job.final_count - source_count
     shares = _share_targets(job)
+    counts = _count_targets(job)
     conditionals = _conditional_share_targets(job)
 
     try:
@@ -455,19 +489,25 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             plan_share_support(source, target=share, final_count=job.final_count)
             for share in shares
         )
+        count_supports = tuple(
+            plan_share_support(
+                source,
+                target=ShareTarget(count.id, count.column, count.member_values, count.value / job.final_count),
+                final_count=job.final_count,
+            )
+            for count in counts
+        )
     except TargetInfeasible as issue:
         return _write_infeasible(job, source_count, issue)
-
-    generator_share_support = None
-    if shares:
-        share = shares[0]
-        support = share_supports[0]
-        generator_share_support = ShareCandidateSupport(
+    generator_share_supports = tuple(
+        ShareCandidateSupport(
             column=share.column,
             member_values=share.member_values,
             synthetic_member_count=support.synthetic_member_count,
             synthetic_nonmember_count=additions - support.synthetic_member_count,
         )
+        for share, support in (*tuple(zip(shares, share_supports, strict=True)), *tuple(zip(counts, count_supports, strict=True)))
+    )
     generator_conditional_supports = tuple(
         ConditionalCandidateSupport(
             id=compiled.id,
@@ -512,7 +552,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             timestamp_column=job.timestamp_column,
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
-            share_support=generator_share_support,
+            share_supports=generator_share_supports,
             conditional_supports=generator_conditional_supports,
         )
     except RuntimeError as error:
@@ -532,11 +572,27 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             target_mean=job.mean_target.value,
             target_min=job.mean_target.minimum,
             target_max=job.mean_target.maximum,
+            count_targets=counts,
             share_targets=shares,
             conditional_share_targets=conditionals,
         )
     except TargetInfeasible as issue:
-        return _write_infeasible(job, source_count, issue)
+        if counts and issue.code == "solver_infeasible":
+            selection = select_for_targets(
+                source,
+                pool.data,
+                target_column=job.mean_target.column,
+                final_count=job.final_count,
+                target_mean=job.mean_target.value,
+                target_min=job.mean_target.minimum,
+                target_max=job.mean_target.maximum,
+                count_targets=counts,
+                enforce_counts=False,
+                share_targets=shares,
+                conditional_share_targets=conditionals,
+            )
+        else:
+            return _write_infeasible(job, source_count, issue)
 
     synthetic = pool.data.iloc[selection.selected_indices].copy().reset_index(drop=True)
     synthetic.insert(
@@ -627,6 +683,7 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
 
     append_error = (
         selection.mean_absolute_error
+        + sum(target.absolute_error for target in selection.counts)
         + sum(target.absolute_error for target in selection.shares)
         + sum(target.absolute_error for target in selection.conditional_shares)
     )
@@ -646,10 +703,17 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             target_mean=job.mean_target.value,
             target_min=job.mean_target.minimum,
             target_max=job.mean_target.maximum,
+            count_targets=counts,
             share_targets=shares,
             conditional_share_targets=conditionals,
             append_only_outcome=selection,
         )
+        if any(target.absolute_error > 0 for target in selection.counts) and replacement_plan.status == "impossible":
+            return _write_infeasible(
+                job,
+                source_count,
+                TargetInfeasible("solver_infeasible", "Exact count targets cannot be satisfied by append-only or replacement selection"),
+            )
         edit_plan_report["status"] = replacement_plan.status
         if replacement_plan.status == "available":
             if replacement_plan.replacement_outcome is None:
@@ -718,6 +782,10 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             {"id": target.id, "column": target.column, "value": target.value}
             for target in job.share_targets
         ],
+        "countTargets": [
+            {"id": target.id, "column": target.column, "value": target.value}
+            for target in job.count_targets
+        ],
         "conditionalShareTargets": [
             {
                 "id": target.id,
@@ -734,6 +802,10 @@ def run_synthesize(job_path: Path) -> dict[str, object]:
             "bestPossibleMean": mean_support.achieved_mean,
             "bestPossibleAbsoluteError": mean_support.absolute_error,
             "shares": share_achieved,
+            "counts": [
+                {"id": target.id, "value": target.value, "count": target.achieved_count, "absoluteError": target.absolute_error, "exact": target.absolute_error == 0}
+                for target in selection.counts
+            ],
             "conditionalShares": conditional_achieved,
         },
         "editPlan": edit_plan_report,

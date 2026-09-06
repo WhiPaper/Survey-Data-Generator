@@ -235,21 +235,34 @@ const normalizeEngineIssue = (
   return issue(targets, code, raw.message);
 };
 
-const targetSetOutcome = (
-  value: unknown,
-  targets: readonly OutcomeTarget[],
-): TargetSetOutcome => {
+const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]): TargetSetOutcome => {
   const record = jsonRecord(value);
   if (Array.isArray(record.targets)) return TargetSetOutcomeSchema.parse(record);
 
   const rawShares = Array.isArray(record.shares) ? record.shares.map(jsonRecord) : [];
+  const rawCounts = Array.isArray(record.counts) ? record.counts.map(jsonRecord) : [];
   const rawConditionals = Array.isArray(record.conditionalShares)
     ? record.conditionalShares.map(jsonRecord)
     : [];
 
   return TargetSetOutcomeSchema.parse({
     targets: targets.flatMap((target) => {
-      if (target.kind === "count") return [];
+      if (target.kind === "count") {
+        const raw = rawCounts.find((candidate) => String(candidate.id) === String(target.id));
+        if (!raw || typeof raw.count !== "number" || typeof raw.absoluteError !== "number")
+          return [];
+        return [
+          {
+            targetId: target.id,
+            kind: "count",
+            requested: target.value,
+            achieved: raw.count,
+            absoluteError: raw.absoluteError,
+            exact: typeof raw.exact === "boolean" ? raw.exact : raw.absoluteError === 0,
+            numeratorCount: raw.count,
+          },
+        ];
+      }
       if (target.kind === "mean") {
         if (
           typeof record.mean !== "number" ||
@@ -364,7 +377,9 @@ export const createSynthesisService = ({
       if (scope.responses.length === 0) {
         return {
           status: "infeasible",
-          issues: [issue(params.targets, "candidate_support", "Selected SourceScope has no responses")],
+          issues: [
+            issue(params.targets, "candidate_support", "Selected SourceScope has no responses"),
+          ],
         };
       }
 
@@ -373,18 +388,35 @@ export const createSynthesisService = ({
       const shares = params.targets.filter((target) => target.kind === "share");
       const conditionals = params.targets.filter((target) => target.kind === "conditional_share");
 
-      if (counts.length > 0) {
-        return {
-          status: "infeasible",
-          issues: [
-            issue(
-              counts,
-              "domain_unsupported",
-              "Count targets are part of the public contract but are not executable by the current synthesis engine yet",
-            ),
-          ],
-        };
+      const directOptionTargets = [...counts, ...shares].filter(
+        (target) => target.subject.kind === "option",
+      );
+      for (const target of directOptionTargets) {
+        if (target.subject.kind !== "option") continue;
+        const questionId = target.subject.questionId;
+        const peers = directOptionTargets.filter(
+          (candidate) =>
+            candidate.subject.kind === "option" && candidate.subject.questionId === questionId,
+        );
+        const requestedCount = peers.reduce(
+          (sum, peer) =>
+            sum + (peer.kind === "count" ? peer.value : peer.value * params.finalCount),
+          0,
+        );
+        if (requestedCount > params.finalCount + 1e-9) {
+          return {
+            status: "infeasible",
+            issues: [
+              issue(
+                peers,
+                "target_conflict",
+                "Single-choice option targets exceed the final response count",
+              ),
+            ],
+          };
+        }
       }
+
       if (means.length !== 1) {
         return {
           status: "infeasible",
@@ -397,26 +429,15 @@ export const createSynthesisService = ({
           ],
         };
       }
-      if (shares.length > 1) {
-        return {
-          status: "infeasible",
-          issues: [
-            issue(
-              shares,
-              "domain_unsupported",
-              "The current candidate generator supports at most one unconditional share target",
-            ),
-          ],
-        };
-      }
-
       const mean = means[0]!;
       const form = loadForm(db, revision.formSnapshotId);
       const meanQuestion = form.questions.find((question) => question.id === mean.questionId);
       if (!meanQuestion || meanQuestion.kind !== "ordinal") {
         return {
           status: "infeasible",
-          issues: [issue([mean], "invalid_subject", "Mean target must reference an ordinal question")],
+          issues: [
+            issue([mean], "invalid_subject", "Mean target must reference an ordinal question"),
+          ],
         };
       }
       if (mean.value < meanQuestion.min || mean.value > meanQuestion.max) {
@@ -435,6 +456,12 @@ export const createSynthesisService = ({
         member_values: string[];
         value: number;
       }> = [];
+      const countJobTargets: Array<{
+        id: string;
+        column: string;
+        member_values: string[];
+        value: number;
+      }> = [];
       const conditionalJobTargets: Array<{
         id: string;
         population_column: string;
@@ -446,24 +473,37 @@ export const createSynthesisService = ({
       }> = [];
       const frozenTargets: FrozenRunTarget[] = [{ ...mean }];
 
-      for (const share of shares) {
+      for (const share of [...counts, ...shares]) {
         let column: string | undefined;
         let memberValues: string[] = [];
         let frozenSubject: FrozenTargetSubject;
+        const subject = share.subject;
 
-        if (share.subject.kind === "value_group") {
-          const group = findValueGroup(db, project.id, share.subject.valueGroupId);
+        if (subject.kind === "value_group") {
+          const group = findValueGroup(db, project.id, subject.valueGroupId);
           if (!group) {
             return {
               status: "infeasible",
-              issues: [issue([share], "invalid_subject", "Share target ValueGroup was not found in this project")],
+              issues: [
+                issue(
+                  [share],
+                  "invalid_subject",
+                  "Share target ValueGroup was not found in this project",
+                ),
+              ],
             };
           }
           const { row, members } = group;
           if (!isGroupableQuestion(form, row.questionId)) {
             return {
               status: "infeasible",
-              issues: [issue([share], "invalid_subject", "Share target ValueGroup must reference a single-choice or text question")],
+              issues: [
+                issue(
+                  [share],
+                  "invalid_subject",
+                  "Share target ValueGroup must reference a single-choice or text question",
+                ),
+              ],
             };
           }
           column = plan.questionColumns.get(row.questionId as QuestionId);
@@ -488,29 +528,33 @@ export const createSynthesisService = ({
               ],
             };
           }
-        } else if (share.subject.kind === "option") {
-          const question = form.questions.find(
-            (candidate) => candidate.id === share.subject.questionId,
-          );
+        } else if (subject.kind === "option") {
+          const question = form.questions.find((candidate) => candidate.id === subject.questionId);
           if (!question || question.kind !== "single_choice") {
             return {
               status: "infeasible",
-              issues: [issue([share], "invalid_subject", "Option share subject must reference a single-choice question")],
+              issues: [
+                issue(
+                  [share],
+                  "invalid_subject",
+                  "Option share subject must reference a single-choice question",
+                ),
+              ],
             };
           }
           const option = question.options.find(
-            (candidate) => String(candidate.key) === share.subject.optionKey,
+            (candidate) => String(candidate.key) === subject.optionKey,
           );
           if (!option) {
             return {
               status: "infeasible",
-              issues: [issue([share], "invalid_subject", "Option share subject was not found in the Form")],
+              issues: [
+                issue([share], "invalid_subject", "Option share subject was not found in the Form"),
+              ],
             };
           }
           column = plan.questionColumns.get(question.id);
-          memberValues = valueGroupMemberCells(scope.responses, question.id, [
-            share.subject.optionKey,
-          ]);
+          memberValues = valueGroupMemberCells(scope.responses, question.id, [subject.optionKey]);
           if (memberValues.length === 0) {
             memberValues = [
               JSON.stringify({
@@ -521,50 +565,62 @@ export const createSynthesisService = ({
           }
           frozenSubject = {
             kind: "option",
-            questionId: share.subject.questionId,
-            optionKey: share.subject.optionKey,
+            questionId: subject.questionId,
+            optionKey: subject.optionKey,
           };
         } else {
-          const question = form.questions.find(
-            (candidate) => candidate.id === share.subject.questionId,
-          );
+          const question = form.questions.find((candidate) => candidate.id === subject.questionId);
           if (!question || question.kind !== "multi_choice") {
             return {
               status: "infeasible",
-              issues: [issue([share], "invalid_subject", "Checkbox option share subject must reference a checkbox question")],
+              issues: [
+                issue(
+                  [share],
+                  "invalid_subject",
+                  "Checkbox option share subject must reference a checkbox question",
+                ),
+              ],
             };
           }
-          if (!question.options.some((option) => String(option.key) === share.subject.optionKey)) {
+          if (!question.options.some((option) => String(option.key) === subject.optionKey)) {
             return {
               status: "infeasible",
-              issues: [issue([share], "invalid_subject", "Checkbox option share subject was not found in the Form")],
+              issues: [
+                issue(
+                  [share],
+                  "invalid_subject",
+                  "Checkbox option share subject was not found in the Form",
+                ),
+              ],
             };
           }
           column = plan.questionColumns.get(question.id);
           memberValues = multiChoiceOptionSupport(
             scope.responses,
             question,
-            share.subject.optionKey,
+            subject.optionKey,
           ).optionValues;
           frozenSubject = {
             kind: "checkbox_option",
-            questionId: share.subject.questionId,
-            optionKey: share.subject.optionKey,
+            questionId: subject.questionId,
+            optionKey: subject.optionKey,
           };
         }
 
         if (!column) {
           throw backendFailure("INTERNAL", "Share subject is not available in the synthesis table");
         }
-        shareJobTargets.push({
+        const jobTarget = {
           id: String(share.id),
           column,
           member_values: memberValues,
           value: share.value,
-        });
+        };
+        if (share.kind === "count") countJobTargets.push(jobTarget);
+        else shareJobTargets.push(jobTarget);
         frozenTargets.push({
           id: share.id,
-          kind: "share",
+          kind: share.kind,
           subject: frozenSubject,
           value: share.value,
         });
@@ -575,14 +631,26 @@ export const createSynthesisService = ({
         if (!group) {
           return {
             status: "infeasible",
-            issues: [issue([target], "invalid_subject", "Conditional population ValueGroup was not found in this project")],
+            issues: [
+              issue(
+                [target],
+                "invalid_subject",
+                "Conditional population ValueGroup was not found in this project",
+              ),
+            ],
           };
         }
         const { row, members } = group;
         if (!isGroupableQuestion(form, row.questionId)) {
           return {
             status: "infeasible",
-            issues: [issue([target], "invalid_subject", "Conditional population ValueGroup must reference a single-choice or text question")],
+            issues: [
+              issue(
+                [target],
+                "invalid_subject",
+                "Conditional population ValueGroup must reference a single-choice or text question",
+              ),
+            ],
           };
         }
         const populationColumn = plan.questionColumns.get(row.questionId as QuestionId);
@@ -614,13 +682,25 @@ export const createSynthesisService = ({
         if (!checkbox || checkbox.kind !== "multi_choice") {
           return {
             status: "infeasible",
-            issues: [issue([target], "invalid_subject", "Conditional share target must reference a checkbox question")],
+            issues: [
+              issue(
+                [target],
+                "invalid_subject",
+                "Conditional share target must reference a checkbox question",
+              ),
+            ],
           };
         }
         if (!checkbox.options.some((option) => String(option.key) === target.optionKey)) {
           return {
             status: "infeasible",
-            issues: [issue([target], "invalid_subject", "Conditional share option was not found in the Form")],
+            issues: [
+              issue(
+                [target],
+                "invalid_subject",
+                "Conditional share option was not found in the Form",
+              ),
+            ],
           };
         }
         const optionColumn = plan.questionColumns.get(checkbox.id);
@@ -693,6 +773,7 @@ export const createSynthesisService = ({
                 minimum: meanQuestion.min,
                 maximum: meanQuestion.max,
               },
+              count_targets: countJobTargets,
               share_targets: shareJobTargets,
               conditional_share_targets: conditionalJobTargets,
               seed: params.seed,

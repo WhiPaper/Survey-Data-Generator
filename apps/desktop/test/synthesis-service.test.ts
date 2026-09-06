@@ -316,7 +316,57 @@ describe("target synthesis service", () => {
     expect(engineCalled).toBe(false);
   });
 
-  it("keeps CountTarget in the public contract while reporting the Phase 2 execution boundary", async () => {
+  it("compiles exact count and multiple categorical targets for the engine", async () => {
+    const { database, workRoot } = setup();
+    let engineCalled = false;
+    let captured: Record<string, unknown> | null = null;
+    const service = createSynthesisService({
+      db: database.db,
+      engine: captureEngine((job) => {
+        engineCalled = true;
+        captured = job;
+      }),
+      workRoot,
+    });
+
+    await service.start({
+      projectId: "project-1",
+      finalCount: 4,
+      targets: [
+        { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.5 },
+        {
+          id: "t-jeju-count" as never,
+          kind: "count",
+          subject: { kind: "option", questionId: "q-region", optionKey: "jeju" },
+          value: 1,
+        },
+        {
+          id: "t-checkbox-b" as never,
+          kind: "share",
+          subject: { kind: "checkbox_option", questionId: "q-checkbox", optionKey: "B" },
+          value: 0.75,
+        },
+        {
+          id: "t-seoul-share" as never,
+          kind: "share",
+          subject: { kind: "option", questionId: "q-region", optionKey: "seoul" },
+          value: 0.5,
+        },
+      ],
+      sourceScope: { kind: "all" },
+      seed: 42,
+    });
+    expect(engineCalled).toBe(true);
+    expect(captured!.count_targets).toEqual([
+      expect.objectContaining({ id: "t-jeju-count", value: 1 }),
+    ]);
+    expect(captured!.share_targets).toEqual([
+      expect.objectContaining({ id: "t-checkbox-b", value: 0.75 }),
+      expect.objectContaining({ id: "t-seoul-share", value: 0.5 }),
+    ]);
+  });
+
+  it("rejects an obvious same-question single-choice conflict", async () => {
     const { database, workRoot } = setup();
     let engineCalled = false;
     const service = createSynthesisService({
@@ -326,31 +376,34 @@ describe("target synthesis service", () => {
       }),
       workRoot,
     });
-
-    await expect(
-      service.start({
-        projectId: "project-1",
-        finalCount: 4,
-        targets: [
-          { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.5 },
-          {
-            id: "t-jeju-count" as never,
-            kind: "count",
-            subject: { kind: "option", questionId: "q-region", optionKey: "jeju" },
-            value: 1,
-          },
-        ],
-        sourceScope: { kind: "all" },
-        seed: 42,
-      }),
-    ).resolves.toEqual({
+    const result = await service.start({
+      projectId: "project-1",
+      finalCount: 4,
+      targets: [
+        { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.5 },
+        {
+          id: "t-seoul" as never,
+          kind: "share",
+          subject: { kind: "option", questionId: "q-region", optionKey: "seoul" },
+          value: 0.8,
+        },
+        {
+          id: "t-busan" as never,
+          kind: "share",
+          subject: { kind: "option", questionId: "q-region", optionKey: "busan" },
+          value: 0.7,
+        },
+      ],
+      sourceScope: { kind: "all" },
+      seed: 42,
+    });
+    expect(result).toEqual({
       status: "infeasible",
       issues: [
         {
-          targetIds: ["t-jeju-count"],
-          code: "domain_unsupported",
-          message:
-            "Count targets are part of the public contract but are not executable by the current synthesis engine yet",
+          targetIds: ["t-seoul", "t-busan"],
+          code: "target_conflict",
+          message: "Single-choice option targets exceed the final response count",
         },
       ],
     });

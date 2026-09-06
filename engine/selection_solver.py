@@ -31,12 +31,16 @@ def solve_binary_selection(
     fix_source: bool,
     share_memberships: tuple[np.ndarray, ...] = (),
     share_values: tuple[float, ...] = (),
+    count_memberships: tuple[np.ndarray, ...] = (),
+    count_values: tuple[int, ...] = (),
     conditionals: tuple[ConditionalMetric, ...] = (),
     group_denominators: dict[PopulationKey, list[int]] | None = None,
     target_limit: float | None = None,
     minimize_replacements: bool = False,
 ) -> BinarySelection | None:
     row_count = len(scores)
+    if len(count_memberships) != len(count_values):
+        raise ValueError("count memberships and values must have equal length")
     groups: dict[PopulationKey, list[ConditionalMetric]] = {}
     for metric in conditionals:
         groups.setdefault(metric.population_key, []).append(metric)
@@ -113,6 +117,11 @@ def solve_binary_selection(
         share_lower[:row_count] = membership
         share_lower[slack_index] = 1.0
         constrain(share_lower, share_rhs, np.inf)
+
+    for membership, value in zip(count_memberships, count_values, strict=True):
+        count_target_row = np.zeros(variable_count, dtype=float)
+        count_target_row[:row_count] = membership
+        constrain(count_target_row, float(value), float(value))
 
     selector_indices: dict[PopulationKey, list[tuple[int, int]]] = {}
     next_selector = selector_start

@@ -161,11 +161,12 @@ const frozenTargetLabel = (
     (target) => String(target.id) === String(outcome.targetId),
   );
   if (!frozen) return String(outcome.targetId);
-  if (frozen.kind === "share") {
-    if (frozen.subject.kind === "value_group") return frozen.subject.valueGroup.name;
-    const question = checkbox.find((candidate) => candidate.id === frozen.subject.questionId);
-    const option = question?.options.find((candidate) => candidate.key === frozen.subject.optionKey);
-    return option?.label ?? frozen.subject.optionKey;
+  if (frozen.kind === "share" || frozen.kind === "count") {
+    const subject = frozen.subject;
+    if (subject.kind === "value_group") return subject.valueGroup.name;
+    const question = checkbox.find((candidate) => candidate.id === subject.questionId);
+    const option = question?.options.find((candidate) => candidate.key === subject.optionKey);
+    return option?.label ?? subject.optionKey;
   }
   if (frozen.kind === "conditional_share") {
     const question = checkbox.find((candidate) => candidate.id === frozen.questionId);
@@ -850,9 +851,7 @@ export function SynthesisPanel({ project }: { project: ProjectDetailView }) {
               {run ? (
                 <>
                   {currentQualityScore === undefined ? null : (
-                    <p style={{ margin: "4px 0 0" }}>
-                      SDMetrics {currentQualityScore.toFixed(4)}
-                    </p>
+                    <p style={{ margin: "4px 0 0" }}>SDMetrics {currentQualityScore.toFixed(4)}</p>
                   )}
                   {run.targetSnapshot.editPlan ? (
                     <p style={{ margin: "4px 0 0" }}>
