@@ -29,6 +29,7 @@ import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
 import {
   getRunRecord,
+  listPersistedRunRows,
   listRunRecords,
   persistRun,
   type PersistRunInput,
@@ -1037,12 +1038,39 @@ export const createSynthesisService = ({
       const targetSnapshot = JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"];
       const validation = jsonRecord(JSON.parse(run.engineReportJson) as unknown);
       const outcome = targetSetOutcome(validation.achieved, targetSnapshot.targets);
+      const rows = listPersistedRunRows(db, runId);
+      if (rows.length !== run.finalResponseCount) {
+        throw backendFailure("INTERNAL", "Persisted Run row count does not match the Run summary");
+      }
+      const originalResponseCount = rows.filter((row) => row.origin === "original").length;
+      if (originalResponseCount > run.scopeResponseCount) {
+        throw backendFailure(
+          "INTERNAL",
+          "Persisted Run original row count exceeds its frozen SourceScope",
+        );
+      }
+      const rawValidation = jsonRecord(validation.validation);
+      const structuralValidation = [
+        "finalCount",
+        "targetDomain",
+        "categoricalSupport",
+        "shareTargets",
+        "conditionalShareTargets",
+      ].every((key) => rawValidation[key] === true)
+        ? "passed"
+        : "unknown";
       return {
         runId: run.id,
         projectId: run.projectId,
         sourceRevisionId: run.sourceRevisionId,
         targetSnapshot,
         outcome,
+        diagnostics: {
+          sourceResponseCount: run.scopeResponseCount,
+          syntheticResponseCount: rows.length - originalResponseCount,
+          replacementCount: run.scopeResponseCount - originalResponseCount,
+          structuralValidation,
+        },
         validation,
         finalResponseCount: run.finalResponseCount,
         appVersion: run.appVersion,
