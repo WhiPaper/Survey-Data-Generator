@@ -23,6 +23,7 @@ import {
   pingBackend,
   refreshProjectSource,
 } from "./api/backend";
+import { appShellErrorMessage } from "./appShellError";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -36,9 +37,6 @@ import { QuestionExplorerPanel } from "./QuestionExplorerPanel";
 import { recoverAppliedSourceRefresh } from "./sourceRefreshRecovery";
 
 type RuntimeState = "checking" | "ready" | "error";
-
-const errorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
 
 export function AppShell() {
   const [runtimeState, setRuntimeState] = useState<RuntimeState>("checking");
@@ -98,7 +96,7 @@ export function AppShell() {
       .catch((cause: unknown) => {
         if (!active) return;
         setRuntimeState("error");
-        setMessage(errorMessage(cause));
+        setMessage(appShellErrorMessage(cause, "startup"));
       });
 
     return () => {
@@ -128,7 +126,7 @@ export function AppShell() {
         setProjects(projectResult);
       })
       .catch((cause: unknown) => {
-        if (active) setError(errorMessage(cause));
+        if (active) setError(appShellErrorMessage(cause, "load_home"));
       })
       .finally(() => {
         if (!active) return;
@@ -156,7 +154,7 @@ export function AppShell() {
         }
       }
     } catch (cause: unknown) {
-      setError(errorMessage(cause));
+      setError(appShellErrorMessage(cause, "open_project"));
     } finally {
       setProjectsBusy(false);
     }
@@ -168,7 +166,7 @@ export function AppShell() {
     try {
       setSession(await login());
     } catch (cause: unknown) {
-      setError(errorMessage(cause));
+      setError(appShellErrorMessage(cause, "login"));
     } finally {
       setAuthBusy(false);
     }
@@ -183,7 +181,7 @@ export function AppShell() {
       setSession(null);
       setSelectedProject(null);
     } catch (cause: unknown) {
-      setError(errorMessage(cause));
+      setError(appShellErrorMessage(cause, "logout"));
     } finally {
       setAuthBusy(false);
     }
@@ -202,10 +200,20 @@ export function AppShell() {
       setProjects(await listProjects());
       await openProject(summary.projectId);
     } catch (cause: unknown) {
-      setError(errorMessage(cause));
+      setError(appShellErrorMessage(cause, "import_form"));
     } finally {
       setImportOperationId(null);
       setImportingFormId(null);
+    }
+  };
+
+  const handleCancelImport = async (): Promise<void> => {
+    if (!importOperationId) return;
+    setError(null);
+    try {
+      await cancelFormImport(importOperationId);
+    } catch (cause: unknown) {
+      setError(appShellErrorMessage(cause, "cancel_import"));
     }
   };
 
@@ -255,7 +263,7 @@ export function AppShell() {
               : null,
         );
       } else {
-        setError(errorMessage(cause));
+        setError(appShellErrorMessage(cause, "refresh_source"));
       }
     } finally {
       setRefreshBusy(false);
@@ -290,7 +298,7 @@ export function AppShell() {
       if (selectedProject?.id === project.id) setSelectedProject(null);
       setProjects(await listProjects());
     } catch (cause: unknown) {
-      setError(errorMessage(cause));
+      setError(appShellErrorMessage(cause, "delete_project"));
     } finally {
       setProjectsBusy(false);
     }
@@ -449,7 +457,7 @@ export function AppShell() {
                 className="mt-3"
                 size="sm"
                 variant="ghost"
-                onClick={() => void cancelFormImport(importOperationId)}
+                onClick={() => void handleCancelImport()}
               >
                 가져오기 취소
               </Button>
