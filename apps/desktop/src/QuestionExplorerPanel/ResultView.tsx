@@ -61,19 +61,17 @@ const frozenTargetLabel = (
     const option = question?.options.find((candidate) => candidate.key === target.optionKey);
     return `${target.population.valueGroup.name} 중 ${option?.label ?? "선택지"}`;
   }
-  if (target.subject.kind === "value_group") return target.subject.valueGroup.name;
-  const question = questions.find((candidate) => candidate.id === target.subject.questionId);
-  return (
-    question?.options.find((option) => option.key === target.subject.optionKey)?.label ?? "선택지"
-  );
+  const subject = target.subject;
+  if (subject.kind === "value_group") return subject.valueGroup.name;
+  const question = questions.find((candidate) => candidate.id === subject.questionId);
+  return question?.options.find((option) => option.key === subject.optionKey)?.label ?? "선택지";
 };
 
 const frozenQuestionId = (target: FrozenRunTarget | undefined): string | null => {
   if (!target) return null;
   if (target.kind === "mean" || target.kind === "conditional_share") return target.questionId;
-  return target.subject.kind === "value_group"
-    ? target.subject.valueGroup.questionId
-    : target.subject.questionId;
+  const subject = target.subject;
+  return subject.kind === "value_group" ? subject.valueGroup.questionId : subject.questionId;
 };
 
 export function ResultView({
