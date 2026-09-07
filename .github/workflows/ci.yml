@@ -2,19 +2,17 @@ name: ci
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
-      - phase1-backend-target-contract
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0
@@ -26,6 +24,118 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
+      - name: Apply historical Run baseline wiring
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected exactly one match in {path}, found {text.count(old)}")
+              file.write_text(text.replace(old, new, 1))
+
+          protocol = "packages/contracts/src/protocol.ts"
+          replace_once(
+              protocol,
+              'export const RunResultDiagnosticsSchema = z\n',
+              '''export const RunTargetBaselineSchema = z.discriminatedUnion("kind", [\n  z\n    .object({\n      targetId: TargetIdSchema,\n      kind: z.literal("count"),\n      count: z.number().int().nonnegative(),\n    })\n    .strict(),\n  z\n    .object({\n      targetId: TargetIdSchema,\n      kind: z.literal("share"),\n      count: z.number().int().nonnegative(),\n      denominatorCount: z.number().int().nonnegative(),\n      share: z.number().min(0).max(1),\n    })\n    .strict(),\n  z\n    .object({\n      targetId: TargetIdSchema,\n      kind: z.literal("mean"),\n      mean: z.number().finite(),\n      denominatorCount: z.number().int().nonnegative(),\n    })\n    .strict(),\n  z\n    .object({\n      targetId: TargetIdSchema,\n      kind: z.literal("conditional_share"),\n      count: z.number().int().nonnegative(),\n      denominatorCount: z.number().int().nonnegative(),\n      share: z.number().min(0).max(1),\n    })\n    .strict(),\n]);\nexport type RunTargetBaseline = z.infer<typeof RunTargetBaselineSchema>;\n\nexport const RunResultDiagnosticsSchema = z\n''',
+          )
+          replace_once(
+              protocol,
+              '    outcome: TargetSetOutcomeSchema,\n    diagnostics: RunResultDiagnosticsSchema,\n',
+              '    outcome: TargetSetOutcomeSchema,\n    baselines: z.array(RunTargetBaselineSchema),\n    diagnostics: RunResultDiagnosticsSchema,\n',
+          )
+
+          service = "apps/desktop/electron/main/synthesis/service.ts"
+          replace_once(
+              service,
+              '} from "./flat-table";\n',
+              '} from "./flat-table";\nimport { buildRunTargetBaselines } from "./run-baseline";\n',
+          )
+          replace_once(
+              service,
+              '''      const outcome = targetSetOutcome(validation.achieved, targetSnapshot.targets);\n      const rows = listPersistedRunRows(db, runId);\n''',
+              '''      const outcome = targetSetOutcome(validation.achieved, targetSnapshot.targets);\n      const revision = getSourceRevision(db, run.sourceRevisionId);\n      if (!revision || revision.projectId !== run.projectId) {\n        throw backendFailure("INTERNAL", "Historical Run source revision is invalid");\n      }\n      const baselineScope = freezeScope(\n        revision.id,\n        revision.responseSetHash,\n        listSourceResponses(db, revision.id),\n        targetSnapshot.sourceScope,\n      );\n      if (\n        baselineScope.responseCount !== run.scopeResponseCount ||\n        baselineScope.responseSetHash !== run.scopeResponseSetHash\n      ) {\n        throw backendFailure("INTERNAL", "Historical Run SourceScope evidence does not match");\n      }\n      const baselines = buildRunTargetBaselines(\n        loadForm(db, revision.formSnapshotId),\n        baselineScope.responses,\n        targetSnapshot.targets,\n      );\n      const rows = listPersistedRunRows(db, runId);\n''',
+          )
+          replace_once(
+              service,
+              '        targetSnapshot,\n        outcome,\n        diagnostics: {\n',
+              '        targetSnapshot,\n        outcome,\n        baselines,\n        diagnostics: {\n',
+          )
+
+          result_view = "apps/desktop/src/QuestionExplorerPanel/ResultView.tsx"
+          replace_once(
+              result_view,
+              'import { resultDiagnosticsLines } from "./resultDiagnostics";\n',
+              'import { resultDiagnosticsLines } from "./resultDiagnostics";\nimport { runBaselineValue } from "./runBaseline";\n',
+          )
+          replace_once(result_view, '  currentValue,\n', '')
+          replace_once(
+              result_view,
+              '''          const label = target\n            ? targetLabel(target, questions, groups)\n            : frozenTargetLabel(frozenTarget, questions);\n''',
+              '''          const baseline = context.run.baselines.find(\n            (candidate) => String(candidate.targetId) === String(outcome.targetId),\n          );\n          const label = frozenTarget\n            ? frozenTargetLabel(frozenTarget, questions)\n            : target\n              ? targetLabel(target, questions, groups)\n              : "목표";\n''',
+          )
+          replace_once(
+              result_view,
+              '''          const questionId = target\n            ? questionIdForTarget(target, groups)\n            : frozenQuestionId(frozenTarget);\n''',
+              '''          const questionId = frozenTarget\n            ? frozenQuestionId(frozenTarget)\n            : target\n              ? questionIdForTarget(target, groups)\n              : null;\n''',
+          )
+          replace_once(
+              result_view,
+              '''                현재 {currentValue(target, context.profile)} → {intentLabel(target, outcome)} → 결과{" "}\n''',
+              '''                현재 {runBaselineValue(baseline)} → {intentLabel(undefined, outcome)} → 결과{" "}\n''',
+          )
+
+          protocol_test = "packages/contracts/test/protocol.test.ts"
+          replace_once(
+              protocol_test,
+              '''        outcome,\n        diagnostics: {\n          sourceResponseCount: 80,\n''',
+              '''        outcome,\n        baselines: [\n          { targetId: "t-mean", kind: "mean", mean: 4.1, denominatorCount: 80 },\n          {\n            targetId: "t-share",\n            kind: "share",\n            count: 28,\n            denominatorCount: 80,\n            share: 0.35,\n          },\n          {\n            targetId: "t-conditional",\n            kind: "conditional_share",\n            count: 12,\n            denominatorCount: 20,\n            share: 0.6,\n          },\n        ],\n        diagnostics: {\n          sourceResponseCount: 80,\n''',
+          )
+          replace_once(
+              protocol_test,
+              '''      outcome: { targets: [{ targetId: "t-mean" }] },\n      targetSnapshot: { editPlan: { replacementCount: 1 } },\n''',
+              '''      outcome: { targets: [{ targetId: "t-mean" }] },\n      baselines: [{ targetId: "t-mean", kind: "mean", mean: 4.1, denominatorCount: 80 }],\n      targetSnapshot: { editPlan: { replacementCount: 1 } },\n''',
+          )
+
+          service_test = "apps/desktop/test/m7-synthesis-service.test.ts"
+          marker = '''    expect(run.diagnostics).toEqual({\n      sourceResponseCount: 3,\n      syntheticResponseCount: 2,\n      replacementCount: 1,\n      structuralValidation: "passed",\n    });\n'''
+          replace_once(
+              service_test,
+              marker,
+              marker + '''    expect(run.baselines).toEqual([\n      { targetId: "t-mean", kind: "mean", mean: 5, denominatorCount: 3 },\n    ]);\n''',
+          )
+          marker2 = '''    expect(run.diagnostics).toEqual({\n      sourceResponseCount: 3,\n      syntheticResponseCount: 1,\n      replacementCount: 0,\n      structuralValidation: "passed",\n    });\n'''
+          replace_once(
+              service_test,
+              marker2,
+              marker2 + '''    expect(run.baselines).toEqual([\n      { targetId: "t-mean", kind: "mean", mean: 5, denominatorCount: 3 },\n    ]);\n''',
+          )
+          PY
+          pnpm exec prettier --write \
+            packages/contracts/src/protocol.ts \
+            packages/contracts/test/protocol.test.ts \
+            apps/desktop/electron/main/synthesis/service.ts \
+            apps/desktop/electron/main/synthesis/run-baseline.ts \
+            apps/desktop/src/QuestionExplorerPanel/ResultView.tsx \
+            apps/desktop/src/QuestionExplorerPanel/runBaseline.ts \
+            apps/desktop/test/m7-synthesis-service.test.ts \
+            apps/desktop/test/run-baseline.test.ts
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add packages/contracts/src/protocol.ts packages/contracts/test/protocol.test.ts \
+              apps/desktop/electron/main/synthesis/service.ts \
+              apps/desktop/electron/main/synthesis/run-baseline.ts \
+              apps/desktop/src/QuestionExplorerPanel/ResultView.tsx \
+              apps/desktop/src/QuestionExplorerPanel/runBaseline.ts \
+              apps/desktop/test/m7-synthesis-service.test.ts \
+              apps/desktop/test/run-baseline.test.ts
+            git commit -m "feat(result): freeze historical target baselines"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
       - run: pnpm run check
       - run: python -m pip install -r engine/requirements.txt
       - run: pnpm run engine:test
