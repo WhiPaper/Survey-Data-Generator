@@ -1,0 +1,67 @@
+name: ci-question-denominator-copy
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  wire-and-check:
+    if: github.head_ref == 'ui/question-denominator-copy'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pnpm install --frozen-lockfile
+      - name: Wire question population copy
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/desktop/src/QuestionExplorerPanel/index.tsx')
+          text = path.read_text()
+
+          def replace_once(old: str, new: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one match, found {count}: {old[:120]!r}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              'import { executeValueGroupRepair } from "./sourceReviewRepair";\n',
+              'import { questionPopulationText } from "./questionPopulation";\nimport { executeValueGroupRepair } from "./sourceReviewRepair";\n',
+          )
+          replace_once(
+              '''  const selectedCheckboxDenominator =\n    selectedQuestion?.kind === "multi_choice"\n      ? selectedQuestion.options\n          .map((option) =>\n            subjectMetricFor(profile, "checkbox_option", selectedQuestion.id, option.key),\n          )\n          .find((metric) => metric !== undefined)?.denominatorCount\n      : undefined;\n\n''',
+              '',
+          )
+          replace_once(
+              '''                    <p className="mt-1 text-xs text-muted-foreground">\n                      {selectedQuestion.kind === "multi_choice"\n                        ? `복수 선택 · 응답 대상 ${selectedCheckboxDenominator ?? 0}명`\n                        : `${kindLabel(selectedQuestion.kind)} · 응답 ${sourceCount}명`}\n                    </p>\n''',
+              '''                    <p className="mt-1 text-xs text-muted-foreground">\n                      {questionPopulationText(selectedQuestion, profile, sourceCount)}\n                    </p>\n''',
+          )
+          path.write_text(text)
+          PY
+          pnpm exec prettier --write apps/desktop/src/QuestionExplorerPanel/index.tsx apps/desktop/src/QuestionExplorerPanel/questionPopulation.ts apps/desktop/test/question-population-copy.test.ts
+          if ! git diff --quiet; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add apps/desktop/src/QuestionExplorerPanel/index.tsx apps/desktop/src/QuestionExplorerPanel/questionPopulation.ts apps/desktop/test/question-population-copy.test.ts
+            git commit -m "fix(ui): use question-specific denominators"
+            git push origin HEAD:ui/question-denominator-copy
+          fi
+      - run: pnpm run check
+      - run: python -m pip install -r engine/requirements.txt
+      - run: pnpm run engine:test
