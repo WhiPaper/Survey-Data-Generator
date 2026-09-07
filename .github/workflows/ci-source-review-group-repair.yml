@@ -61,11 +61,6 @@ jobs:
           )
 
           replace_once(
-              '''                        variant="ghost"\n                        onClick={() => {\n''',
-              '''                        variant="ghost"\n                        disabled={groupBusy}\n                        onClick={() => {\n''',
-          )
-
-          replace_once(
               '''                    <Button\n                      type="button"\n                      size="sm"\n                      variant="ghost"\n                      className="text-destructive"\n                      onClick={() => {\n                        setSourceReviewOpen(false);\n                        requestDeleteGroup(group);\n                      }}\n                    >\n                      그룹 삭제\n                    </Button>\n''',
               '''                    <Button\n                      type="button"\n                      size="sm"\n                      variant="ghost"\n                      className="text-destructive"\n                      disabled={groupBusy}\n                      onClick={() => void repairReviewGroup(group)}\n                    >\n                      {dependencyCount > 0\n                        ? `목표 ${dependencyCount}개 제거 후 그룹 삭제`\n                        : "그룹 삭제"}\n                    </Button>\n''',
           )
