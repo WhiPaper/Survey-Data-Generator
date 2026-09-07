@@ -79,6 +79,18 @@ The renderer may call this local review operation whenever a Project is opened a
 
 The local review result uses the same ValueGroup and target-review semantics as the explicit refresh result.
 
+### Single review authority
+
+Google capture/apply and local review have separate responsibilities.
+
+The Forms service owns only Google identity checks, capture, normalization, and creation/application of the new immutable SourceRevision. It does not decide whether saved ValueGroups or targets need review.
+
+After a successful apply, `projects.refreshSource` obtains ValueGroup and target-draft diagnostics through the same local review calculation used by `projects.sourceReview`. Project reopen and explicit refresh must therefore not have separate copies of review rules.
+
+Changing review semantics should require changing one authoritative review path and its tests, not coordinating a Forms-specific copy with the reopen path.
+
+Regression coverage should assert that explicit refresh diagnostics and a local source review over the applied revision return the same review state.
+
 ### Review availability must not block Project open
 
 Project detail is the primary local workspace state. A failure while computing review diagnostics must not prevent the renderer from opening an otherwise readable Project.

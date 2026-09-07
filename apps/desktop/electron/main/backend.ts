@@ -78,6 +78,24 @@ const requireRunExportDestinationPicker = (
   return services.pickRunExportDestination;
 };
 
+const sourceReviewForProject = async (services: BackendServices, projectId: string) => {
+  const source = await requireProjects(services).sourceReview(projectId);
+  const targetService = requireTargets(services);
+  const draft = await targetService.getDraft(projectId);
+  const targetIssues = draft
+    ? [
+        ...semanticDuplicateTargetIssues(draft.targets),
+        ...(await targetService.validate(draft)).issues,
+      ]
+    : [];
+  return {
+    projectId,
+    sourceRevisionId: source.sourceRevisionId,
+    invalidValueGroupIds: source.invalidValueGroupIds,
+    targetIssues,
+  };
+};
+
 export const handleBackendCall = async (
   serializedRequest: string,
   services: BackendServices = {},
@@ -117,45 +135,21 @@ export const handleBackendCall = async (
       return requireProjects(services).list();
     case "projects.get":
       return requireProjects(services).get((request.params as { projectId: string }).projectId);
-    case "projects.sourceReview": {
-      const projectId = (request.params as { projectId: string }).projectId;
-      const source = await requireProjects(services).sourceReview(projectId);
-      const targetService = requireTargets(services);
-      const draft = await targetService.getDraft(projectId);
-      const targetIssues = draft
-        ? [
-            ...semanticDuplicateTargetIssues(draft.targets),
-            ...(await targetService.validate(draft)).issues,
-          ]
-        : [];
-      return {
-        projectId,
-        sourceRevisionId: source.sourceRevisionId,
-        invalidValueGroupIds: source.invalidValueGroupIds,
-        targetIssues,
-      };
-    }
+    case "projects.sourceReview":
+      return sourceReviewForProject(services, (request.params as { projectId: string }).projectId);
     case "projects.refreshSource": {
       const params = request.params as ProjectSourceRefreshParams;
       const refreshed = await requireForms(services).refreshProjectSource(params);
       const project = await requireProjects(services).get(params.projectId);
       if (!project) throw backendFailure("INTERNAL", "Refreshed project could not be reloaded");
-
-      const targetService = requireTargets(services);
-      const draft = await targetService.getDraft(params.projectId);
-      const targetIssues = draft
-        ? [
-            ...semanticDuplicateTargetIssues(draft.targets),
-            ...(await targetService.validate(draft)).issues,
-          ]
-        : [];
+      const review = await sourceReviewForProject(services, params.projectId);
 
       return {
         project,
         previousSourceRevisionId: refreshed.previousSourceRevisionId,
-        sourceRevisionId: refreshed.sourceRevisionId,
-        invalidValueGroupIds: refreshed.invalidValueGroupIds,
-        targetIssues,
+        sourceRevisionId: review.sourceRevisionId,
+        invalidValueGroupIds: review.invalidValueGroupIds,
+        targetIssues: review.targetIssues,
       };
     }
     case "projects.delete":
