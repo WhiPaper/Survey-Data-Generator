@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+import { createBeforeCloseRegistry, type BeforeCloseListener } from "./close-request-registry";
+
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
 const WINDOW_CLOSE_REQUEST_CHANNEL = "survey-synth:window-close-request";
 const WINDOW_CLOSE_RESPONSE_CHANNEL = "survey-synth:window-close-response";
@@ -12,15 +14,15 @@ const backendCall = async (request: string): Promise<unknown> => {
   throw response.error;
 };
 
-const onBeforeClose = (listener: () => boolean | Promise<boolean>): (() => void) => {
-  const handler = (): void => {
-    void Promise.resolve()
-      .then(listener)
-      .then((canClose) => ipcRenderer.send(WINDOW_CLOSE_RESPONSE_CHANNEL, canClose === true))
-      .catch(() => ipcRenderer.send(WINDOW_CLOSE_RESPONSE_CHANNEL, false));
-  };
-  ipcRenderer.on(WINDOW_CLOSE_REQUEST_CHANNEL, handler);
-  return () => ipcRenderer.removeListener(WINDOW_CLOSE_REQUEST_CHANNEL, handler);
-};
+const beforeCloseRegistry = createBeforeCloseRegistry();
+
+ipcRenderer.on(WINDOW_CLOSE_REQUEST_CHANNEL, () => {
+  void beforeCloseRegistry
+    .resolve()
+    .then((canClose) => ipcRenderer.send(WINDOW_CLOSE_RESPONSE_CHANNEL, canClose));
+});
+
+const onBeforeClose = (listener: BeforeCloseListener): (() => void) =>
+  beforeCloseRegistry.setListener(listener);
 
 contextBridge.exposeInMainWorld("surveySynth", { backendCall, onBeforeClose });
