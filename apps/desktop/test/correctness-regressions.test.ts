@@ -103,7 +103,6 @@ const storedResponse = (
 
 describe("correctness regressions", () => {
   it("includes schema-backed zero-observed single-choice ValueGroup members but not unseen text", () => {
-    createFlatTablePlan(valueGroupForm, []);
     const responses = [storedResponse("r1", "A", "seen"), storedResponse("r2", "B", "other")];
     const canonicalA = JSON.stringify({
       state: "answered",
@@ -114,11 +113,12 @@ describe("correctness regressions", () => {
       value: { kind: "single_choice", optionKey: "C", label: "C" },
     });
 
-    expect(valueGroupMemberCells(responses, "q-choice" as never, ["A", "C"])).toEqual([
-      canonicalA,
-      canonicalC,
-    ]);
-    expect(valueGroupMemberCells(responses, "q-text" as never, ["seen", "unseen"])).toEqual([
+    expect(
+      valueGroupMemberCells(responses, "q-choice" as never, ["A", "C"], valueGroupForm),
+    ).toEqual([canonicalA, canonicalC]);
+    expect(
+      valueGroupMemberCells(responses, "q-text" as never, ["seen", "unseen"], valueGroupForm),
+    ).toEqual([
       JSON.stringify({ state: "answered", value: { kind: "text", value: "seen" } }),
     ]);
   });
