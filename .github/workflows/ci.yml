@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
-      - name: Apply public profile and run-list contracts
+      - name: Wire Question Explorer to authoritative public data
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -37,121 +37,217 @@ jobs:
               file = Path(path)
               text = file.read_text()
               if old not in text:
-                  raise SystemExit(f"missing replacement in {path}: {old[:80]!r}")
+                  raise SystemExit(f"missing replacement in {path}: {old[:100]!r}")
               file.write_text(text.replace(old, new, 1))
 
-          protocol = "packages/contracts/src/protocol.ts"
+          model = "apps/desktop/src/QuestionExplorerPanel/model.ts"
           replace(
-              protocol,
-              '''  z\n    .object({\n      kind: z.literal("mean"),\n      questionId: z.string().min(1),\n      mean: z.number().finite(),\n      denominatorCount: z.number().int().nonnegative(),\n    })\n    .strict(),\n]);''',
-              '''  z\n    .object({\n      kind: z.literal("mean"),\n      questionId: z.string().min(1),\n      mean: z.number().finite(),\n      denominatorCount: z.number().int().nonnegative(),\n    })\n    .strict(),\n  z\n    .object({\n      kind: z.literal("ordinal_distribution"),\n      questionId: z.string().min(1),\n      denominatorCount: z.number().int().nonnegative(),\n      values: z.array(\n        z\n          .object({\n            value: z.number().finite(),\n            count: z.number().int().nonnegative(),\n            share: z.number().min(0).max(1),\n          })\n          .strict(),\n      ),\n    })\n    .strict(),\n  z\n    .object({\n      kind: z.literal("conditional_share"),\n      population: z\n        .object({ kind: z.literal("value_group"), valueGroupId: z.string().min(1) })\n        .strict(),\n      questionId: z.string().min(1),\n      optionKey: z.string().min(1),\n      count: z.number().int().nonnegative(),\n      denominatorCount: z.number().int().nonnegative(),\n      share: z.number().min(0).max(1),\n    })\n    .strict(),\n]);''',
+              model,
+              '''export const editingMetric = (''',
+              '''export const conditionalProfileMetric = (\n  profile: TargetProfileResult | null,\n  valueGroupId: string,\n  questionId: string,\n  optionKey: string,\n): Extract<TargetProfileMetric, { kind: "conditional_share" }> | undefined =>\n  profile?.metrics.find(\n    (metric): metric is Extract<TargetProfileMetric, { kind: "conditional_share" }> =>\n      metric.kind === "conditional_share" &&\n      metric.population.valueGroupId === valueGroupId &&\n      metric.questionId === questionId &&\n      metric.optionKey === optionKey,\n  );\n\nexport const ordinalDistributionMetric = (\n  profile: TargetProfileResult | null,\n  questionId: string,\n): Extract<TargetProfileMetric, { kind: "ordinal_distribution" }> | undefined =>\n  profile?.metrics.find(\n    (metric): metric is Extract<TargetProfileMetric, { kind: "ordinal_distribution" }> =>\n      metric.kind === "ordinal_distribution" && metric.questionId === questionId,\n  );\n\nexport const editingMetric = (''',
           )
           replace(
-              protocol,
-              '''export type RunsGetResult = z.infer<typeof RunsGetResultSchema>;\n\nexport const RunExportFormatSchema''',
-              '''export type RunsGetResult = z.infer<typeof RunsGetResultSchema>;\n\nexport const RunSummarySchema = z\n  .object({\n    runId: z.string().min(1),\n    projectId: ProjectIdSchema,\n    sourceRevisionId: z.string().min(1),\n    createdAt: z.string().min(1),\n    finalResponseCount: z.number().int().nonnegative(),\n  })\n  .strict();\nexport type RunSummary = z.infer<typeof RunSummarySchema>;\n\nexport const RunExportFormatSchema''',
-          )
-          replace(
-              protocol,
-              '''  "runs.get": { input: z.infer<typeof RunParamsSchema>; output: RunsGetResult };\n  "runs.export":''',
-              '''  "runs.list": { input: z.infer<typeof ProjectParamsSchema>; output: RunSummary[] };\n  "runs.get": { input: z.infer<typeof RunParamsSchema>; output: RunsGetResult };\n  "runs.export":''',
-          )
-          replace(protocol, '  "runs.get",\n  "runs.export",', '  "runs.list",\n  "runs.get",\n  "runs.export",')
-          replace(
-              protocol,
-              '''  "runs.get": RunParamsSchema,\n  "runs.export": RunsExportParamsSchema,''',
-              '''  "runs.list": ProjectParamsSchema,\n  "runs.get": RunParamsSchema,\n  "runs.export": RunsExportParamsSchema,''',
-          )
-          replace(
-              protocol,
-              '''  "runs.get": RunsGetResultSchema,\n  "runs.export": RunsExportResultSchema,''',
-              '''  "runs.list": z.array(RunSummarySchema),\n  "runs.get": RunsGetResultSchema,\n  "runs.export": RunsExportResultSchema,''',
+              model,
+              '''  if (target.kind === "conditional_share") return "—";''',
+              '''  if (target.kind === "conditional_share") {\n    const metric = conditionalProfileMetric(\n      profile,\n      target.population.valueGroupId,\n      target.questionId,\n      target.optionKey,\n    );\n    return metric ? formatShare(metric.share) : "—";\n  }''',
           )
 
-          target_service = "apps/desktop/electron/main/targets/service.ts"
+          text_inspector = "apps/desktop/src/QuestionExplorerPanel/TextInspector.tsx"
           replace(
-              target_service,
-              '''const conditionalMetric = (''',
-              '''const ordinalDistributionMetric = (\n  context: ScopeContext,\n  questionId: string,\n): {\n  denominatorCount: number;\n  values: Array<{ value: number; count: number; share: number }>;\n} | null => {\n  const question = context.form.questions.find((candidate) => candidate.id === questionId);\n  if (!question || question.kind !== "ordinal") return null;\n  const counts = new Map<number, number>();\n  let denominatorCount = 0;\n  for (const slot of answers(context.responses, question.id)) {\n    if (slot?.state !== "answered" || slot.value.kind !== "ordinal") continue;\n    denominatorCount += 1;\n    counts.set(slot.value.value, (counts.get(slot.value.value) ?? 0) + 1);\n  }\n  const values: Array<{ value: number; count: number; share: number }> = [];\n  for (let value = Math.ceil(question.min); value <= Math.floor(question.max); value += 1) {\n    const count = counts.get(value) ?? 0;\n    values.push({\n      value,\n      count,\n      share: denominatorCount === 0 ? 0 : count / denominatorCount,\n    });\n  }\n  return { denominatorCount, values };\n};\n\nconst conditionalMetric = (''',
-          )
-          replace(
-              target_service,
-              '''    } else if (question.kind === "ordinal") {\n      const metric = meanMetric(context, String(question.id));\n      if (metric) metrics.push({ kind: "mean", questionId: String(question.id), ...metric });\n    }\n  }''',
-              '''    } else if (question.kind === "ordinal") {\n      const metric = meanMetric(context, String(question.id));\n      if (metric) metrics.push({ kind: "mean", questionId: String(question.id), ...metric });\n      const distribution = ordinalDistributionMetric(context, String(question.id));\n      if (distribution) {\n        metrics.push({\n          kind: "ordinal_distribution",\n          questionId: String(question.id),\n          ...distribution,\n        });\n      }\n    }\n  }''',
-          )
-          replace(
-              target_service,
-              '''  for (const group of groups) {\n    const subject = { kind: "value_group" as const, valueGroupId: group.id };\n    const metric = subjectMetric(context, groups, subject);\n    if (metric) metrics.push({ kind: "subject", subject, ...metric });\n  }\n\n  return {''',
-              '''  for (const group of groups) {\n    const subject = { kind: "value_group" as const, valueGroupId: group.id };\n    const metric = subjectMetric(context, groups, subject);\n    if (metric) metrics.push({ kind: "subject", subject, ...metric });\n\n    for (const question of context.form.questions) {\n      if (question.kind !== "multi_choice") continue;\n      for (const option of question.options) {\n        const target: Extract<TargetDraftTarget, { kind: "conditional_share" }> = {\n          id: `profile:${group.id}:${String(question.id)}:${String(option.key)}` as never,\n          kind: "conditional_share",\n          population: { kind: "value_group", valueGroupId: group.id },\n          questionId: String(question.id),\n          optionKey: String(option.key),\n          intent: null,\n        };\n        const conditional = conditionalMetric(context, groups, target);\n        if (conditional) {\n          metrics.push({\n            kind: "conditional_share",\n            population: target.population,\n            questionId: target.questionId,\n            optionKey: target.optionKey,\n            ...conditional,\n          });\n        }\n      }\n    }\n  }\n\n  return {''',
+              text_inspector,
+              '''            <p className="text-xs text-muted-foreground">\n              저장된 그룹의 현재 인원수와 비율은 backend profile 값을 사용합니다.\n            </p>''',
+              '''            <p className="text-xs text-muted-foreground">\n              저장 후 현재 선택 범위 기준 인원수와 비율이 표시됩니다.\n            </p>''',
           )
 
-          run_store = "apps/desktop/electron/main/persistence/run-store.ts"
-          replace(run_store, 'import { asc, eq } from "drizzle-orm";', 'import { asc, desc, eq } from "drizzle-orm";')
+          result = "apps/desktop/src/QuestionExplorerPanel/ResultView.tsx"
           replace(
-              run_store,
-              '''export const getRunRecord = (db: SurveyDatabase, runId: string): RunRecord | null =>\n  db.select().from(runs).where(eq(runs.id, runId)).get() ?? null;\n\nexport const listPersistedRunRows''',
-              '''export const getRunRecord = (db: SurveyDatabase, runId: string): RunRecord | null =>\n  db.select().from(runs).where(eq(runs.id, runId)).get() ?? null;\n\nexport const listRunRecords = (db: SurveyDatabase, projectId: string): RunRecord[] =>\n  db\n    .select()\n    .from(runs)\n    .where(eq(runs.projectId, projectId))\n    .orderBy(desc(runs.createdAtMs), desc(runs.id))\n    .all();\n\nexport const listPersistedRunRows''',
+              result,
+              '''import type {\n  RunsGetResult,\n  TargetDraft,''',
+              '''import type {\n  FrozenRunTarget,\n  RunSummary,\n  RunsGetResult,\n  TargetDraft,''',
+          )
+          replace(result, '  draft: TargetDraft;', '  draft: TargetDraft | null;')
+          replace(
+              result,
+              '''  contexts: RunContext[];\n  selectedRunId: string;''',
+              '''  contexts: RunContext[];\n  summaries: RunSummary[];\n  selectedRunId: string;''',
+          )
+          replace(
+              result,
+              '''export function ResultView({\n  contexts,\n  selectedRunId,''',
+              '''const frozenTargetLabel = (\n  target: FrozenRunTarget | undefined,\n  questions: readonly QuestionView[],\n): string => {\n  if (!target) return "목표";\n  if (target.kind === "mean") {\n    return questions.find((question) => question.id === target.questionId)?.title ?? "평균";\n  }\n  if (target.kind === "conditional_share") {\n    const question = questions.find((candidate) => candidate.id === target.questionId);\n    const option = question?.options.find((candidate) => candidate.key === target.optionKey);\n    return `${target.population.valueGroup.name} 중 ${option?.label ?? "선택지"}`;\n  }\n  if (target.subject.kind === "value_group") return target.subject.valueGroup.name;\n  const question = questions.find((candidate) => candidate.id === target.subject.questionId);\n  return question?.options.find((option) => option.key === target.subject.optionKey)?.label ?? "선택지";\n};\n\nconst frozenQuestionId = (target: FrozenRunTarget | undefined): string | null => {\n  if (!target) return null;\n  if (target.kind === "mean" || target.kind === "conditional_share") return target.questionId;\n  return target.subject.kind === "value_group"\n    ? target.subject.valueGroup.questionId\n    : target.subject.questionId;\n};\n\nexport function ResultView({\n  contexts,\n  summaries,\n  selectedRunId,''',
+          )
+          replace(
+              result,
+              '''            <SelectContent>\n              {contexts.map((candidate, index) => (\n                <SelectItem key={candidate.run.runId} value={candidate.run.runId}>\n                  {index === 0 ? "최신 결과" : `이전 결과 ${contexts.length - index}`}\n                </SelectItem>\n              ))}\n            </SelectContent>''',
+              '''            <SelectContent>\n              {summaries.map((summary, index) => (\n                <SelectItem key={summary.runId} value={summary.runId}>\n                  {index === 0\n                    ? "최신 결과"\n                    : new Date(summary.createdAt).toLocaleString()}\n                </SelectItem>\n              ))}\n            </SelectContent>''',
+          )
+          replace(
+              result,
+              '''          const target = context.draft.targets.find(\n            (candidate) => String(candidate.id) === String(outcome.targetId),\n          );\n          const label = target ? targetLabel(target, questions, groups) : "목표";''',
+              '''          const target = context.draft?.targets.find(\n            (candidate) => String(candidate.id) === String(outcome.targetId),\n          );\n          const frozenTarget = context.run.targetSnapshot.targets.find(\n            (candidate) => String(candidate.id) === String(outcome.targetId),\n          );\n          const label = target\n            ? targetLabel(target, questions, groups)\n            : frozenTargetLabel(frozenTarget, questions);''',
+          )
+          replace(
+              result,
+              '''          const questionId = target ? questionIdForTarget(target, groups) : null;''',
+              '''          const questionId = target\n            ? questionIdForTarget(target, groups)\n            : frozenQuestionId(frozenTarget);''',
+          )
+          replace(
+              result,
+              '''      <p className="mt-6 text-xs text-muted-foreground">\n        현재 backend에는 Run 목록 조회가 없어 이 선택기는 이번 앱 세션에서 생성한 결과만 표시합니다.\n        저장된 과거 Run 자체는 변경하지 않습니다.\n      </p>''',
+              '''      <p className="mt-6 text-xs text-muted-foreground">\n        과거 결과는 생성 당시 내용으로 보존됩니다.\n      </p>''',
           )
 
-          synthesis = "apps/desktop/electron/main/synthesis/service.ts"
-          replace(synthesis, '  type RunTargetSnapshot,\n  type RunsGetResult,', '  type RunSummary,\n  type RunTargetSnapshot,\n  type RunsGetResult,')
+          index = "apps/desktop/src/QuestionExplorerPanel/index.tsx"
           replace(
-              synthesis,
-              'import { getRunRecord, persistRun, type PersistRunInput } from "../persistence/run-store";',
-              'import { getRunRecord, listRunRecords, persistRun, type PersistRunInput } from "../persistence/run-store";',
+              index,
+              '''  ProjectDetailView,\n  SourceScope,''',
+              '''  ProjectDetailView,\n  RunSummary,\n  SourceScope,''',
           )
           replace(
-              synthesis,
-              '''  cancel(operationId: string): boolean;\n  getRun(runId: string): Promise<RunsGetResult>;''',
-              '''  cancel(operationId: string): boolean;\n  listRuns?(projectId: string): Promise<RunSummary[]>;\n  getRun(runId: string): Promise<RunsGetResult>;''',
+              index,
+              '''  listValueGroups,\n  listValueGroupValues,''',
+              '''  listRuns,\n  listValueGroups,\n  listValueGroupValues,''',
           )
           replace(
-              synthesis,
-              '''    cancel: (operationId) => engine.cancel(operationId),\n\n    getRun: async (runId) => {''',
-              '''    cancel: (operationId) => engine.cancel(operationId),\n\n    listRuns: async (projectId) => {\n      if (!getProject(db, projectId)) throw backendFailure("NOT_FOUND", "Project was not found");\n      return listRunRecords(db, projectId).map((run) => ({\n        runId: run.id,\n        projectId: run.projectId,\n        sourceRevisionId: run.sourceRevisionId,\n        createdAt: new Date(run.createdAtMs).toISOString(),\n        finalResponseCount: run.finalResponseCount,\n      }));\n    },\n\n    getRun: async (runId) => {''',
+              index,
+              '''  conditionalTarget,\n  conditionalTargetId,''',
+              '''  conditionalProfileMetric,\n  conditionalTarget,\n  conditionalTargetId,''',
+          )
+          replace(
+              index,
+              '''  meanTargetId,\n  projectQuestions,''',
+              '''  meanTargetId,\n  ordinalDistributionMetric,\n  projectQuestions,''',
+          )
+          replace(
+              index,
+              '''  const [runContexts, setRunContexts] = useState<RunContext[]>([]);\n  const [selectedRunId, setSelectedRunId] = useState("");''',
+              '''  const [runContexts, setRunContexts] = useState<RunContext[]>([]);\n  const [runSummaries, setRunSummaries] = useState<RunSummary[]>([]);\n  const [selectedRunId, setSelectedRunId] = useState("");''',
+          )
+          replace(
+              index,
+              '''    setRunContexts([]);\n    setSelectedRunId("");\n\n    void Promise.all([getTargetDraft(project.id), listValueGroups(project.id)])\n      .then(async ([saved, nextGroups]) => {''',
+              '''    setRunContexts([]);\n    setRunSummaries([]);\n    setSelectedRunId("");\n\n    void Promise.all([getTargetDraft(project.id), listValueGroups(project.id), listRuns(project.id)])\n      .then(async ([saved, nextGroups, nextRunSummaries]) => {''',
+          )
+          replace(
+              index,
+              '''        setDraft(nextDraft);\n        setGroups(nextGroups);\n        setProfile(await getTargetProfile(project.id, nextDraft.sourceScope));''',
+              '''        setDraft(nextDraft);\n        setGroups(nextGroups);\n        setRunSummaries(nextRunSummaries);\n        setProfile(await getTargetProfile(project.id, nextDraft.sourceScope));''',
+          )
+          replace(
+              index,
+              '''  const currentTarget = populationGroupId === "all" ? directTarget : conditional;\n  const currentMetric = editingMetric(profile, editing);\n  const conditionalMode = editing?.subjectKind === "checkbox_option" && populationGroupId !== "all";''',
+              '''  const currentTarget = populationGroupId === "all" ? directTarget : conditional;\n  const currentMetric = editingMetric(profile, editing);\n  const conditionalMode = editing?.subjectKind === "checkbox_option" && populationGroupId !== "all";\n  const currentConditionalMetric =\n    conditionalMode && editing?.optionKey\n      ? conditionalProfileMetric(profile, populationGroupId, editing.questionId, editing.optionKey)\n      : undefined;\n  const activeMetric = conditionalMode ? currentConditionalMetric : currentMetric;''',
+          )
+          replace(
+              index,
+              '''  const resolvedShare =\n    !conditionalMode && currentMetric && Number.isFinite(parsedValue)\n      ? mode === "absolute_share"\n        ? parsedValue / 100\n        : mode === "percentage_point_delta"\n          ? currentMetric.share + parsedValue / 100\n          : mode === "relative_percent_delta"\n            ? currentMetric.share * (1 + parsedValue / 100)\n            : null\n      : null;''',
+              '''  const resolvedShare =\n    activeMetric && Number.isFinite(parsedValue)\n      ? mode === "absolute_share"\n        ? parsedValue / 100\n        : mode === "percentage_point_delta"\n          ? activeMetric.share + parsedValue / 100\n          : mode === "relative_percent_delta"\n            ? activeMetric.share * (1 + parsedValue / 100)\n            : null\n      : null;''',
+          )
+          replace(
+              index,
+              '''    (!conditionalMode &&\n      shareMode &&\n      mode !== "absolute_share" &&\n      currentMetric !== undefined &&''',
+              '''    (shareMode &&\n      mode !== "absolute_share" &&\n      activeMetric !== undefined &&''',
+          )
+          replace(
+              index,
+              '''  const selectedCheckboxDenominator =''',
+              '''  const selectedOrdinalDistribution =\n    selectedQuestion?.kind === "ordinal"\n      ? ordinalDistributionMetric(profile, selectedQuestion.id)\n      : undefined;\n\n  const selectedCheckboxDenominator =''',
+          )
+          replace(
+              index,
+              '''  const recordRun = async (runId: string): Promise<void> => {\n    const run = await getRun(runId);\n    setRunContexts((current) => [\n      { run, draft, profile },\n      ...current.filter((context) => context.run.runId !== runId),\n    ]);\n    setSelectedRunId(runId);\n    setWorkspaceView("result");\n  };''',
+              '''  const selectRun = async (runId: string): Promise<void> => {\n    const existing = runContexts.find((context) => context.run.runId === runId);\n    if (existing) {\n      setSelectedRunId(runId);\n      setWorkspaceView("result");\n      return;\n    }\n    setBusy(true);\n    setError(null);\n    try {\n      const run = await getRun(runId);\n      setRunContexts((current) => [\n        { run, draft: null, profile: null },\n        ...current.filter((context) => context.run.runId !== runId),\n      ]);\n      setSelectedRunId(runId);\n      setWorkspaceView("result");\n    } catch (cause: unknown) {\n      setError(cause instanceof Error ? cause.message : "결과를 불러오지 못했습니다.");\n    } finally {\n      setBusy(false);\n    }\n  };\n\n  const recordRun = async (runId: string): Promise<void> => {\n    const run = await getRun(runId);\n    setRunContexts((current) => [\n      { run, draft, profile },\n      ...current.filter((context) => context.run.runId !== runId),\n    ]);\n    setSelectedRunId(runId);\n    setWorkspaceView("result");\n    void listRuns(project.id).then(setRunSummaries).catch(() => undefined);\n  };''',
+          )
+          replace(
+              index,
+              '''          disabled={runContexts.length === 0}\n          onClick={() => setWorkspaceView("result")}''',
+              '''          disabled={runSummaries.length === 0 && runContexts.length === 0}\n          onClick={() => {\n            const runId = selectedRunId || runSummaries[0]?.runId || runContexts[0]?.run.runId;\n            if (runId) void selectRun(runId);\n          }}''',
+          )
+          replace(
+              index,
+              '''        <ResultView\n          contexts={runContexts}\n          selectedRunId={selectedRunId}''',
+              '''        <ResultView\n          contexts={runContexts}\n          summaries={runSummaries}\n          selectedRunId={selectedRunId}''',
+          )
+          replace(index, '          onSelectRun={setSelectedRunId}', '          onSelectRun={(runId) => void selectRun(runId)}')
+          replace(
+              index,
+              '''                      <p className="mt-8 text-sm text-muted-foreground">\n                        점수별 분포는 현재 profile 공개 계약에 없어 임의로 재계산하지 않습니다.\n                        평균만 목표로 설정할 수 있습니다.\n                      </p>''',
+              '''                      <div className="mt-8 border-t pt-5">\n                        <div className="flex items-center justify-between gap-3">\n                          <p className="text-sm font-medium">점수별 분포</p>\n                          <span className="text-xs tabular-nums text-muted-foreground">\n                            응답 {selectedOrdinalDistribution?.denominatorCount ?? 0}명\n                          </span>\n                        </div>\n                        <div className="mt-3 space-y-1">\n                          {selectedOrdinalDistribution?.values.map((item) => (\n                            <div\n                              key={item.value}\n                              className="grid grid-cols-[48px_64px_64px_minmax(120px,1fr)] items-center gap-3 py-1.5 text-sm"\n                            >\n                              <span className="font-medium tabular-nums">{item.value}점</span>\n                              <span className="text-right tabular-nums text-muted-foreground">\n                                {item.count}명\n                              </span>\n                              <span className="text-right tabular-nums">\n                                {formatShare(item.share)}\n                              </span>\n                              <span className="h-1.5 overflow-hidden rounded-full bg-muted">\n                                <span\n                                  className="block h-full rounded-full bg-foreground/45"\n                                  style={{ width: `${Math.max(0, Math.min(100, item.share * 100))}%` }}\n                                />\n                              </span>\n                            </div>\n                          ))}\n                        </div>\n                      </div>''',
+          )
+          replace(
+              index,
+              '''              {!conditionalMode && currentMetric\n                ? ` · 현재 ${currentMetric.count}/${currentMetric.denominatorCount}명 · ${formatShare(\n                    currentMetric.share,\n                  )}`''',
+              '''              {activeMetric\n                ? ` · 현재 ${activeMetric.count}/${activeMetric.denominatorCount}명 · ${formatShare(\n                    activeMetric.share,\n                  )}`''',
+          )
+          replace(
+              index,
+              '''                {conditionalMode ? (\n                  <p className="text-xs text-muted-foreground">\n                    이 그룹의 조건부 현재 비율은 공개 profile에 없으므로 UI에서 그룹 크기로 대신\n                    계산하지 않습니다. 생성 검증 시 backend가 기준값을 계산합니다.\n                  </p>\n                ) : null}''',
+              '''                {conditionalMode && !currentConditionalMetric ? (\n                  <p className="text-xs text-muted-foreground">\n                    현재 선택 범위에는 비율을 계산할 응답 대상이 없습니다.\n                  </p>\n                ) : null}''',
+          )
+          replace(
+              index,
+              '''            {!conditionalMode && currentMetric && value !== "" && !valueInvalid ? (\n              <div className="space-y-1 text-sm">\n                <p className="font-medium tabular-nums">현재 {formatShare(currentMetric.share)}</p>''',
+              '''            {activeMetric && value !== "" && !valueInvalid ? (\n              <div className="space-y-1 text-sm">\n                <p className="font-medium tabular-nums">현재 {formatShare(activeMetric.share)}</p>''',
           )
 
-          backend = "apps/desktop/electron/main/backend.ts"
+          targets_test = "apps/desktop/test/phase4-targets.test.ts"
           replace(
-              backend,
-              '''    case "runs.get":\n      return requireSynthesis(services).getRun((request.params as { runId: string }).runId);''',
-              '''    case "runs.list": {\n      const synthesis = requireSynthesis(services);\n      if (!synthesis.listRuns) {\n        throw backendFailure("BACKEND_UNAVAILABLE", "Run listing is not initialized");\n      }\n      return synthesis.listRuns((request.params as { projectId: string }).projectId);\n    }\n    case "runs.get":\n      return requireSynthesis(services).getRun((request.params as { runId: string }).runId);''',
+              targets_test,
+              '''import { createTargetService } from "../electron/main/targets/service";''',
+              '''import { createTargetService } from "../electron/main/targets/service";\nimport { createValueGroupService } from "../electron/main/value-groups/service";''',
+          )
+          replace(
+              targets_test,
+              '''          { id: "q-score", kind: "ordinal", min: 1, max: 5 },''',
+              '''          { id: "q-score", kind: "ordinal", min: 1, max: 5 },\n          { id: "q-city", kind: "text" },\n          {\n            id: "q-checkbox",\n            kind: "multi_choice",\n            options: [\n              { key: "music", label: "음악" },\n              { key: "bus", label: "버스" },\n            ],\n          },''',
+          )
+          replace(
+              targets_test,
+              '''            "q-score": { state: "answered", value: { kind: "ordinal", value: 4 } },''',
+              '''            "q-score": { state: "answered", value: { kind: "ordinal", value: 4 } },\n            "q-city": { state: "answered", value: { kind: "text", value: "Seoul" } },\n            "q-checkbox": {\n              state: "answered",\n              value: { kind: "multi_choice", optionKeys: ["music"], labels: ["음악"] },\n            },''',
+          )
+          replace(
+              targets_test,
+              '''            "q-score": { state: "answered", value: { kind: "ordinal", value: 5 } },''',
+              '''            "q-score": { state: "answered", value: { kind: "ordinal", value: 5 } },\n            "q-city": { state: "answered", value: { kind: "text", value: "Busan" } },\n            "q-checkbox": {\n              state: "answered",\n              value: { kind: "multi_choice", optionKeys: ["bus"], labels: ["버스"] },\n            },''',
+          )
+          replace(
+              targets_test,
+              '''    const all = await service.profile("project-1", { kind: "all" });''',
+              '''    const group = await createValueGroupService(database.db).create({\n      projectId: "project-1",\n      questionId: "q-city",\n      name: "서울",\n      members: ["Seoul"],\n    });\n\n    const all = await service.profile("project-1", { kind: "all" });''',
+          )
+          replace(
+              targets_test,
+              '''    expect(all.responseCount).toBe(2);\n    expect(femaleAll).toMatchObject({ count: 1, denominatorCount: 2, share: 0.5 });''',
+              '''    expect(all.responseCount).toBe(2);\n    expect(femaleAll).toMatchObject({ count: 1, denominatorCount: 2, share: 0.5 });\n    expect(\n      all.metrics.find(\n        (metric) => metric.kind === "ordinal_distribution" && metric.questionId === "q-score",\n      ),\n    ).toMatchObject({\n      denominatorCount: 2,\n      values: [\n        { value: 1, count: 0, share: 0 },\n        { value: 2, count: 0, share: 0 },\n        { value: 3, count: 0, share: 0 },\n        { value: 4, count: 1, share: 0.5 },\n        { value: 5, count: 1, share: 0.5 },\n      ],\n    });\n    expect(\n      all.metrics.find(\n        (metric) =>\n          metric.kind === "conditional_share" &&\n          metric.population.valueGroupId === group.id &&\n          metric.questionId === "q-checkbox" &&\n          metric.optionKey === "music",\n      ),\n    ).toMatchObject({ count: 1, denominatorCount: 1, share: 1 });''',
           )
 
-          renderer = "apps/desktop/src/api/backend.ts"
-          replace(renderer, '  type RunExportFormat,\n  type RunsExportResult,', '  type RunExportFormat,\n  type RunSummary,\n  type RunsExportResult,')
+          run_store_test = "apps/desktop/test/run-store.test.ts"
           replace(
-              renderer,
-              '''export const getRun = (runId: string, backend?: BackendInvoker): Promise<RunsGetResult> =>\n  callBackend("runs.get", { runId }, backend);''',
-              '''export const listRuns = (projectId: string, backend?: BackendInvoker): Promise<RunSummary[]> =>\n  callBackend("runs.list", { projectId }, backend);\nexport const getRun = (runId: string, backend?: BackendInvoker): Promise<RunsGetResult> =>\n  callBackend("runs.get", { runId }, backend);''',
+              run_store_test,
+              '''  getRunRecord,\n  listPersistedRunRows,''',
+              '''  getRunRecord,\n  listPersistedRunRows,\n  listRunRecords,''',
           )
-
-          tests = "packages/contracts/test/protocol.test.ts"
           replace(
-              tests,
-              '''  it("accepts structured target issues", () => {''',
-              '''  it("accepts authoritative Question Explorer profile metrics and Run summaries", () => {\n    expect(\n      parseRpcResult("targets.profile", {\n        projectId: "project-1",\n        sourceRevisionId: "revision-1",\n        sourceScope: { kind: "all" },\n        responseCount: 2,\n        responseSetHash: "hash",\n        metrics: [\n          {\n            kind: "ordinal_distribution",\n            questionId: "q-score",\n            denominatorCount: 2,\n            values: [\n              { value: 1, count: 0, share: 0 },\n              { value: 2, count: 1, share: 0.5 },\n            ],\n          },\n          {\n            kind: "conditional_share",\n            population: { kind: "value_group", valueGroupId: "group-1" },\n            questionId: "q-checkbox",\n            optionKey: "music",\n            count: 1,\n            denominatorCount: 2,\n            share: 0.5,\n          },\n        ],\n      }),\n    ).toMatchObject({ metrics: [{ kind: "ordinal_distribution" }, { kind: "conditional_share" }] });\n\n    expect(\n      parseRpcResult("runs.list", [\n        {\n          runId: "run-1",\n          projectId: "project-1",\n          sourceRevisionId: "revision-1",\n          createdAt: "2026-09-07T00:00:00.000Z",\n          finalResponseCount: 120,\n        },\n      ]),\n    ).toMatchObject([{ runId: "run-1", finalResponseCount: 120 }]);\n  });\n\n  it("accepts structured target issues", () => {''',
+              run_store_test,
+              '''    const stored = getRunRecord(database.db, "run-1");''',
+              '''    persistRun(database.db, {\n      id: "run-2",\n      projectId: "project-1",\n      sourceRevisionId: "revision-1",\n      scope: {\n        kind: "all",\n        responseCount: 0,\n        responseSetHash: "scope-hash-2",\n      },\n      finalResponseCount: 2,\n      target: {},\n      seed: 43,\n      engineReport: {},\n      rows: [],\n      createdAtMs: 4000,\n    });\n    expect(listRunRecords(database.db, "project-1").map((run) => run.id)).toEqual([\n      "run-2",\n      "run-1",\n    ]);\n\n    const stored = getRunRecord(database.db, "run-1");''',
           )
           PY
       - name: Format changed files
         run: |
           pnpm exec prettier --write \
-            packages/contracts/src/protocol.ts \
-            packages/contracts/test/protocol.test.ts \
-            apps/desktop/electron/main/targets/service.ts \
-            apps/desktop/electron/main/persistence/run-store.ts \
-            apps/desktop/electron/main/synthesis/service.ts \
-            apps/desktop/electron/main/backend.ts \
-            apps/desktop/src/api/backend.ts
+            apps/desktop/src/QuestionExplorerPanel/model.ts \
+            apps/desktop/src/QuestionExplorerPanel/TextInspector.tsx \
+            apps/desktop/src/QuestionExplorerPanel/ResultView.tsx \
+            apps/desktop/src/QuestionExplorerPanel/index.tsx \
+            apps/desktop/test/phase4-targets.test.ts \
+            apps/desktop/test/run-store.test.ts
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if ! git diff --quiet; then
-            git add packages/contracts/src/protocol.ts packages/contracts/test/protocol.test.ts \
-              apps/desktop/electron/main/targets/service.ts \
-              apps/desktop/electron/main/persistence/run-store.ts \
-              apps/desktop/electron/main/synthesis/service.ts \
-              apps/desktop/electron/main/backend.ts apps/desktop/src/api/backend.ts
-            git commit -m "feat(contracts): expose profile evidence and run list"
+            git add apps/desktop/src/QuestionExplorerPanel apps/desktop/test/phase4-targets.test.ts apps/desktop/test/run-store.test.ts
+            git commit -m "feat(ui): consume authoritative profile and run history"
             git push origin HEAD:${{ github.event.pull_request.head.ref }}
           fi
       - run: pnpm run check
