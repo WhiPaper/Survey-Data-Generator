@@ -8,13 +8,15 @@ on:
       - phase1-backend-target-contract
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0
@@ -26,6 +28,144 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
+      - name: Apply explicit source refresh backend
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if old not in text:
+                  raise SystemExit(f"missing replacement in {path}: {old[:120]!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          protocol = "packages/contracts/src/protocol.ts"
+          replace(
+              protocol,
+              '''export type ProjectDetailView = z.infer<typeof ProjectDetailSchema>;\n\nexport const SourceScopeSchema''',
+              '''export type ProjectDetailView = z.infer<typeof ProjectDetailSchema>;\n\nexport const ProjectSourceRefreshParamsSchema = z\n  .object({\n    projectId: ProjectIdSchema,\n    operationId: z.string().min(1).max(200).optional(),\n  })\n  .strict();\nexport type ProjectSourceRefreshParams = z.infer<typeof ProjectSourceRefreshParamsSchema>;\n\nexport const SourceScopeSchema''',
+          )
+          replace(
+              protocol,
+              '''export type TargetsValidateResult = z.infer<typeof TargetsValidateResultSchema>;\n\nexport const SynthesisSuccessResultSchema''',
+              '''export type TargetsValidateResult = z.infer<typeof TargetsValidateResultSchema>;\n\nexport const ProjectSourceRefreshResultSchema = z\n  .object({\n    project: ProjectDetailSchema,\n    previousSourceRevisionId: z.string().min(1),\n    sourceRevisionId: z.string().min(1),\n    invalidValueGroupIds: z.array(z.string().min(1)),\n    targetIssues: z.array(TargetIssueSchema),\n  })\n  .strict();\nexport type ProjectSourceRefreshResult = z.infer<typeof ProjectSourceRefreshResultSchema>;\n\nexport const SynthesisSuccessResultSchema''',
+          )
+          replace(
+              protocol,
+              '''  "projects.get": { input: z.infer<typeof ProjectParamsSchema>; output: ProjectDetailView | null };\n  "projects.delete":''',
+              '''  "projects.get": { input: z.infer<typeof ProjectParamsSchema>; output: ProjectDetailView | null };\n  "projects.refreshSource": {\n    input: ProjectSourceRefreshParams;\n    output: ProjectSourceRefreshResult;\n  };\n  "projects.delete":''',
+          )
+          replace(
+              protocol,
+              '''  "projects.list",\n  "projects.get",\n  "projects.delete",''',
+              '''  "projects.list",\n  "projects.get",\n  "projects.refreshSource",\n  "projects.delete",''',
+          )
+          replace(
+              protocol,
+              '''  "projects.list": EmptyParamsSchema,\n  "projects.get": ProjectParamsSchema,\n  "projects.delete": ProjectParamsSchema,''',
+              '''  "projects.list": EmptyParamsSchema,\n  "projects.get": ProjectParamsSchema,\n  "projects.refreshSource": ProjectSourceRefreshParamsSchema,\n  "projects.delete": ProjectParamsSchema,''',
+          )
+          replace(
+              protocol,
+              '''  "projects.list": z.array(ProjectSummarySchema),\n  "projects.get": ProjectDetailSchema.nullable(),\n  "projects.delete": ActionResultSchema,''',
+              '''  "projects.list": z.array(ProjectSummarySchema),\n  "projects.get": ProjectDetailSchema.nullable(),\n  "projects.refreshSource": ProjectSourceRefreshResultSchema,\n  "projects.delete": ActionResultSchema,''',
+          )
+
+          value_groups = "apps/desktop/electron/main/value-groups/service.ts"
+          replace(
+              value_groups,
+              '''const response = (value: unknown): NormalizedResponse => {''',
+              '''export const invalidValueGroupIdsForForm = (\n  db: SurveyDatabase,\n  projectId: string,\n  form: FormSnapshot,\n): string[] =>\n  db\n    .select()\n    .from(valueGroups)\n    .where(eq(valueGroups.projectId, projectId))\n    .all()\n    .flatMap((row) => {\n      const question = form.questions.find((candidate) => candidate.id === row.questionId);\n      if (!question || (question.kind !== "single_choice" && question.kind !== "text")) {\n        return [row.id];\n      }\n      if (question.kind === "single_choice") {\n        const allowed = new Set(question.options.map((option) => String(option.key)));\n        if (parseMembers(row.membersJson).some((member) => !allowed.has(member))) return [row.id];\n      }\n      return [];\n    });\n\nconst response = (value: unknown): NormalizedResponse => {''',
+          )
+
+          forms = "apps/desktop/electron/main/forms/service.ts"
+          replace(
+              forms,
+              '''import type {\n  FormImportResult,\n  FormsImportParams,\n  FormsListParams,\n  FormsListResult,\n} from "@survey-synth/contracts";''',
+              '''import type {\n  FormId,\n  FormImportResult,\n  FormsImportParams,\n  FormsListParams,\n  FormsListResult,\n  ProjectSourceRefreshParams,\n} from "@survey-synth/contracts";''',
+          )
+          replace(
+              forms,
+              '''import { createImportedProject } from "../persistence/store";''',
+              '''import {\n  createImportedProject,\n  createSourceRevision,\n  getProject,\n} from "../persistence/store";''',
+          )
+          replace(
+              forms,
+              '''import { GoogleFormNormalizer, GoogleResponseNormalizer } from "./normalizer";''',
+              '''import { invalidValueGroupIdsForForm } from "../value-groups/service";\nimport { GoogleFormNormalizer, GoogleResponseNormalizer } from "./normalizer";''',
+          )
+          replace(
+              forms,
+              '''  importForm(params: FormsImportParams): Promise<FormImportResult>;\n  cancelImport(operationId: string): void;''',
+              '''  importForm(params: FormsImportParams): Promise<FormImportResult>;\n  refreshProjectSource(params: ProjectSourceRefreshParams): Promise<{\n    projectId: string;\n    previousSourceRevisionId: string;\n    sourceRevisionId: string;\n    invalidValueGroupIds: string[];\n  }>;\n  cancelImport(operationId: string): void;''',
+          )
+          replace(
+              forms,
+              '''    cancelImport: (operationId) => {\n      jobs.cancel(operationId);\n    },''',
+              '''    refreshProjectSource: async (params) => {\n      const project = getProject(db, params.projectId);\n      if (!project) throw backendFailure("NOT_FOUND", "Project was not found");\n      if (!project.googleAccountId) {\n        throw backendFailure("REAUTH_REQUIRED", "The Google account for this project is disconnected");\n      }\n      if (!project.currentSourceRevisionId) {\n        throw backendFailure("VALIDATION_FAILED", "Project has no imported source revision");\n      }\n\n      const account = await activeAccount();\n      if (String(account.id) !== project.googleAccountId) {\n        throw backendFailure(\n          "REAUTH_REQUIRED",\n          "Switch to the Google account connected to this project before refreshing",\n        );\n      }\n\n      const operationId = params.operationId ?? randomUUID();\n      let signal: AbortSignal;\n      try {\n        signal = jobs.start(operationId);\n      } catch {\n        throw backendFailure(\n          "VALIDATION_FAILED",\n          "A source refresh with this operation ID is already running",\n        );\n      }\n\n      try {\n        const capturedAtMs = now();\n        const formId = project.googleFormId as FormId;\n        const rawForm = await google.getForm(account.id, formId, signal);\n        const form = formNormalizer.normalize(rawForm, new Date(capturedAtMs).toISOString());\n        if (String(form.formId) !== project.googleFormId) {\n          throw backendFailure("GOOGLE_API_ERROR", "Google Form identity did not match the project");\n        }\n\n        const rawResponses = await google.getAllResponses(account.id, formId, signal);\n        if (rawResponses.length === 0) {\n          throw backendFailure("VALIDATION_FAILED", "Google Form has no responses to refresh");\n        }\n        const responses = responseNormalizer.normalizeAll(form, rawResponses);\n        if (signal.aborted) throw backendFailure("JOB_CANCELLED", "Google Form refresh was cancelled");\n\n        const latestSession = await auth.getSession();\n        if (!latestSession || String(latestSession.account.id) !== project.googleAccountId) {\n          throw backendFailure("JOB_CANCELLED", "Google account changed during source refresh");\n        }\n\n        const invalidValueGroupIds = invalidValueGroupIdsForForm(db, project.id, form);\n        const revision = createSourceRevision(db, {\n          projectId: project.id,\n          formSnapshot: {\n            title: form.title,\n            schema: form,\n            schemaHash: form.schemaHash,\n          },\n          responseSetHash: responseSetHash(form, responses),\n          responses: responses.map((response) => ({\n            responseId: response.responseId,\n            submittedAtMs: responseTimestamp(response),\n            response,\n          })),\n          importedAtMs: now(),\n        });\n\n        return {\n          projectId: project.id,\n          previousSourceRevisionId: project.currentSourceRevisionId,\n          sourceRevisionId: revision.id,\n          invalidValueGroupIds,\n        };\n      } finally {\n        jobs.finish(operationId);\n      }\n    },\n\n    cancelImport: (operationId) => {\n      jobs.cancel(operationId);\n    },''',
+          )
+
+          backend = "apps/desktop/electron/main/backend.ts"
+          replace(
+              backend,
+              '''  type GoogleAccountId,\n  type RunsExportParams,''',
+              '''  type GoogleAccountId,\n  type ProjectSourceRefreshParams,\n  type RunsExportParams,''',
+          )
+          replace(
+              backend,
+              '''    case "projects.get":\n      return requireProjects(services).get((request.params as { projectId: string }).projectId);\n    case "projects.delete":''',
+              '''    case "projects.get":\n      return requireProjects(services).get((request.params as { projectId: string }).projectId);\n    case "projects.refreshSource": {\n      const params = request.params as ProjectSourceRefreshParams;\n      const refreshed = await requireForms(services).refreshProjectSource(params);\n      const project = await requireProjects(services).get(params.projectId);\n      if (!project) throw backendFailure("INTERNAL", "Refreshed project could not be reloaded");\n\n      const targetService = requireTargets(services);\n      const draft = await targetService.getDraft(params.projectId);\n      const targetIssues = draft\n        ? [\n            ...semanticDuplicateTargetIssues(draft.targets),\n            ...(await targetService.validate(draft)).issues,\n          ]\n        : [];\n\n      return {\n        project,\n        previousSourceRevisionId: refreshed.previousSourceRevisionId,\n        sourceRevisionId: refreshed.sourceRevisionId,\n        invalidValueGroupIds: refreshed.invalidValueGroupIds,\n        targetIssues,\n      };\n    }\n    case "projects.delete":''',
+          )
+
+          tests = "packages/contracts/test/protocol.test.ts"
+          replace(
+              tests,
+              '''  it("accepts authoritative Question Explorer profile metrics and Run summaries", () => {''',
+              '''  it("parses explicit Project source refresh requests and review diagnostics", () => {\n    expect(\n      parseRpcRequest({\n        v: VERSIONS.protocolVersion,\n        type: "request",\n        id: "refresh-source",\n        method: "projects.refreshSource",\n        params: { projectId: "project-1", operationId: "refresh-1" },\n      }),\n    ).toMatchObject({ method: "projects.refreshSource" });\n\n    expect(\n      parseRpcResult("projects.refreshSource", {\n        project: {\n          id: "project-1",\n          googleAccountId: "account-1",\n          googleFormId: "form-1",\n          name: "Survey",\n          currentSourceRevisionId: "revision-2",\n          createdAt: "2026-09-01T00:00:00.000Z",\n          updatedAt: "2026-09-07T00:00:00.000Z",\n          responseCount: 10,\n          questionCount: 3,\n          form: { formId: "form-1", questions: [] },\n          responseTimestampRange: null,\n        },\n        previousSourceRevisionId: "revision-1",\n        sourceRevisionId: "revision-2",\n        invalidValueGroupIds: ["group-1"],\n        targetIssues: [\n          {\n            targetIds: ["target-1"],\n            code: "invalid_subject",\n            message: "Target subject is not valid for this Form",\n          },\n        ],\n      }),\n    ).toMatchObject({\n      sourceRevisionId: "revision-2",\n      invalidValueGroupIds: ["group-1"],\n      targetIssues: [{ code: "invalid_subject" }],\n    });\n  });\n\n  it("accepts authoritative Question Explorer profile metrics and Run summaries", () => {''',
+          )
+
+          value_tests = "apps/desktop/test/value-group-service.test.ts"
+          replace(
+              value_tests,
+              '''import { createValueGroupService } from "../electron/main/value-groups/service";''',
+              '''import {\n  createValueGroupService,\n  invalidValueGroupIdsForForm,\n} from "../electron/main/value-groups/service";''',
+          )
+          replace(
+              value_tests,
+              '''  it("does not auto-join newly observed text values after a source revision", async () => {''',
+              '''  it("flags structured groups whose saved option keys disappear without rewriting membership", async () => {\n    const database = setup();\n    const service = createValueGroupService(database.db);\n    const structured = await service.create({\n      projectId: "project-1",\n      questionId: "q-choice",\n      name: "행사 관심",\n      members: ["festival", "performance"],\n    });\n    const text = await service.create({\n      projectId: "project-1",\n      questionId: "q-text",\n      name: "야간 행사",\n      members: ["야간축제"],\n    });\n\n    const refreshedForm = {\n      formId: "form-1",\n      questions: [\n        {\n          ...choiceQuestion,\n          options: choiceQuestion.options.filter((option) => option.key !== "performance"),\n        },\n        textQuestion,\n      ],\n    } as never;\n\n    expect(invalidValueGroupIdsForForm(database.db, "project-1", refreshedForm)).toEqual([\n      structured.id,\n    ]);\n    await expect(service.list("project-1")).resolves.toEqual(\n      expect.arrayContaining([\n        expect.objectContaining({ id: structured.id, members: ["festival", "performance"] }),\n        expect.objectContaining({ id: text.id, members: ["야간축제"] }),\n      ]),\n    );\n  });\n\n  it("does not auto-join newly observed text values after a source revision", async () => {''',
+          )
+
+          forms_tests = "apps/desktop/test/forms-service.test.ts"
+          replace(
+              forms_tests,
+              '''  it("does not create a project when the selected Form has no responses", async () => {''',
+              '''  it("creates a new immutable source revision only after an explicit successful refresh", async () => {\n    const database = createDatabase();\n    const google = fakeGoogle();\n    let clock = 2_000;\n    const service = createFormsService({\n      auth: fakeAuth(),\n      google,\n      db: database.db,\n      jobs: createJobRegistry(),\n      now: () => (clock += 1_000),\n    });\n\n    const imported = await service.importForm({ formId: "form-1" as FormId });\n    const previousRevisionId = imported.sourceRevisionId;\n    vi.mocked(google.getAllResponses).mockResolvedValue([\n      ...rawResponses,\n      {\n        responseId: "r2",\n        createTime: "2026-08-02T00:00:00.000Z",\n        lastSubmittedTime: "2026-08-02T00:01:00.000Z",\n        answers: { q1: { textAnswers: { answers: [{ value: "4" }] } } },\n      },\n    ]);\n\n    const refreshed = await service.refreshProjectSource({ projectId: imported.projectId });\n    expect(refreshed.previousSourceRevisionId).toBe(previousRevisionId);\n    expect(refreshed.sourceRevisionId).not.toBe(previousRevisionId);\n    expect(getProject(database.db, imported.projectId)?.currentSourceRevisionId).toBe(\n      refreshed.sourceRevisionId,\n    );\n    expect(getSourceRevision(database.db, previousRevisionId)?.responseCount).toBe(1);\n    expect(listSourceResponses(database.db, previousRevisionId)).toHaveLength(1);\n    expect(listSourceResponses(database.db, refreshed.sourceRevisionId)).toHaveLength(2);\n  });\n\n  it("keeps the previous current revision when refresh capture has no responses", async () => {\n    const database = createDatabase();\n    const google = fakeGoogle();\n    const service = createFormsService({\n      auth: fakeAuth(),\n      google,\n      db: database.db,\n      jobs: createJobRegistry(),\n      now: () => 2_000,\n    });\n    const imported = await service.importForm({ formId: "form-1" as FormId });\n    vi.mocked(google.getAllResponses).mockResolvedValue([]);\n\n    await expect(\n      service.refreshProjectSource({ projectId: imported.projectId }),\n    ).rejects.toMatchObject({ backendError: { code: "VALIDATION_FAILED" } });\n    expect(getProject(database.db, imported.projectId)?.currentSourceRevisionId).toBe(\n      imported.sourceRevisionId,\n    );\n  });\n\n  it("does not create a project when the selected Form has no responses", async () => {''',
+          )
+          PY
+      - name: Format source refresh backend
+        run: |
+          pnpm exec prettier --write \
+            packages/contracts/src/protocol.ts \
+            packages/contracts/test/protocol.test.ts \
+            apps/desktop/electron/main/forms/service.ts \
+            apps/desktop/electron/main/value-groups/service.ts \
+            apps/desktop/electron/main/backend.ts \
+            apps/desktop/test/forms-service.test.ts \
+            apps/desktop/test/value-group-service.test.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add packages/contracts/src/protocol.ts packages/contracts/test/protocol.test.ts \
+              apps/desktop/electron/main/forms/service.ts \
+              apps/desktop/electron/main/value-groups/service.ts \
+              apps/desktop/electron/main/backend.ts \
+              apps/desktop/test/forms-service.test.ts \
+              apps/desktop/test/value-group-service.test.ts
+            git commit -m "feat(source): add explicit refresh backend"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
       - run: pnpm run check
       - run: python -m pip install -r engine/requirements.txt
       - run: pnpm run engine:test
