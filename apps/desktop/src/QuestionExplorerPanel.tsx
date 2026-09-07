@@ -134,8 +134,12 @@ const targetValueFor = (target: TargetDraftTarget | undefined): string => {
   return target.kind === "share" ? String(target.intent.value * 100) : String(target.intent.value);
 };
 
-const targetSummary = (target: TargetDraftTarget | undefined, currentShare: number): string | null => {
-  if (!target || (target.kind !== "share" && target.kind !== "count") || !target.intent) return null;
+const targetSummary = (
+  target: TargetDraftTarget | undefined,
+  currentShare: number,
+): string | null => {
+  if (!target || (target.kind !== "share" && target.kind !== "count") || !target.intent)
+    return null;
   if (target.kind === "count") {
     if (target.intent.kind === "count_delta") {
       return `${target.intent.value > 0 ? "+" : ""}${target.intent.value}명`;
@@ -208,7 +212,8 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
         if (active) setLoaded(true);
       })
       .catch((cause: unknown) => {
-        if (active) setError(cause instanceof Error ? cause.message : "설정을 불러오지 못했습니다.");
+        if (active)
+          setError(cause instanceof Error ? cause.message : "설정을 불러오지 못했습니다.");
       });
     return () => {
       active = false;
@@ -230,15 +235,21 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
   const targetCountFor = (questionId: string): number =>
     draft.targets.filter((target) => questionIdForTarget(target) === questionId).length;
   const filteredQuestions = questions.filter((question) => {
-    const matchesSearch = question.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+    const matchesSearch = question.title
+      .toLocaleLowerCase()
+      .includes(query.trim().toLocaleLowerCase());
     return matchesSearch && (!targetOnly || targetCountFor(question.id) > 0);
   });
   const sourceCount = profile?.responseCount ?? project.responseCount;
   const finalCount = draft.finalCount;
   const finalCountInvalid = finalCount === null || finalCount < sourceCount;
   const additions = finalCountInvalid || finalCount === null ? null : finalCount - sourceCount;
-  const currentMetric = editing ? optionMetric(profile, editing.questionId, editing.optionKey) : undefined;
-  const existingEditingTarget = editing ? optionTarget(draft.targets, editing.questionId, editing.optionKey) : undefined;
+  const currentMetric = editing
+    ? optionMetric(profile, editing.questionId, editing.optionKey)
+    : undefined;
+  const existingEditingTarget = editing
+    ? optionTarget(draft.targets, editing.questionId, editing.optionKey)
+    : undefined;
   const parsed = Number(value);
   const isShareMode =
     mode === "absolute_share" ||
@@ -263,7 +274,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     (mode === "count_delta" &&
       (!Number.isInteger(parsed) ||
         (currentMetric !== undefined && currentMetric.count + parsed < 0) ||
-        (currentMetric !== undefined && finalCount !== null && currentMetric.count + parsed > finalCount)));
+        (currentMetric !== undefined &&
+          finalCount !== null &&
+          currentMetric.count + parsed > finalCount)));
 
   const openTarget = (question: QuestionView, optionKey: string, optionLabel: string) => {
     const existing = optionTarget(draft.targets, question.id, optionKey);
@@ -368,7 +381,8 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
               const next = Number(event.target.value);
               setDraft((current) => ({
                 ...current,
-                finalCount: event.target.value === "" || !Number.isFinite(next) ? null : Math.trunc(next),
+                finalCount:
+                  event.target.value === "" || !Number.isFinite(next) ? null : Math.trunc(next),
               }));
             }}
             className="h-8 w-24 tabular-nums"
@@ -574,7 +588,10 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                   </p>
                 ) : (
                   <p className="text-muted-foreground tabular-nums">
-                    → {mode === "absolute_count" ? `최종 ${parsed}명` : `${parsed >= 0 ? "+" : ""}${parsed}명`}
+                    →{" "}
+                    {mode === "absolute_count"
+                      ? `최종 ${parsed}명`
+                      : `${parsed >= 0 ? "+" : ""}${parsed}명`}
                   </p>
                 )}
               </div>
