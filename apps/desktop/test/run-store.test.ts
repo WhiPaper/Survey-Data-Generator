@@ -11,6 +11,7 @@ import { openAppDatabase, type AppDatabase } from "../electron/main/persistence/
 import {
   getRunRecord,
   listPersistedRunRows,
+  listRunRecords,
   persistRun,
 } from "../electron/main/persistence/run-store";
 import { createProject, createSourceRevision } from "../electron/main/persistence/store";
@@ -126,6 +127,27 @@ describe("synthesis run persistence", () => {
       ],
       createdAtMs: 3000,
     });
+
+    persistRun(database.db, {
+      id: "run-2",
+      projectId: "project-1",
+      sourceRevisionId: "revision-1",
+      scope: {
+        kind: "all",
+        responseCount: 0,
+        responseSetHash: "scope-hash-2",
+      },
+      finalResponseCount: 2,
+      target: {},
+      seed: 43,
+      engineReport: {},
+      rows: [],
+      createdAtMs: 4000,
+    });
+    expect(listRunRecords(database.db, "project-1").map((run) => run.id)).toEqual([
+      "run-2",
+      "run-1",
+    ]);
 
     const stored = getRunRecord(database.db, "run-1");
     expect(stored).toMatchObject({

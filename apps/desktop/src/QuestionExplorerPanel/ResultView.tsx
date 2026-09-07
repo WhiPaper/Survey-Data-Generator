@@ -1,4 +1,6 @@
 import type {
+  FrozenRunTarget,
+  RunSummary,
   RunsGetResult,
   TargetDraft,
   TargetProfileResult,
@@ -30,12 +32,13 @@ import {
 
 export type RunContext = {
   run: RunsGetResult;
-  draft: TargetDraft;
+  draft: TargetDraft | null;
   profile: TargetProfileResult | null;
 };
 
 type ResultViewProps = {
   contexts: RunContext[];
+  summaries: RunSummary[];
   selectedRunId: string;
   questions: QuestionView[];
   groups: ValueGroupView[];
@@ -45,8 +48,37 @@ type ResultViewProps = {
   onExport: (format: "csv" | "xlsx") => void;
 };
 
+const frozenTargetLabel = (
+  target: FrozenRunTarget | undefined,
+  questions: readonly QuestionView[],
+): string => {
+  if (!target) return "목표";
+  if (target.kind === "mean") {
+    return questions.find((question) => question.id === target.questionId)?.title ?? "평균";
+  }
+  if (target.kind === "conditional_share") {
+    const question = questions.find((candidate) => candidate.id === target.questionId);
+    const option = question?.options.find((candidate) => candidate.key === target.optionKey);
+    return `${target.population.valueGroup.name} 중 ${option?.label ?? "선택지"}`;
+  }
+  if (target.subject.kind === "value_group") return target.subject.valueGroup.name;
+  const question = questions.find((candidate) => candidate.id === target.subject.questionId);
+  return (
+    question?.options.find((option) => option.key === target.subject.optionKey)?.label ?? "선택지"
+  );
+};
+
+const frozenQuestionId = (target: FrozenRunTarget | undefined): string | null => {
+  if (!target) return null;
+  if (target.kind === "mean" || target.kind === "conditional_share") return target.questionId;
+  return target.subject.kind === "value_group"
+    ? target.subject.valueGroup.questionId
+    : target.subject.questionId;
+};
+
 export function ResultView({
   contexts,
+  summaries,
   selectedRunId,
   questions,
   groups,
@@ -81,9 +113,9 @@ export function ResultView({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {contexts.map((candidate, index) => (
-                <SelectItem key={candidate.run.runId} value={candidate.run.runId}>
-                  {index === 0 ? "최신 결과" : `이전 결과 ${contexts.length - index}`}
+              {summaries.map((summary, index) => (
+                <SelectItem key={summary.runId} value={summary.runId}>
+                  {index === 0 ? "최신 결과" : new Date(summary.createdAt).toLocaleString()}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -106,15 +138,22 @@ export function ResultView({
 
       <div className="divide-y">
         {context.run.outcome.targets.map((outcome) => {
-          const target = context.draft.targets.find(
+          const target = context.draft?.targets.find(
             (candidate) => String(candidate.id) === String(outcome.targetId),
           );
-          const label = target ? targetLabel(target, questions, groups) : "목표";
+          const frozenTarget = context.run.targetSnapshot.targets.find(
+            (candidate) => String(candidate.id) === String(outcome.targetId),
+          );
+          const label = target
+            ? targetLabel(target, questions, groups)
+            : frozenTargetLabel(frozenTarget, questions);
           const difference =
             outcome.kind === "share" || outcome.kind === "conditional_share"
               ? `${(outcome.absoluteError * 100).toFixed(1)}%p`
               : outcome.absoluteError.toFixed(2);
-          const questionId = target ? questionIdForTarget(target, groups) : null;
+          const questionId = target
+            ? questionIdForTarget(target, groups)
+            : frozenQuestionId(frozenTarget);
 
           return (
             <div key={String(outcome.targetId)} className="py-5">
@@ -146,8 +185,7 @@ export function ResultView({
       </div>
 
       <p className="mt-6 text-xs text-muted-foreground">
-        현재 backend에는 Run 목록 조회가 없어 이 선택기는 이번 앱 세션에서 생성한 결과만 표시합니다.
-        저장된 과거 Run 자체는 변경하지 않습니다.
+        과거 결과는 생성 당시 내용으로 보존됩니다.
       </p>
     </div>
   );

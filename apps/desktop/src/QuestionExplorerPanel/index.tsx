@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   EditPlanPreview,
   ProjectDetailView,
+  RunSummary,
   SourceScope,
   TargetDraft,
   TargetDraftTarget,
@@ -19,6 +20,7 @@ import {
   getRun,
   getTargetDraft,
   getTargetProfile,
+  listRuns,
   listValueGroups,
   listValueGroupValues,
   resolveSynthesisEditPlan,
@@ -53,6 +55,7 @@ import {
 import { ResultView, type RunContext } from "./ResultView";
 import { TextInspector } from "./TextInspector";
 import {
+  conditionalProfileMetric,
   conditionalTarget,
   conditionalTargetId,
   dependentTargets,
@@ -63,6 +66,7 @@ import {
   meanMetric,
   meanTarget,
   meanTargetId,
+  ordinalDistributionMetric,
   projectQuestions,
   questionIdForTarget,
   subjectMetricFor,
@@ -155,6 +159,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     preview: EditPlanPreview;
   } | null>(null);
   const [runContexts, setRunContexts] = useState<RunContext[]>([]);
+  const [runSummaries, setRunSummaries] = useState<RunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -190,10 +195,15 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     setError(null);
     setWorkspaceView("setup");
     setRunContexts([]);
+    setRunSummaries([]);
     setSelectedRunId("");
 
-    void Promise.all([getTargetDraft(project.id), listValueGroups(project.id)])
-      .then(async ([saved, nextGroups]) => {
+    void Promise.all([
+      getTargetDraft(project.id),
+      listValueGroups(project.id),
+      listRuns(project.id),
+    ])
+      .then(async ([saved, nextGroups, nextRunSummaries]) => {
         if (!active) return;
         const nextDraft: TargetDraft = saved
           ? {
@@ -212,6 +222,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
             };
         setDraft(nextDraft);
         setGroups(nextGroups);
+        setRunSummaries(nextRunSummaries);
         setProfile(await getTargetProfile(project.id, nextDraft.sourceScope));
         if (active) setLoaded(true);
       })
@@ -297,6 +308,11 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
   const currentTarget = populationGroupId === "all" ? directTarget : conditional;
   const currentMetric = editingMetric(profile, editing);
   const conditionalMode = editing?.subjectKind === "checkbox_option" && populationGroupId !== "all";
+  const currentConditionalMetric =
+    conditionalMode && editing?.optionKey
+      ? conditionalProfileMetric(profile, populationGroupId, editing.questionId, editing.optionKey)
+      : undefined;
+  const activeMetric = conditionalMode ? currentConditionalMetric : currentMetric;
   const valueGroupMode = editing?.subjectKind === "value_group";
   const parsedValue = Number(value);
   const shareMode =
@@ -304,13 +320,13 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     mode === "percentage_point_delta" ||
     mode === "relative_percent_delta";
   const resolvedShare =
-    !conditionalMode && currentMetric && Number.isFinite(parsedValue)
+    activeMetric && Number.isFinite(parsedValue)
       ? mode === "absolute_share"
         ? parsedValue / 100
         : mode === "percentage_point_delta"
-          ? currentMetric.share + parsedValue / 100
+          ? activeMetric.share + parsedValue / 100
           : mode === "relative_percent_delta"
-            ? currentMetric.share * (1 + parsedValue / 100)
+            ? activeMetric.share * (1 + parsedValue / 100)
             : null
       : null;
   const valueInvalid =
@@ -318,10 +334,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     !Number.isFinite(parsedValue) ||
     ((conditionalMode || valueGroupMode) && !shareMode) ||
     (mode === "absolute_share" && (parsedValue < 0 || parsedValue > 100)) ||
-    (!conditionalMode &&
-      shareMode &&
+    (shareMode &&
       mode !== "absolute_share" &&
-      currentMetric !== undefined &&
+      activeMetric !== undefined &&
       (resolvedShare === null || resolvedShare < 0 || resolvedShare > 1)) ||
     (mode === "absolute_count" &&
       (!Number.isInteger(parsedValue) ||
@@ -345,6 +360,11 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     ? meanTarget(draft.targets, editingMean.questionId)
     : undefined;
   const currentMeanMetric = editingMean ? meanMetric(profile, editingMean.questionId) : undefined;
+
+  const selectedOrdinalDistribution =
+    selectedQuestion?.kind === "ordinal"
+      ? ordinalDistributionMetric(profile, selectedQuestion.id)
+      : undefined;
 
   const selectedCheckboxDenominator =
     selectedQuestion?.kind === "multi_choice"
@@ -664,6 +684,30 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     );
   };
 
+  const selectRun = async (runId: string): Promise<void> => {
+    const existing = runContexts.find((context) => context.run.runId === runId);
+    if (existing) {
+      setSelectedRunId(runId);
+      setWorkspaceView("result");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const run = await getRun(runId);
+      setRunContexts((current) => [
+        { run, draft: null, profile: null },
+        ...current.filter((context) => context.run.runId !== runId),
+      ]);
+      setSelectedRunId(runId);
+      setWorkspaceView("result");
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : "결과를 불러오지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const recordRun = async (runId: string): Promise<void> => {
     const run = await getRun(runId);
     setRunContexts((current) => [
@@ -672,6 +716,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     ]);
     setSelectedRunId(runId);
     setWorkspaceView("result");
+    void listRuns(project.id)
+      .then(setRunSummaries)
+      .catch(() => undefined);
   };
 
   const generate = async (): Promise<void> => {
@@ -819,8 +866,11 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
           size="sm"
           variant={workspaceView === "result" ? "secondary" : "ghost"}
           className="h-7"
-          disabled={runContexts.length === 0}
-          onClick={() => setWorkspaceView("result")}
+          disabled={runSummaries.length === 0 && runContexts.length === 0}
+          onClick={() => {
+            const runId = selectedRunId || runSummaries[0]?.runId || runContexts[0]?.run.runId;
+            if (runId) void selectRun(runId);
+          }}
         >
           결과
         </Button>
@@ -829,11 +879,12 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
       {workspaceView === "result" ? (
         <ResultView
           contexts={runContexts}
+          summaries={runSummaries}
           selectedRunId={selectedRunId}
           questions={questions}
           groups={groups}
           exportBusy={exportBusy}
-          onSelectRun={setSelectedRunId}
+          onSelectRun={(runId) => void selectRun(runId)}
           onEditTarget={(questionId) => {
             setSelectedQuestionId(questionId);
             setWorkspaceView("setup");
@@ -1016,10 +1067,38 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                           가능한 범위 {selectedQuestion.min}–{selectedQuestion.max}
                         </p>
                       ) : null}
-                      <p className="mt-8 text-sm text-muted-foreground">
-                        점수별 분포는 현재 profile 공개 계약에 없어 임의로 재계산하지 않습니다.
-                        평균만 목표로 설정할 수 있습니다.
-                      </p>
+                      <div className="mt-8 border-t pt-5">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-medium">점수별 분포</p>
+                          <span className="text-xs tabular-nums text-muted-foreground">
+                            응답 {selectedOrdinalDistribution?.denominatorCount ?? 0}명
+                          </span>
+                        </div>
+                        <div className="mt-3 space-y-1">
+                          {selectedOrdinalDistribution?.values.map((item) => (
+                            <div
+                              key={item.value}
+                              className="grid grid-cols-[48px_64px_64px_minmax(120px,1fr)] items-center gap-3 py-1.5 text-sm"
+                            >
+                              <span className="font-medium tabular-nums">{item.value}점</span>
+                              <span className="text-right tabular-nums text-muted-foreground">
+                                {item.count}명
+                              </span>
+                              <span className="text-right tabular-nums">
+                                {formatShare(item.share)}
+                              </span>
+                              <span className="h-1.5 overflow-hidden rounded-full bg-muted">
+                                <span
+                                  className="block h-full rounded-full bg-foreground/45"
+                                  style={{
+                                    width: `${Math.max(0, Math.min(100, item.share * 100))}%`,
+                                  }}
+                                />
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   ) : null}
                   {selectedQuestion.kind === "text" ? (
@@ -1072,9 +1151,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
             <SheetTitle>{editing?.label ?? "목표"}</SheetTitle>
             <SheetDescription>
               {editing?.questionTitle ?? "문항"}
-              {!conditionalMode && currentMetric
-                ? ` · 현재 ${currentMetric.count}/${currentMetric.denominatorCount}명 · ${formatShare(
-                    currentMetric.share,
+              {activeMetric
+                ? ` · 현재 ${activeMetric.count}/${activeMetric.denominatorCount}명 · ${formatShare(
+                    activeMetric.share,
                   )}`
                 : ""}
             </SheetDescription>
@@ -1099,10 +1178,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                     ))}
                   </SelectContent>
                 </Select>
-                {conditionalMode ? (
+                {conditionalMode && !currentConditionalMetric ? (
                   <p className="text-xs text-muted-foreground">
-                    이 그룹의 조건부 현재 비율은 공개 profile에 없으므로 UI에서 그룹 크기로 대신
-                    계산하지 않습니다. 생성 검증 시 backend가 기준값을 계산합니다.
+                    현재 선택 범위에는 비율을 계산할 응답 대상이 없습니다.
                   </p>
                 ) : null}
               </div>
@@ -1149,9 +1227,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                 <p className="text-xs text-destructive">유효한 목표 값을 입력해주세요.</p>
               ) : null}
             </div>
-            {!conditionalMode && currentMetric && value !== "" && !valueInvalid ? (
+            {activeMetric && value !== "" && !valueInvalid ? (
               <div className="space-y-1 text-sm">
-                <p className="font-medium tabular-nums">현재 {formatShare(currentMetric.share)}</p>
+                <p className="font-medium tabular-nums">현재 {formatShare(activeMetric.share)}</p>
                 {resolvedShare !== null ? (
                   <p className="tabular-nums text-muted-foreground">
                     → 목표 {formatShare(resolvedShare)}

@@ -163,6 +163,29 @@ export const valueGroupMetric = (
       metric.subject.valueGroupId === valueGroupId,
   );
 
+export const conditionalProfileMetric = (
+  profile: TargetProfileResult | null,
+  valueGroupId: string,
+  questionId: string,
+  optionKey: string,
+): Extract<TargetProfileMetric, { kind: "conditional_share" }> | undefined =>
+  profile?.metrics.find(
+    (metric): metric is Extract<TargetProfileMetric, { kind: "conditional_share" }> =>
+      metric.kind === "conditional_share" &&
+      metric.population.valueGroupId === valueGroupId &&
+      metric.questionId === questionId &&
+      metric.optionKey === optionKey,
+  );
+
+export const ordinalDistributionMetric = (
+  profile: TargetProfileResult | null,
+  questionId: string,
+): Extract<TargetProfileMetric, { kind: "ordinal_distribution" }> | undefined =>
+  profile?.metrics.find(
+    (metric): metric is Extract<TargetProfileMetric, { kind: "ordinal_distribution" }> =>
+      metric.kind === "ordinal_distribution" && metric.questionId === questionId,
+  );
+
 export const editingMetric = (
   profile: TargetProfileResult | null,
   editing: EditingTarget | null,
@@ -348,7 +371,15 @@ export const currentValue = (
     const metric = meanMetric(profile, target.questionId);
     return metric ? metric.mean.toFixed(2) : "—";
   }
-  if (target.kind === "conditional_share") return "—";
+  if (target.kind === "conditional_share") {
+    const metric = conditionalProfileMetric(
+      profile,
+      target.population.valueGroupId,
+      target.questionId,
+      target.optionKey,
+    );
+    return metric ? formatShare(metric.share) : "—";
+  }
   const subject = target.subject;
   const metric =
     subject.kind === "value_group"

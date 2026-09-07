@@ -11,6 +11,7 @@ import { openAppDatabase, type AppDatabase } from "../electron/main/persistence/
 import { createImportedProject, upsertGoogleAccount } from "../electron/main/persistence/store";
 import type { SynthesisService } from "../electron/main/synthesis/service";
 import { createTargetService } from "../electron/main/targets/service";
+import { createValueGroupService } from "../electron/main/value-groups/service";
 
 const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
 const databases: AppDatabase[] = [];
@@ -52,6 +53,15 @@ const setup = (): AppDatabase => {
             ],
           },
           { id: "q-score", kind: "ordinal", min: 1, max: 5 },
+          { id: "q-city", kind: "text" },
+          {
+            id: "q-checkbox",
+            kind: "multi_choice",
+            options: [
+              { key: "music", label: "음악" },
+              { key: "bus", label: "버스" },
+            ],
+          },
         ],
       },
     },
@@ -67,6 +77,11 @@ const setup = (): AppDatabase => {
               value: { kind: "single_choice", optionKey: "female", label: "여성" },
             },
             "q-score": { state: "answered", value: { kind: "ordinal", value: 4 } },
+            "q-city": { state: "answered", value: { kind: "text", value: "Seoul" } },
+            "q-checkbox": {
+              state: "answered",
+              value: { kind: "multi_choice", optionKeys: ["music"], labels: ["음악"] },
+            },
           },
           origin: "original",
           path: { questions: {}, confidence: "certain" },
@@ -83,6 +98,11 @@ const setup = (): AppDatabase => {
               value: { kind: "single_choice", optionKey: "male", label: "남성" },
             },
             "q-score": { state: "answered", value: { kind: "ordinal", value: 5 } },
+            "q-city": { state: "answered", value: { kind: "text", value: "Busan" } },
+            "q-checkbox": {
+              state: "answered",
+              value: { kind: "multi_choice", optionKeys: ["bus"], labels: ["버스"] },
+            },
           },
           origin: "original",
           path: { questions: {}, confidence: "certain" },
@@ -150,6 +170,13 @@ describe("Phase 4 target profile and draft lifecycle", () => {
       captureSynthesis(() => undefined),
     );
 
+    const group = await createValueGroupService(database.db).create({
+      projectId: "project-1",
+      questionId: "q-city",
+      name: "서울",
+      members: ["Seoul"],
+    });
+
     const all = await service.profile("project-1", { kind: "all" });
     const femaleAll = all.metrics.find(
       (metric) =>
@@ -160,6 +187,29 @@ describe("Phase 4 target profile and draft lifecycle", () => {
     );
     expect(all.responseCount).toBe(2);
     expect(femaleAll).toMatchObject({ count: 1, denominatorCount: 2, share: 0.5 });
+    expect(
+      all.metrics.find(
+        (metric) => metric.kind === "ordinal_distribution" && metric.questionId === "q-score",
+      ),
+    ).toMatchObject({
+      denominatorCount: 2,
+      values: [
+        { value: 1, count: 0, share: 0 },
+        { value: 2, count: 0, share: 0 },
+        { value: 3, count: 0, share: 0 },
+        { value: 4, count: 1, share: 0.5 },
+        { value: 5, count: 1, share: 0.5 },
+      ],
+    });
+    expect(
+      all.metrics.find(
+        (metric) =>
+          metric.kind === "conditional_share" &&
+          metric.population.valueGroupId === group.id &&
+          metric.questionId === "q-checkbox" &&
+          metric.optionKey === "music",
+      ),
+    ).toMatchObject({ count: 1, denominatorCount: 1, share: 1 });
 
     const scoped = await service.profile("project-1", {
       kind: "submitted_between",
