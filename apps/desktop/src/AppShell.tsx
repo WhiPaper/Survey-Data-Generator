@@ -219,12 +219,7 @@ export function AppShell() {
           <span className="hidden text-xs text-muted-foreground sm:inline">
             {session.account.email}
           </span>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={authBusy}
-            onClick={() => void handleLogout()}
-          >
+          <Button size="sm" variant="ghost" disabled={authBusy} onClick={() => void handleLogout()}>
             로그아웃
           </Button>
         </div>
@@ -254,10 +249,7 @@ export function AppShell() {
             </p>
             <div className="mt-5 divide-y border-y">
               {projects.map((project) => (
-                <div
-                  key={project.id}
-                  className="flex items-center justify-between gap-4 py-3"
-                >
+                <div key={project.id} className="flex items-center justify-between gap-4 py-3">
                   <button
                     type="button"
                     className="min-w-0 text-left"
@@ -280,9 +272,7 @@ export function AppShell() {
                 </div>
               ))}
               {!projectsBusy && projects.length === 0 ? (
-                <p className="py-5 text-sm text-muted-foreground">
-                  아직 만든 프로젝트가 없습니다.
-                </p>
+                <p className="py-5 text-sm text-muted-foreground">아직 만든 프로젝트가 없습니다.</p>
               ) : null}
             </div>
           </section>
@@ -294,16 +284,11 @@ export function AppShell() {
             </p>
             <div className="mt-5 divide-y border-y">
               {forms.map((form) => (
-                <div
-                  key={form.formId}
-                  className="flex items-center justify-between gap-4 py-3"
-                >
+                <div key={form.formId} className="flex items-center justify-between gap-4 py-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{form.title}</p>
                     {form.modifiedAt ? (
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        수정 {form.modifiedAt}
-                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">수정 {form.modifiedAt}</p>
                     ) : null}
                   </div>
                   <Button
