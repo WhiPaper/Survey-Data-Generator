@@ -22,8 +22,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { resultDiagnosticsLines } from "./resultDiagnostics";
+import { runBaselineValue } from "./runBaseline";
 import {
-  currentValue,
   intentLabel,
   outcomeValue,
   questionIdForTarget,
@@ -143,16 +143,23 @@ export function ResultView({
           const frozenTarget = context.run.targetSnapshot.targets.find(
             (candidate) => String(candidate.id) === String(outcome.targetId),
           );
-          const label = target
-            ? targetLabel(target, questions, groups)
-            : frozenTargetLabel(frozenTarget, questions);
+          const baseline = context.run.baselines.find(
+            (candidate) => String(candidate.targetId) === String(outcome.targetId),
+          );
+          const label = frozenTarget
+            ? frozenTargetLabel(frozenTarget, questions)
+            : target
+              ? targetLabel(target, questions, groups)
+              : "목표";
           const difference =
             outcome.kind === "share" || outcome.kind === "conditional_share"
               ? `${(outcome.absoluteError * 100).toFixed(1)}%p`
               : outcome.absoluteError.toFixed(2);
-          const questionId = target
-            ? questionIdForTarget(target, groups)
-            : frozenQuestionId(frozenTarget);
+          const questionId = frozenTarget
+            ? frozenQuestionId(frozenTarget)
+            : target
+              ? questionIdForTarget(target, groups)
+              : null;
 
           return (
             <div key={String(outcome.targetId)} className="py-5">
@@ -165,7 +172,7 @@ export function ResultView({
                 {label}
               </button>
               <p className="mt-2 text-base tabular-nums">
-                현재 {currentValue(target, context.profile)} → {intentLabel(target, outcome)} → 결과{" "}
+                현재 {runBaselineValue(baseline)} → {intentLabel(undefined, outcome)} → 결과{" "}
                 {outcomeValue(outcome)}
               </p>
               {!outcome.exact ? (

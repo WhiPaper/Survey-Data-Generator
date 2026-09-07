@@ -599,6 +599,43 @@ export const RunTargetSnapshotSchema = z
   .strict();
 export type RunTargetSnapshot = z.infer<typeof RunTargetSnapshotSchema>;
 
+export const RunTargetBaselineSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      targetId: TargetIdSchema,
+      kind: z.literal("count"),
+      count: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      targetId: TargetIdSchema,
+      kind: z.literal("share"),
+      count: z.number().int().nonnegative(),
+      denominatorCount: z.number().int().nonnegative(),
+      share: z.number().min(0).max(1),
+    })
+    .strict(),
+  z
+    .object({
+      targetId: TargetIdSchema,
+      kind: z.literal("mean"),
+      mean: z.number().finite(),
+      denominatorCount: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      targetId: TargetIdSchema,
+      kind: z.literal("conditional_share"),
+      count: z.number().int().nonnegative(),
+      denominatorCount: z.number().int().nonnegative(),
+      share: z.number().min(0).max(1),
+    })
+    .strict(),
+]);
+export type RunTargetBaseline = z.infer<typeof RunTargetBaselineSchema>;
+
 export const RunResultDiagnosticsSchema = z
   .object({
     sourceResponseCount: z.number().int().nonnegative(),
@@ -616,6 +653,7 @@ export const RunsGetResultSchema = z
     sourceRevisionId: z.string().min(1),
     targetSnapshot: RunTargetSnapshotSchema,
     outcome: TargetSetOutcomeSchema,
+    baselines: z.array(RunTargetBaselineSchema),
     diagnostics: RunResultDiagnosticsSchema,
     validation: z.record(z.string(), z.unknown()),
     finalResponseCount: z.number().int().nonnegative(),
