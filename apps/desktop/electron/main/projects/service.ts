@@ -2,9 +2,11 @@ import { eq } from "drizzle-orm";
 
 import type {
   FormId,
+  FrozenRunTarget,
   GoogleAccountId,
   ProjectDetailView,
   ProjectSummaryView,
+  RunTargetPresentation,
 } from "@survey-synth/contracts";
 
 import { backendFailure } from "../errors";
@@ -19,6 +21,7 @@ import {
   type SourceRevisionRecord,
 } from "../persistence/store";
 import { invalidValueGroupIdsForCurrentSource } from "../value-groups/service";
+import { buildRunTargetPresentations } from "./run-presentation";
 
 export interface ProjectService {
   list(): Promise<ProjectSummaryView[]>;
@@ -27,6 +30,11 @@ export interface ProjectService {
     sourceRevisionId: string;
     invalidValueGroupIds: string[];
   }>;
+  runTargetPresentations(
+    projectId: string,
+    sourceRevisionId: string,
+    targets: readonly FrozenRunTarget[],
+  ): Promise<RunTargetPresentation[]>;
   delete(projectId: string): Promise<void>;
 }
 
@@ -114,6 +122,20 @@ export const createProjectService = ({ db }: CreateProjectServiceOptions): Proje
   },
 
   sourceReview: async (projectId) => invalidValueGroupIdsForCurrentSource(db, projectId),
+
+  runTargetPresentations: async (projectId, sourceRevisionId, targets) => {
+    const revision = getSourceRevision(db, sourceRevisionId);
+    if (!revision || revision.projectId !== projectId) {
+      throw backendFailure("INTERNAL", "Historical Run source revision is invalid");
+    }
+    const snapshot = db
+      .select()
+      .from(formSnapshots)
+      .where(eq(formSnapshots.id, revision.formSnapshotId))
+      .get();
+    if (!snapshot) throw backendFailure("INTERNAL", "Historical Run Form snapshot is missing");
+    return buildRunTargetPresentations(parseForm(snapshot.schemaJson), targets);
+  },
 
   delete: async (projectId) => {
     const project = getProject(db, projectId);

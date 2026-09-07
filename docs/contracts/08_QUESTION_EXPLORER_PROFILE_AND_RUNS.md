@@ -56,6 +56,22 @@ The backend is authoritative for these values. The renderer must not rebuild his
 
 Historical baseline computation must remain valid after source refreshes, ValueGroup edits/deletions, draft changes, and app restarts because the Run points at immutable source evidence and freezes the target/group definition it used.
 
+## `runs.get` historical target presentation
+
+A historical Result must also keep the user-facing target identity that belonged to the Run's source revision. The renderer must not look up a historical target's question or option label from the Project's current Form snapshot.
+
+`runs.get` therefore exposes one presentation entry per frozen Run target. Each entry contains:
+
+- `targetId`: stable join key to the frozen target, baseline, and outcome
+- `questionId`: historical target question id used for optional navigation back to setup
+- `questionTitle`: title from the Form snapshot referenced by the Run's source revision
+- `subjectLabel`: historical option label, frozen ValueGroup name, or the historical question title for a mean target
+- `populationLabel`: frozen ValueGroup name for a conditional-share population, otherwise omitted
+
+These strings are derived when `runs.get` is read from the immutable Form snapshot associated with the Run's persisted source revision plus the frozen target snapshot. They do not require a Run-table migration and do not mutate the historical Run.
+
+The current Project Form may be consulted only to decide whether navigating back to a question is still possible. It must not change the label rendered for a historical Result.
+
 ## `runs.get` result diagnostics
 
 The Result view must not inspect raw engine validation records or reconstruct historical row provenance in the renderer.
@@ -76,6 +92,7 @@ Raw engine keys remain internal. The Result UI should present these diagnostics 
 ## Non-goals
 
 - no renderer-side denominator reconstruction
+- no renderer-side historical Form label lookup
 - no ordinal targeting by individual score
 - no mutation of historical Runs
 - no raw engine validation object in user-facing UI

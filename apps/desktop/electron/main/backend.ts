@@ -220,8 +220,17 @@ export const handleBackendCall = async (
       }
       return synthesis.listRuns((request.params as { projectId: string }).projectId);
     }
-    case "runs.get":
-      return requireSynthesis(services).getRun((request.params as { runId: string }).runId);
+    case "runs.get": {
+      const run = await requireSynthesis(services).getRun(
+        (request.params as { runId: string }).runId,
+      );
+      const presentations = await requireProjects(services).runTargetPresentations(
+        run.projectId,
+        run.sourceRevisionId,
+        run.targetSnapshot.targets,
+      );
+      return { ...run, presentations };
+    }
     case "runs.export": {
       const params = request.params as RunsExportParams;
       const destination = await requireRunExportDestinationPicker(services)(params);

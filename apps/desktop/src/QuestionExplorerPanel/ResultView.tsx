@@ -1,5 +1,4 @@
 import type {
-  FrozenRunTarget,
   RunSummary,
   RunsGetResult,
   TargetDraft,
@@ -23,13 +22,8 @@ import {
 } from "@/components/ui/select";
 import { resultDiagnosticsLines } from "./resultDiagnostics";
 import { runBaselineValue } from "./runBaseline";
-import {
-  intentLabel,
-  outcomeValue,
-  questionIdForTarget,
-  targetLabel,
-  type QuestionView,
-} from "./model";
+import { runPresentationLabel } from "./runPresentation";
+import { intentLabel, outcomeValue, type QuestionView } from "./model";
 
 export type RunContext = {
   run: RunsGetResult;
@@ -49,38 +43,11 @@ type ResultViewProps = {
   onExport: (format: "csv" | "xlsx") => void;
 };
 
-const frozenTargetLabel = (
-  target: FrozenRunTarget | undefined,
-  questions: readonly QuestionView[],
-): string => {
-  if (!target) return "목표";
-  if (target.kind === "mean") {
-    return questions.find((question) => question.id === target.questionId)?.title ?? "평균";
-  }
-  if (target.kind === "conditional_share") {
-    const question = questions.find((candidate) => candidate.id === target.questionId);
-    const option = question?.options.find((candidate) => candidate.key === target.optionKey);
-    return `${target.population.valueGroup.name} 중 ${option?.label ?? "선택지"}`;
-  }
-  const subject = target.subject;
-  if (subject.kind === "value_group") return subject.valueGroup.name;
-  const question = questions.find((candidate) => candidate.id === subject.questionId);
-  return question?.options.find((option) => option.key === subject.optionKey)?.label ?? "선택지";
-};
-
-const frozenQuestionId = (target: FrozenRunTarget | undefined): string | null => {
-  if (!target) return null;
-  if (target.kind === "mean" || target.kind === "conditional_share") return target.questionId;
-  const subject = target.subject;
-  return subject.kind === "value_group" ? subject.valueGroup.questionId : subject.questionId;
-};
-
 export function ResultView({
   contexts,
   summaries,
   selectedRunId,
   questions,
-  groups,
   exportBusy,
   onSelectRun,
   onEditTarget,
@@ -137,28 +104,20 @@ export function ResultView({
 
       <div className="divide-y">
         {context.run.outcome.targets.map((outcome) => {
-          const target = context.draft?.targets.find(
-            (candidate) => String(candidate.id) === String(outcome.targetId),
-          );
-          const frozenTarget = context.run.targetSnapshot.targets.find(
-            (candidate) => String(candidate.id) === String(outcome.targetId),
-          );
           const baseline = context.run.baselines.find(
             (candidate) => String(candidate.targetId) === String(outcome.targetId),
           );
-          const label = frozenTarget
-            ? frozenTargetLabel(frozenTarget, questions)
-            : target
-              ? targetLabel(target, questions, groups)
-              : "목표";
+          const presentation = context.run.presentations.find(
+            (candidate) => String(candidate.targetId) === String(outcome.targetId),
+          );
+          const label = runPresentationLabel(presentation);
           const difference =
             outcome.kind === "share" || outcome.kind === "conditional_share"
               ? `${(outcome.absoluteError * 100).toFixed(1)}%p`
               : outcome.absoluteError.toFixed(2);
-          const questionId = frozenTarget
-            ? frozenQuestionId(frozenTarget)
-            : target
-              ? questionIdForTarget(target, groups)
+          const questionId =
+            presentation && questions.some((question) => question.id === presentation.questionId)
+              ? presentation.questionId
               : null;
 
           return (
