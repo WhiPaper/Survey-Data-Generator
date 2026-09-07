@@ -45,6 +45,7 @@ type CandidateRoutingRule = {
   sourceColumn: string;
   optionKey: string;
   forbidden: CandidateRoutingColumn[];
+  required: CandidateRoutingColumn[];
 };
 
 const asNormalizedResponse = (value: unknown): NormalizedResponse => {
@@ -204,6 +205,7 @@ const confirmedRoutingRules = (form: FormSnapshot, plan: FlatTablePlan): Candida
     if (!sourceSection || !sourceColumn) continue;
 
     let notReachedSectionIds = new Set<string>();
+    let reachedSectionId: string | undefined;
     if (transition.destination.type === "submit") {
       notReachedSectionIds = new Set(
         form.logic.sections
@@ -213,6 +215,7 @@ const confirmedRoutingRules = (form: FormSnapshot, plan: FlatTablePlan): Candida
     } else if (transition.destination.type === "section") {
       const destination = sectionById.get(transition.destination.sectionId);
       if (!destination || destination.order <= sourceSection.order) continue;
+      reachedSectionId = String(destination.id);
       notReachedSectionIds = new Set(
         form.logic.sections
           .filter(
@@ -220,6 +223,11 @@ const confirmedRoutingRules = (form: FormSnapshot, plan: FlatTablePlan): Candida
           )
           .map((section) => String(section.id)),
       );
+    } else if (transition.destination.type === "next_section") {
+      if (!sourceSection.nextSectionId) continue;
+      const destination = sectionById.get(sourceSection.nextSectionId);
+      if (!destination) continue;
+      reachedSectionId = String(destination.id);
     } else {
       continue;
     }
@@ -229,11 +237,17 @@ const confirmedRoutingRules = (form: FormSnapshot, plan: FlatTablePlan): Candida
       const column = candidateColumn(plan, question.id);
       return column ? [column] : [];
     });
-    if (forbidden.length === 0) continue;
+    const required = form.questions.flatMap((question) => {
+      if (!question.required || String(question.sectionId) !== reachedSectionId) return [];
+      const column = candidateColumn(plan, question.id);
+      return column ? [column] : [];
+    });
+    if (forbidden.length === 0 && required.length === 0) continue;
     rules.push({
       sourceColumn,
       optionKey: String(transition.optionKey),
       forbidden,
+      required,
     });
   }
 
