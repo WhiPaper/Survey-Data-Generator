@@ -15,11 +15,12 @@ import type { StoredSourceResponse } from "../persistence/store";
 
 export const RESPONSE_ID_COLUMN = "response_id";
 export const TIMESTAMP_COLUMN = "submitted_at";
-export const TARGET_SCORE_COLUMN = "target_score";
+export const TARGET_SCORE_COLUMN_PREFIX = "target_score_";
+export const ROUTING_RULES_COLUMN = "__confirmed_routing_rules";
 const ORIGIN_COLUMN = "__origin";
 
 export type FlatTablePlan = {
-  targetQuestionId: QuestionId;
+  targetScoreColumns: ReadonlyMap<QuestionId, string>;
   questionColumns: ReadonlyMap<QuestionId, string>;
 };
 
@@ -36,6 +37,16 @@ export type MultiChoiceOptionSupport = {
 };
 
 type ParquetRecord = Record<string, unknown>;
+type CandidateRoutingColumn = {
+  column: string;
+  kind: "answer_slot" | "ordinal";
+};
+type CandidateRoutingRule = {
+  sourceColumn: string;
+  optionKey: string;
+  forbidden: CandidateRoutingColumn[];
+  required: CandidateRoutingColumn[];
+};
 
 const asNormalizedResponse = (value: unknown): NormalizedResponse => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -52,29 +63,37 @@ const asNormalizedResponse = (value: unknown): NormalizedResponse => {
   return value as NormalizedResponse;
 };
 
-const targetScore = (response: NormalizedResponse, questionId: QuestionId): number => {
+const targetScore = (response: NormalizedResponse, questionId: QuestionId): number | null => {
   const slot = response.answers[questionId];
-  if (slot?.state !== "answered" || slot.value.kind !== "ordinal") {
-    throw backendFailure(
-      "VALIDATION_FAILED",
-      "Mean synthesis currently requires the target ordinal question to be answered in every source row",
-    );
+  if (!slot) {
+    throw backendFailure("INTERNAL", `Stored response is missing question ${questionId}`);
+  }
+  if (slot.state !== "answered") return null;
+  if (slot.value.kind !== "ordinal") {
+    throw backendFailure("INTERNAL", `Stored response has a non-ordinal value for ${questionId}`);
   }
   return slot.value.value;
 };
 
 export const createFlatTablePlan = (
   form: FormSnapshot,
-  targetQuestionId: QuestionId,
+  targetQuestionIds: readonly QuestionId[],
 ): FlatTablePlan => {
+  const targetIds = new Set(targetQuestionIds);
+  const targetScoreColumns = new Map<QuestionId, string>();
   const questionColumns = new Map<QuestionId, string>();
   let index = 0;
+  let scoreIndex = 0;
   for (const question of form.questions) {
-    if (question.id === targetQuestionId) continue;
+    if (targetIds.has(question.id)) {
+      targetScoreColumns.set(question.id, `${TARGET_SCORE_COLUMN_PREFIX}${scoreIndex}`);
+      scoreIndex += 1;
+      continue;
+    }
     questionColumns.set(question.id, `q_${index}`);
     index += 1;
   }
-  return { targetQuestionId, questionColumns };
+  return { targetScoreColumns, questionColumns };
 };
 
 const valueGroupMemberKey = (slot: AnswerSlot | undefined): string | null => {
@@ -88,6 +107,7 @@ export const valueGroupMemberCells = (
   responses: readonly StoredSourceResponse[],
   questionId: QuestionId,
   members: readonly string[],
+  form: FormSnapshot,
 ): string[] => {
   const memberSet = new Set(members);
   const cells = new Set<string>();
@@ -95,6 +115,22 @@ export const valueGroupMemberCells = (
     const slot = asNormalizedResponse(stored.response).answers[questionId];
     const key = valueGroupMemberKey(slot);
     if (key !== null && memberSet.has(key) && slot) cells.add(JSON.stringify(slot));
+  }
+
+  const question = form.questions.find((candidate) => candidate.id === questionId);
+  if (question?.kind === "single_choice") {
+    for (const option of question.options) {
+      if (!memberSet.has(String(option.key))) continue;
+      const canonical: AnswerSlot = {
+        state: "answered",
+        value: {
+          kind: "single_choice",
+          optionKey: option.key,
+          label: option.label,
+        },
+      };
+      cells.add(JSON.stringify(canonical));
+    }
   }
   return [...cells];
 };
@@ -143,6 +179,81 @@ export const multiChoiceOptionSupport = (
   return { optionValues: [cell], schemaOptionValues: [cell] };
 };
 
+const candidateColumn = (
+  plan: FlatTablePlan,
+  questionId: QuestionId,
+): CandidateRoutingColumn | null => {
+  const scoreColumn = plan.targetScoreColumns.get(questionId);
+  if (scoreColumn) return { column: scoreColumn, kind: "ordinal" };
+  const answerColumn = plan.questionColumns.get(questionId);
+  return answerColumn ? { column: answerColumn, kind: "answer_slot" } : null;
+};
+
+const confirmedRoutingRules = (form: FormSnapshot, plan: FlatTablePlan): CandidateRoutingRule[] => {
+  if (!form.logic) return [];
+  const sectionByQuestion = new Map(
+    form.logic.sections.flatMap((section) =>
+      section.questionIds.map((questionId) => [questionId, section] as const),
+    ),
+  );
+  const sectionById = new Map(form.logic.sections.map((section) => [section.id, section] as const));
+  const rules: CandidateRoutingRule[] = [];
+
+  for (const transition of form.logic.transitions) {
+    const sourceSection = sectionByQuestion.get(transition.sourceQuestionId);
+    const sourceColumn = plan.questionColumns.get(transition.sourceQuestionId);
+    if (!sourceSection || !sourceColumn) continue;
+
+    let notReachedSectionIds = new Set<string>();
+    let reachedSectionId: string | undefined;
+    if (transition.destination.type === "submit") {
+      notReachedSectionIds = new Set(
+        form.logic.sections
+          .filter((section) => section.order > sourceSection.order)
+          .map((section) => String(section.id)),
+      );
+    } else if (transition.destination.type === "section") {
+      const destination = sectionById.get(transition.destination.sectionId);
+      if (!destination || destination.order <= sourceSection.order) continue;
+      reachedSectionId = String(destination.id);
+      notReachedSectionIds = new Set(
+        form.logic.sections
+          .filter(
+            (section) => section.order > sourceSection.order && section.order < destination.order,
+          )
+          .map((section) => String(section.id)),
+      );
+    } else if (transition.destination.type === "next_section") {
+      if (!sourceSection.nextSectionId) continue;
+      const destination = sectionById.get(sourceSection.nextSectionId);
+      if (!destination) continue;
+      reachedSectionId = String(destination.id);
+    } else {
+      continue;
+    }
+
+    const forbidden = form.questions.flatMap((question) => {
+      if (!notReachedSectionIds.has(String(question.sectionId))) return [];
+      const column = candidateColumn(plan, question.id);
+      return column ? [column] : [];
+    });
+    const required = form.questions.flatMap((question) => {
+      if (!question.required || String(question.sectionId) !== reachedSectionId) return [];
+      const column = candidateColumn(plan, question.id);
+      return column ? [column] : [];
+    });
+    if (forbidden.length === 0 && required.length === 0) continue;
+    rules.push({
+      sourceColumn,
+      optionKey: String(transition.optionKey),
+      forbidden,
+      required,
+    });
+  }
+
+  return rules;
+};
+
 export const writeSourceParquet = async (
   path: string,
   form: FormSnapshot,
@@ -166,6 +277,7 @@ export const writeSourceParquet = async (
     type: "STRING" as const,
     nullable: false,
   }));
+  const routingRules = JSON.stringify(confirmedRoutingRules(form, plan));
 
   parquetWriteFile({
     filename: path,
@@ -183,16 +295,20 @@ export const writeSourceParquet = async (
         nullable: false,
       },
       {
-        name: TARGET_SCORE_COLUMN,
-        data: normalized.map(({ response }) => targetScore(response, plan.targetQuestionId)),
-        type: "DOUBLE" as const,
+        name: ROUTING_RULES_COLUMN,
+        data: normalized.map(() => routingRules),
+        type: "STRING" as const,
         nullable: false,
       },
+      ...[...plan.targetScoreColumns].map(([questionId, column]) => ({
+        name: column,
+        data: normalized.map(({ response }) => targetScore(response, questionId)),
+        type: "DOUBLE" as const,
+        nullable: true,
+      })),
       ...questionColumns,
     ],
   });
-
-  void form;
 };
 
 const parseGeneratedSlot = (value: unknown, questionId: QuestionId): AnswerSlot => {
@@ -225,6 +341,73 @@ const stringValue = (value: unknown, field: string): string => {
   throw backendFailure("INTERNAL", `Synthetic result has invalid ${field}`);
 };
 
+const confirmedNotReachedQuestions = (
+  form: FormSnapshot,
+  answers: Readonly<Record<QuestionId, AnswerSlot>>,
+): ReadonlySet<QuestionId> => {
+  const sectionByQuestion = new Map(
+    form.logic.sections.flatMap((section) =>
+      section.questionIds.map((questionId) => [questionId, section] as const),
+    ),
+  );
+  const transitions = new Map(
+    form.logic.transitions.map(
+      (transition) =>
+        [
+          `${String(transition.sourceQuestionId)}\0${String(transition.optionKey)}`,
+          transition,
+        ] as const,
+    ),
+  );
+  const notReachedSections = new Set<string>();
+
+  for (const [questionId, slot] of Object.entries(answers)) {
+    if (slot.state !== "answered" || slot.value.kind !== "single_choice") continue;
+    const transition = transitions.get(`${questionId}\0${String(slot.value.optionKey)}`);
+    if (!transition) continue;
+    const sourceSection = sectionByQuestion.get(questionId as QuestionId);
+    if (!sourceSection) continue;
+
+    if (transition.destination.type === "submit") {
+      for (const section of form.logic.sections) {
+        if (section.order > sourceSection.order) notReachedSections.add(String(section.id));
+      }
+      continue;
+    }
+    if (transition.destination.type !== "section") continue;
+    const destinationSectionId = transition.destination.sectionId;
+    const destination = form.logic.sections.find((section) => section.id === destinationSectionId);
+    if (!destination || destination.order <= sourceSection.order) continue;
+    for (const section of form.logic.sections) {
+      if (section.order > sourceSection.order && section.order < destination.order) {
+        notReachedSections.add(String(section.id));
+      }
+    }
+  }
+
+  return new Set(
+    form.questions
+      .filter((question) => notReachedSections.has(String(question.sectionId)))
+      .map((question) => question.id),
+  );
+};
+
+const validateConfirmedRouting = (
+  form: FormSnapshot,
+  provisional: Readonly<Record<QuestionId, AnswerSlot>>,
+): void => {
+  const notReached = confirmedNotReachedQuestions(form, provisional);
+  for (const questionId of notReached) {
+    if (provisional[questionId]?.state === "answered") {
+      const question = form.questions.find((candidate) => candidate.id === questionId);
+      throw backendFailure(
+        "TARGET_CONFLICT",
+        `Generated candidate answered a confirmed not-reached question: ${question?.title || questionId}`,
+      );
+    }
+  }
+};
+
 const syntheticResponse = (
   form: FormSnapshot,
   plan: FlatTablePlan,
@@ -233,20 +416,27 @@ const syntheticResponse = (
   submittedAtMs: number,
 ): NormalizedResponse => {
   const provisional = {} as Record<QuestionId, AnswerSlot>;
-  const scoreValue = row[TARGET_SCORE_COLUMN];
-  const score = typeof scoreValue === "number" ? scoreValue : Number(scoreValue);
-  if (!Number.isFinite(score) || !Number.isInteger(score)) {
-    throw backendFailure("INTERNAL", "Synthetic result contains an invalid ordinal score");
+  for (const [questionId, column] of plan.targetScoreColumns) {
+    const scoreValue = row[column];
+    if (
+      scoreValue === null ||
+      scoreValue === undefined ||
+      (typeof scoreValue === "number" && Number.isNaN(scoreValue))
+    ) {
+      provisional[questionId] = { state: "skipped" };
+      continue;
+    }
+    const score = typeof scoreValue === "number" ? scoreValue : Number(scoreValue);
+    if (!Number.isFinite(score) || !Number.isInteger(score))
+      throw backendFailure("INTERNAL", "Synthetic result contains an invalid ordinal score");
+    provisional[questionId] = { state: "answered", value: { kind: "ordinal", value: score } };
   }
-  provisional[plan.targetQuestionId] = {
-    state: "answered",
-    value: { kind: "ordinal", value: score },
-  };
 
   for (const [questionId, column] of plan.questionColumns) {
     provisional[questionId] = parseGeneratedSlot(row[column], questionId);
   }
 
+  validateConfirmedRouting(form, provisional);
   const path = resolveResponsePath(form, provisional);
   const answers = {} as Record<QuestionId, AnswerSlot>;
   for (const question of form.questions) {

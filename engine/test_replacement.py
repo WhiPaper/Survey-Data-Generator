@@ -5,7 +5,7 @@ import unittest
 import pandas as pd
 
 from replacement import plan_replacements
-from candidate_selection import ConditionalShareTarget, ShareTarget
+from candidate_selection import ConditionalShareTarget, CountTarget, ShareTarget, select_for_targets
 
 
 class ReplacementPlanningTest(unittest.TestCase):
@@ -89,6 +89,37 @@ class ReplacementPlanningTest(unittest.TestCase):
         assert plan.replacement_outcome is not None
         self.assertAlmostEqual(plan.replacement_outcome.shares[0].achieved_share, 0.25)
         self.assertAlmostEqual(plan.replacement_outcome.shares[0].absolute_error, 0.0)
+
+    def test_replaces_minimum_source_rows_for_exact_count(self) -> None:
+        source = pd.DataFrame({"score": [4, 4, 4], "group": ["member", "member", "other"]})
+        candidates = pd.DataFrame({"score": [4] * 5, "group": ["other"] * 4 + ["member"]})
+        target = CountTarget("member-count", "group", frozenset({"member"}), 1)
+        append_only = select_for_targets(
+            source,
+            candidates,
+            target_column="score",
+            final_count=4,
+            target_mean=4.0,
+            target_min=1,
+            target_max=5,
+            count_targets=(target,),
+            enforce_counts=False,
+        )
+        plan = plan_replacements(
+            source,
+            candidates,
+            target_column="score",
+            final_count=4,
+            target_mean=4.0,
+            target_min=1,
+            target_max=5,
+            count_targets=(target,),
+            append_only_outcome=append_only,
+        )
+        self.assertEqual(plan.status, "available")
+        self.assertEqual(plan.replacement_count, 1)
+        assert plan.replacement_outcome is not None
+        self.assertEqual(plan.replacement_outcome.counts[0].achieved_count, 1)
 
     def test_replacement_preserves_conditional_denominator_semantics(self) -> None:
         source = pd.DataFrame(

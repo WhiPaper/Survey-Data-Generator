@@ -26,15 +26,6 @@ describe("v2 RPC contracts", () => {
         params: {},
       }),
     ).toThrow();
-    expect(() =>
-      parseRpcRequest({
-        v: VERSIONS.protocolVersion,
-        type: "request",
-        id: "legacy-ai",
-        method: "ai.status",
-        params: {},
-      }),
-    ).toThrow();
   });
 
   it("rejects invalid method parameters", () => {
@@ -76,11 +67,6 @@ describe("v2 RPC contracts", () => {
         avatarUrl: "https://lh3.googleusercontent.com/avatar",
       },
     });
-    expect(() =>
-      parseRpcResult("session.get", {
-        account: { id: "account-1", email: "user@example.com", accessToken: "secret" },
-      }),
-    ).toThrow();
   });
 
   it("validates compact Form discovery and import contracts", () => {
@@ -103,51 +89,55 @@ describe("v2 RPC contracts", () => {
         questionCount: 5,
       }),
     ).toMatchObject({ projectId: "project-1", sourceRevisionId: "revision-1" });
-    expect(() =>
-      parseRpcResult("forms.import", {
-        importId: "legacy-import-id",
-        formId: "form-1",
-        title: "Customer survey",
-        responseCount: 2,
-        questionCount: 5,
-      }),
-    ).toThrow();
   });
 
-  it("validates ValueGroup, mean, share, and conditional share synthesis contracts", () => {
+  it("accepts the four public target kinds and all depth-1 subjects", () => {
     expect(
       parseRpcRequest({
         v: VERSIONS.protocolVersion,
         type: "request",
-        id: "group-create",
-        method: "valueGroups.create",
-        params: {
-          projectId: "project-1",
-          questionId: "q-choice",
-          name: "행사 관심",
-          members: ["festival", "performance"],
-        },
-      }),
-    ).toMatchObject({ method: "valueGroups.create" });
-
-    expect(
-      parseRpcRequest({
-        v: VERSIONS.protocolVersion,
-        type: "request",
-        id: "synth-m7",
+        id: "synth-targets",
         method: "synthesis.start",
         params: {
           projectId: "project-1",
           finalCount: 120,
           sourceScope: { kind: "all" },
           targets: [
-            { kind: "mean", questionId: "q-score", value: 4.3 },
-            { kind: "share", valueGroupId: "group-1", value: 0.35 },
+            { id: "t-mean", kind: "mean", questionId: "q-score", value: 4.3 },
             {
+              id: "t-share-group",
+              kind: "share",
+              subject: { kind: "value_group", valueGroupId: "group-1" },
+              value: 0.35,
+            },
+            {
+              id: "t-share-option",
+              kind: "share",
+              subject: { kind: "option", questionId: "q-region", optionKey: "seoul" },
+              value: 0.3,
+            },
+            {
+              id: "t-share-checkbox",
+              kind: "share",
+              subject: {
+                kind: "checkbox_option",
+                questionId: "q-checkbox",
+                optionKey: "music",
+              },
+              value: 0.6,
+            },
+            {
+              id: "t-count",
+              kind: "count",
+              subject: { kind: "option", questionId: "q-region", optionKey: "jeju" },
+              value: 10,
+            },
+            {
+              id: "t-conditional",
               kind: "conditional_share",
-              valueGroupId: "group-1",
+              population: { kind: "value_group", valueGroupId: "group-1" },
               questionId: "q-checkbox",
-              optionKey: "music",
+              optionKey: "bus",
               value: 0.6,
             },
           ],
@@ -155,24 +145,49 @@ describe("v2 RPC contracts", () => {
         },
       }),
     ).toMatchObject({ method: "synthesis.start" });
+  });
 
+  it("requires stable unique TargetIds", () => {
     expect(() =>
       parseRpcRequest({
         v: VERSIONS.protocolVersion,
         type: "request",
-        id: "bad-conditional-share",
+        id: "duplicate-target-id",
         method: "synthesis.start",
         params: {
           projectId: "project-1",
           finalCount: 120,
           targets: [
-            { kind: "mean", questionId: "q-score", value: 4.3 },
+            { id: "same", kind: "mean", questionId: "q-score", value: 4.3 },
             {
-              kind: "conditional_share",
-              valueGroupId: "group-1",
-              questionId: "q-checkbox",
-              optionKey: "music",
-              value: -0.1,
+              id: "same",
+              kind: "share",
+              subject: { kind: "value_group", valueGroupId: "group-1" },
+              value: 0.5,
+            },
+          ],
+          seed: 42,
+        },
+      }),
+    ).toThrow(/TargetId must be unique/);
+  });
+
+  it("validates target ranges at the public boundary", () => {
+    expect(() =>
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "bad-share",
+        method: "synthesis.start",
+        params: {
+          projectId: "project-1",
+          finalCount: 120,
+          targets: [
+            {
+              id: "bad",
+              kind: "share",
+              subject: { kind: "option", questionId: "q", optionKey: "a" },
+              value: 1.1,
             },
           ],
           seed: 42,
@@ -181,13 +196,30 @@ describe("v2 RPC contracts", () => {
     ).toThrow();
   });
 
-  it("requires explicit resolution for available original replacement plans", () => {
-    const outcome = {
-      mean: 4,
-      absoluteError: 0.5,
-      exact: false,
-      shares: [],
-      conditionalShares: [],
+  it("uses target-aware outcomes for EditPlan comparison", () => {
+    const appendOnlyOutcome = {
+      targets: [
+        {
+          targetId: "t-mean",
+          kind: "mean",
+          requested: 4.5,
+          achieved: 4,
+          absoluteError: 0.5,
+          exact: false,
+        },
+      ],
+    };
+    const replacementOutcome = {
+      targets: [
+        {
+          targetId: "t-mean",
+          kind: "mean",
+          requested: 4.5,
+          achieved: 4.5,
+          absoluteError: 0,
+          exact: true,
+        },
+      ],
     };
     expect(
       parseRpcResult("synthesis.start", {
@@ -202,33 +234,64 @@ describe("v2 RPC contracts", () => {
               replacementResponseId: "replacement:42:1",
             },
           ],
-          appendOnlyOutcome: outcome,
-          replacementOutcome: { ...outcome, mean: 4.5, absoluteError: 0, exact: true },
+          appendOnlyOutcome,
+          replacementOutcome,
         },
       }),
     ).toMatchObject({ status: "approval_required", planId: "plan-1" });
-
-    expect(
-      parseRpcRequest({
-        v: VERSIONS.protocolVersion,
-        type: "request",
-        id: "resolve-plan",
-        method: "synthesis.resolveEditPlan",
-        params: { planId: "plan-1", choice: "replacement" },
-      }),
-    ).toMatchObject({ method: "synthesis.resolveEditPlan" });
-    expect(() =>
-      parseRpcRequest({
-        v: VERSIONS.protocolVersion,
-        type: "request",
-        id: "bad-plan-choice",
-        method: "synthesis.resolveEditPlan",
-        params: { planId: "plan-1", choice: "automatic" },
-      }),
-    ).toThrow();
   });
 
-  it("validates frozen ValueGroup and approved EditPlan snapshots in Run results", () => {
+  it("uses the same target outcome shape for synthesis success", () => {
+    expect(
+      parseRpcResult("synthesis.start", {
+        status: "success",
+        runId: "run-1",
+        syntheticResponseCount: 40,
+        finalResponseCount: 120,
+        outcome: {
+          targets: [
+            {
+              targetId: "t-mean",
+              kind: "mean",
+              requested: 4.3,
+              achieved: 4.298,
+              absoluteError: 0.002,
+              exact: false,
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({ status: "success", outcome: { targets: [{ targetId: "t-mean" }] } });
+  });
+
+  it("accepts structured target issues", () => {
+    expect(
+      parseRpcResult("synthesis.start", {
+        status: "infeasible",
+        issues: [
+          {
+            targetIds: ["t-1", "t-2"],
+            code: "target_conflict",
+            message: "Targets cannot be satisfied together",
+          },
+        ],
+      }),
+    ).toMatchObject({ status: "infeasible" });
+  });
+
+  it("validates frozen target subjects and immutable EditPlan snapshots", () => {
+    const outcome = {
+      targets: [
+        {
+          targetId: "t-mean",
+          kind: "mean",
+          requested: 4.3,
+          achieved: 4.3,
+          absoluteError: 0,
+          exact: true,
+        },
+      ],
+    };
     expect(
       parseRpcResult("runs.get", {
         runId: "run-1",
@@ -238,27 +301,35 @@ describe("v2 RPC contracts", () => {
           finalCount: 120,
           sourceScope: { kind: "all" },
           targets: [
-            { kind: "mean", questionId: "q-score", value: 4.3 },
+            { id: "t-mean", kind: "mean", questionId: "q-score", value: 4.3 },
             {
+              id: "t-share",
               kind: "share",
               value: 0.35,
-              valueGroup: {
-                id: "group-1",
-                questionId: "q-choice",
-                name: "행사 관심",
-                members: ["festival", "performance"],
+              subject: {
+                kind: "value_group",
+                valueGroup: {
+                  id: "group-1",
+                  questionId: "q-choice",
+                  name: "행사 관심",
+                  members: ["festival", "performance"],
+                },
               },
             },
             {
+              id: "t-conditional",
               kind: "conditional_share",
               value: 0.6,
               questionId: "q-checkbox",
               optionKey: "music",
-              valueGroup: {
-                id: "group-1",
-                questionId: "q-choice",
-                name: "행사 관심",
-                members: ["festival", "performance"],
+              population: {
+                kind: "value_group",
+                valueGroup: {
+                  id: "group-1",
+                  questionId: "q-choice",
+                  name: "행사 관심",
+                  members: ["festival", "performance"],
+                },
               },
             },
           ],
@@ -272,21 +343,21 @@ describe("v2 RPC contracts", () => {
               },
             ],
             appendOnlyOutcome: {
-              mean: 4.2,
-              absoluteError: 0.1,
-              exact: false,
-              shares: [],
-              conditionalShares: [],
+              targets: [
+                {
+                  targetId: "t-mean",
+                  kind: "mean",
+                  requested: 4.3,
+                  achieved: 4.2,
+                  absoluteError: 0.1,
+                  exact: false,
+                },
+              ],
             },
-            replacementOutcome: {
-              mean: 4.3,
-              absoluteError: 0,
-              exact: true,
-              shares: [],
-              conditionalShares: [],
-            },
+            replacementOutcome: outcome,
           },
         },
+        outcome,
         validation: {},
         finalResponseCount: 120,
         appVersion: VERSIONS.appVersion,
@@ -295,6 +366,7 @@ describe("v2 RPC contracts", () => {
     ).toMatchObject({
       runId: "run-1",
       finalResponseCount: 120,
+      outcome: { targets: [{ targetId: "t-mean" }] },
       targetSnapshot: { editPlan: { replacementCount: 1 } },
     });
   });

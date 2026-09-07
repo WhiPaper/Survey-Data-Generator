@@ -5,8 +5,10 @@ import {
   type FormsListParams,
   type GoogleAccountId,
   type RunsExportParams,
+  type SourceScope,
   type SynthesisResolveEditPlanParams,
   type SynthesisStartParams,
+  type TargetDraft,
 } from "@survey-synth/contracts";
 
 import type { GoogleAuthService } from "./auth/service";
@@ -15,6 +17,8 @@ import type { RunExportService } from "./export/service";
 import type { FormsService } from "./forms/service";
 import type { ProjectService } from "./projects/service";
 import type { SynthesisService } from "./synthesis/service";
+import type { TargetService } from "./targets/service";
+import { semanticDuplicateTargetIssues } from "./targets/semantic-key";
 import type { ValueGroupService } from "./value-groups/service";
 
 export type RunExportDestinationPicker = (params: RunsExportParams) => Promise<string | null>;
@@ -24,6 +28,7 @@ export type BackendServices = {
   forms?: FormsService;
   projects?: ProjectService;
   valueGroups?: ValueGroupService;
+  targets?: TargetService;
   synthesis?: SynthesisService;
   runExports?: RunExportService;
   pickRunExportDestination?: RunExportDestinationPicker;
@@ -48,6 +53,11 @@ const requireValueGroups = (services: BackendServices): ValueGroupService => {
   if (!services.valueGroups)
     throw backendFailure("BACKEND_UNAVAILABLE", "Value groups are not initialized");
   return services.valueGroups;
+};
+const requireTargets = (services: BackendServices): TargetService => {
+  if (!services.targets)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Target service is not initialized");
+  return services.targets;
 };
 const requireSynthesis = (services: BackendServices): SynthesisService => {
   if (!services.synthesis)
@@ -129,8 +139,37 @@ export const handleBackendCall = async (
         (request.params as { valueGroupId: string }).valueGroupId,
       );
       return { ok: true };
-    case "synthesis.start":
-      return requireSynthesis(services).start(request.params as SynthesisStartParams);
+    case "targets.profile": {
+      const params = request.params as { projectId: string; sourceScope?: SourceScope };
+      return requireTargets(services).profile(params.projectId, params.sourceScope);
+    }
+    case "targets.validate": {
+      const params = request.params as TargetDraft;
+      const result = await requireTargets(services).validate(params);
+      return {
+        issues: [...semanticDuplicateTargetIssues(params.targets), ...result.issues],
+      };
+    }
+    case "targets.draft.get":
+      return requireTargets(services).getDraft((request.params as { projectId: string }).projectId);
+    case "targets.draft.save":
+      return requireTargets(services).saveDraft(request.params as TargetDraft);
+    case "targets.draft.start": {
+      const params = request.params as { projectId: string; operationId?: string };
+      const targetService = requireTargets(services);
+      const draft = await targetService.getDraft(params.projectId);
+      if (draft) {
+        const issues = semanticDuplicateTargetIssues(draft.targets);
+        if (issues.length > 0) return { status: "infeasible", issues };
+      }
+      return targetService.startDraft(params.projectId, params.operationId);
+    }
+    case "synthesis.start": {
+      const params = request.params as SynthesisStartParams;
+      const issues = semanticDuplicateTargetIssues(params.targets);
+      if (issues.length > 0) return { status: "infeasible", issues };
+      return requireSynthesis(services).start(params);
+    }
     case "synthesis.resolveEditPlan":
       return requireSynthesis(services).resolveEditPlan(
         request.params as SynthesisResolveEditPlanParams,
@@ -142,10 +181,9 @@ export const handleBackendCall = async (
       return requireSynthesis(services).getRun((request.params as { runId: string }).runId);
     case "runs.export": {
       const params = request.params as RunsExportParams;
-      const exports = requireRunExports(services);
       const destination = await requireRunExportDestinationPicker(services)(params);
       if (destination === null) return { status: "cancelled" };
-      await exports.exportTo(params.runId, params.format, destination);
+      await requireRunExports(services).exportTo(params.runId, params.format, destination);
       return { status: "saved" };
     }
   }

@@ -42,11 +42,11 @@ afterEach(() => {
 });
 
 describe("v2 persistence", () => {
-  it("starts from the single schema 0001 baseline", () => {
+  it("tracks the ordered schema migrations", () => {
     const migrationFiles = readdirSync(migrationsFolder)
       .filter((name) => name.endsWith(".sql"))
       .sort();
-    expect(migrationFiles).toEqual(["0001_initial.sql"]);
+    expect(migrationFiles).toEqual(["0001_initial.sql", "0002_target_drafts.sql"]);
 
     const journal = JSON.parse(
       readFileSync(join(migrationsFolder, "meta", "_journal.json"), "utf8"),
@@ -55,6 +55,10 @@ describe("v2 persistence", () => {
       expect.objectContaining({
         idx: 0,
         tag: "0001_initial",
+      }),
+      expect.objectContaining({
+        idx: 1,
+        tag: "0002_target_drafts",
       }),
     ]);
 

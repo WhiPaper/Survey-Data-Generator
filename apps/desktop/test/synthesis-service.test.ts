@@ -16,7 +16,7 @@ const databases: AppDatabase[] = [];
 const directories: string[] = [];
 
 const setup = (): { database: AppDatabase; workRoot: string } => {
-  const directory = mkdtempSync(join(tmpdir(), "survey-synth-m6-service-"));
+  const directory = mkdtempSync(join(tmpdir(), "survey-synth-target-service-"));
   directories.push(directory);
   const database = openAppDatabase({ filename: join(directory, "db.sqlite"), migrationsFolder });
   databases.push(database);
@@ -30,6 +30,14 @@ const setup = (): { database: AppDatabase; workRoot: string } => {
 
   const citySeoul = { state: "answered", value: { kind: "text", value: "서울" } };
   const cityBusan = { state: "answered", value: { kind: "text", value: "부산" } };
+  const regionSeoul = {
+    state: "answered",
+    value: { kind: "single_choice", optionKey: "seoul", label: "서울" },
+  };
+  const regionBusan = {
+    state: "answered",
+    value: { kind: "single_choice", optionKey: "busan", label: "부산" },
+  };
   const optionAB = {
     state: "answered",
     value: { kind: "multi_choice", optionKeys: ["A", "B"], labels: ["A", "B"] },
@@ -58,6 +66,15 @@ const setup = (): { database: AppDatabase; workRoot: string } => {
           { id: "q-score", kind: "ordinal", min: 1, max: 5 },
           { id: "q-city", kind: "text" },
           {
+            id: "q-region",
+            kind: "single_choice",
+            options: [
+              { key: "seoul", label: "서울" },
+              { key: "busan", label: "부산" },
+              { key: "jeju", label: "제주" },
+            ],
+          },
+          {
             id: "q-checkbox",
             kind: "multi_choice",
             options: [
@@ -77,6 +94,7 @@ const setup = (): { database: AppDatabase; workRoot: string } => {
           answers: {
             "q-score": { state: "answered", value: { kind: "ordinal", value: 4 } },
             "q-city": citySeoul,
+            "q-region": regionSeoul,
             "q-checkbox": optionAB,
           },
           origin: "original",
@@ -91,6 +109,7 @@ const setup = (): { database: AppDatabase; workRoot: string } => {
           answers: {
             "q-score": { state: "answered", value: { kind: "ordinal", value: 5 } },
             "q-city": cityBusan,
+            "q-region": regionBusan,
             "q-checkbox": optionB,
           },
           origin: "original",
@@ -103,6 +122,26 @@ const setup = (): { database: AppDatabase; workRoot: string } => {
   return { database, workRoot };
 };
 
+const captureEngine = (onCapture: (job: Record<string, unknown>) => void): PythonEngine => ({
+  selftest: async () => {
+    throw new Error("unused");
+  },
+  synthesize: async (_operationId, jobPath) => {
+    onCapture(JSON.parse(readFileSync(jobPath, "utf8")) as Record<string, unknown>);
+    return {
+      status: "infeasible",
+      kind: "synthesize",
+      sourceCount: 2,
+      finalCount: 4,
+      target: { kind: "mean", column: "target_score", value: 4.5 },
+      shareTargets: [],
+      conditionalShareTargets: [],
+      issues: [{ code: "test_stop", message: "captured" }],
+    };
+  },
+  cancel: () => false,
+});
+
 afterEach(() => {
   while (databases.length > 0) databases.pop()?.close();
   while (directories.length > 0) {
@@ -111,8 +150,8 @@ afterEach(() => {
   }
 });
 
-describe("M6 synthesis service", () => {
-  it("compiles a ValueGroup population and checkbox option into exact categorical support", async () => {
+describe("target synthesis service", () => {
+  it("compiles a ValueGroup population and checkbox option with the public TargetId", async () => {
     const { database, workRoot } = setup();
     const group = await createValueGroupService(database.db).create({
       projectId: "project-1",
@@ -122,73 +161,252 @@ describe("M6 synthesis service", () => {
     });
 
     let captured: Record<string, unknown> | null = null;
-    const engine: PythonEngine = {
-      selftest: async () => {
-        throw new Error("unused");
-      },
-      synthesize: async (_operationId, jobPath) => {
-        captured = JSON.parse(readFileSync(jobPath, "utf8")) as Record<string, unknown>;
-        return {
-          status: "infeasible",
-          kind: "synthesize",
-          sourceCount: 2,
-          finalCount: 4,
-          target: { kind: "mean", column: "target_score", value: 4.5 },
-          shareTargets: [],
-          conditionalShareTargets: [
-            {
-              id: `conditional:${group.id}:q-checkbox:A`,
-              populationColumn: "q_0",
-              optionColumn: "q_1",
-              value: 0.75,
-            },
-          ],
-          issues: [{ code: "test_stop", message: "captured" }],
-        };
-      },
-      cancel: () => false,
-    };
+    const service = createSynthesisService({
+      db: database.db,
+      engine: captureEngine((job) => {
+        captured = job;
+      }),
+      workRoot,
+    });
+    const result = await service.start({
+      projectId: "project-1",
+      finalCount: 4,
+      targets: [
+        { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.5 },
+        {
+          id: "t-conditional" as never,
+          kind: "conditional_share",
+          population: { kind: "value_group", valueGroupId: group.id },
+          questionId: "q-checkbox",
+          optionKey: "A",
+          value: 0.75,
+        },
+      ],
+      sourceScope: { kind: "all" },
+      seed: 42,
+      operationId: "target-compile-conditional",
+    });
 
-    const service = createSynthesisService({ db: database.db, engine, workRoot });
+    expect(result).toEqual({
+      status: "infeasible",
+      issues: [
+        {
+          targetIds: ["t-mean", "t-conditional"],
+          code: "target_conflict",
+          message: "captured",
+        },
+      ],
+    });
+    const conditional = (captured!.conditional_share_targets as Array<Record<string, unknown>>)[0]!;
+    expect(conditional).toMatchObject({
+      id: "t-conditional",
+      population_column: "q_0",
+      option_column: "q_2",
+      value: 0.75,
+    });
+  });
+
+  it("compiles a direct single-choice option share without a ValueGroup", async () => {
+    const { database, workRoot } = setup();
+    let captured: Record<string, unknown> | null = null;
+    const service = createSynthesisService({
+      db: database.db,
+      engine: captureEngine((job) => {
+        captured = job;
+      }),
+      workRoot,
+    });
+
+    await service.start({
+      projectId: "project-1",
+      finalCount: 4,
+      targets: [
+        { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.5 },
+        {
+          id: "t-seoul" as never,
+          kind: "share",
+          subject: { kind: "option", questionId: "q-region", optionKey: "seoul" },
+          value: 0.5,
+        },
+      ],
+      sourceScope: { kind: "all" },
+      seed: 42,
+      operationId: "target-compile-option",
+    });
+
+    const share = (captured!.share_targets as Array<Record<string, unknown>>)[0]!;
+    expect(share).toMatchObject({ id: "t-seoul", column: "q_1", value: 0.5 });
+    expect(share.member_values).toEqual([
+      JSON.stringify({
+        state: "answered",
+        value: { kind: "single_choice", optionKey: "seoul", label: "서울" },
+      }),
+    ]);
+  });
+
+  it("compiles an unconditional checkbox option share", async () => {
+    const { database, workRoot } = setup();
+    let captured: Record<string, unknown> | null = null;
+    const service = createSynthesisService({
+      db: database.db,
+      engine: captureEngine((job) => {
+        captured = job;
+      }),
+      workRoot,
+    });
+
+    await service.start({
+      projectId: "project-1",
+      finalCount: 4,
+      targets: [
+        { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.5 },
+        {
+          id: "t-checkbox-a" as never,
+          kind: "share",
+          subject: { kind: "checkbox_option", questionId: "q-checkbox", optionKey: "A" },
+          value: 0.5,
+        },
+      ],
+      sourceScope: { kind: "all" },
+      seed: 42,
+      operationId: "target-compile-checkbox",
+    });
+
+    const share = (captured!.share_targets as Array<Record<string, unknown>>)[0]!;
+    expect(share).toMatchObject({ id: "t-checkbox-a", column: "q_2", value: 0.5 });
+  });
+
+  it("returns a structured invalid_subject issue for an invalid option reference", async () => {
+    const { database, workRoot } = setup();
+    let engineCalled = false;
+    const service = createSynthesisService({
+      db: database.db,
+      engine: captureEngine(() => {
+        engineCalled = true;
+      }),
+      workRoot,
+    });
+
     await expect(
       service.start({
         projectId: "project-1",
         finalCount: 4,
         targets: [
-          { kind: "mean", questionId: "q-score", value: 4.5 },
+          { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.5 },
           {
-            kind: "conditional_share",
-            valueGroupId: group.id,
-            questionId: "q-checkbox",
-            optionKey: "A",
-            value: 0.75,
+            id: "t-bad-option" as never,
+            kind: "share",
+            subject: { kind: "option", questionId: "q-region", optionKey: "missing" },
+            value: 0.5,
           },
         ],
         sourceScope: { kind: "all" },
         seed: 42,
-        operationId: "m6-compile",
       }),
     ).resolves.toEqual({
       status: "infeasible",
-      issues: [{ code: "test_stop", message: "captured" }],
+      issues: [
+        {
+          targetIds: ["t-bad-option"],
+          code: "invalid_subject",
+          message: "Option share subject was not found in the Form",
+        },
+      ],
+    });
+    expect(engineCalled).toBe(false);
+  });
+
+  it("compiles exact count and multiple categorical targets for the engine", async () => {
+    const { database, workRoot } = setup();
+    let engineCalled = false;
+    let captured: Record<string, unknown> | null = null;
+    const service = createSynthesisService({
+      db: database.db,
+      engine: captureEngine((job) => {
+        engineCalled = true;
+        captured = job;
+      }),
+      workRoot,
     });
 
-    expect(captured).not.toBeNull();
-    const conditional = (captured!.conditional_share_targets as Array<Record<string, unknown>>)[0]!;
-    expect(conditional).toMatchObject({
-      id: `conditional:${group.id}:q-checkbox:A`,
-      population_column: "q_0",
-      option_column: "q_1",
-      value: 0.75,
+    await service.start({
+      projectId: "project-1",
+      finalCount: 4,
+      targets: [
+        { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.5 },
+        {
+          id: "t-jeju-count" as never,
+          kind: "count",
+          subject: { kind: "option", questionId: "q-region", optionKey: "jeju" },
+          value: 1,
+        },
+        {
+          id: "t-checkbox-b" as never,
+          kind: "share",
+          subject: { kind: "checkbox_option", questionId: "q-checkbox", optionKey: "B" },
+          value: 0.75,
+        },
+        {
+          id: "t-seoul-share" as never,
+          kind: "share",
+          subject: { kind: "option", questionId: "q-region", optionKey: "seoul" },
+          value: 0.5,
+        },
+      ],
+      sourceScope: { kind: "all" },
+      seed: 42,
     });
-    expect(conditional.population_member_values).toEqual([
-      JSON.stringify({ state: "answered", value: { kind: "text", value: "서울" } }),
+    expect(engineCalled).toBe(true);
+    expect(captured!.count_targets).toEqual([
+      expect.objectContaining({ id: "t-jeju-count", value: 1 }),
     ]);
-    expect(conditional.option_values).toEqual([
-      JSON.stringify({
-        state: "answered",
-        value: { kind: "multi_choice", optionKeys: ["A", "B"], labels: ["A", "B"] },
+    expect(captured!.share_targets).toEqual([
+      expect.objectContaining({ id: "t-checkbox-b", value: 0.75 }),
+      expect.objectContaining({ id: "t-seoul-share", value: 0.5 }),
+    ]);
+  });
+
+  it("rejects an obvious same-question single-choice conflict", async () => {
+    const { database, workRoot } = setup();
+    let engineCalled = false;
+    const service = createSynthesisService({
+      db: database.db,
+      engine: captureEngine(() => {
+        engineCalled = true;
       }),
-    ]);
+      workRoot,
+    });
+    const result = await service.start({
+      projectId: "project-1",
+      finalCount: 4,
+      targets: [
+        { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.5 },
+        {
+          id: "t-seoul" as never,
+          kind: "share",
+          subject: { kind: "option", questionId: "q-region", optionKey: "seoul" },
+          value: 0.8,
+        },
+        {
+          id: "t-busan" as never,
+          kind: "share",
+          subject: { kind: "option", questionId: "q-region", optionKey: "busan" },
+          value: 0.7,
+        },
+      ],
+      sourceScope: { kind: "all" },
+      seed: 42,
+    });
+    expect(result).toEqual({
+      status: "infeasible",
+      issues: [
+        {
+          targetIds: ["t-seoul", "t-busan"],
+          code: "target_conflict",
+          message: "Single-choice share targets exceed 100%",
+        },
+      ],
+    });
+    expect(engineCalled).toBe(false);
   });
 });

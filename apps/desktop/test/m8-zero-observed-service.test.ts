@@ -192,10 +192,11 @@ describe("M8 zero-observed structured option boundary", () => {
       projectId: "project-1",
       finalCount: 3,
       targets: [
-        { kind: "mean", questionId: "q-score", value: 3 },
+        { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 3 },
         {
+          id: "t-zero-observed" as never,
           kind: "conditional_share",
-          valueGroupId: "group-seoul",
+          population: { kind: "value_group", valueGroupId: "group-seoul" },
           questionId: "q-checkbox",
           optionKey: "A",
           value: 1 / 3,
@@ -208,7 +209,13 @@ describe("M8 zero-observed structured option boundary", () => {
 
     expect(result).toEqual({
       status: "infeasible",
-      issues: [{ code: "mock_stop", message: "job captured" }],
+      issues: [
+        {
+          targetIds: ["t-mean", "t-zero-observed"],
+          code: "target_conflict",
+          message: "job captured",
+        },
+      ],
     });
     expect(capturedJob).not.toBeNull();
     const conditionalTargets = capturedJob?.conditional_share_targets as Array<
@@ -220,6 +227,7 @@ describe("M8 zero-observed structured option boundary", () => {
       value: { kind: "multi_choice", optionKeys: ["A"], labels: ["공연"] },
     });
     expect(conditionalTargets[0]).toMatchObject({
+      id: "t-zero-observed",
       option_values: [canonical],
       schema_option_values: [canonical],
     });

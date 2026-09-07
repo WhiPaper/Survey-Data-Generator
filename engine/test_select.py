@@ -5,6 +5,7 @@ import unittest
 import pandas as pd
 
 from candidate_selection import (
+    CountTarget,
     ConditionalShareTarget,
     ShareTarget,
     TargetInfeasible,
@@ -83,6 +84,33 @@ class MeanSelectionTest(unittest.TestCase):
         self.assertEqual(len(result.shares), 1)
         self.assertAlmostEqual(result.shares[0].achieved_share, 0.5)
         self.assertAlmostEqual(result.shares[0].absolute_error, 0.0)
+
+    def test_selects_multiple_shares_and_exact_count_together(self) -> None:
+        source = pd.DataFrame({"score": [4, 4], "gender": ["F", "M"], "region": ["S", "B"]})
+        candidates = pd.DataFrame(
+            {
+                "score": [5, 5, 5, 5],
+                "gender": ["F", "M", "F", "M"],
+                "region": ["J", "S", "S", "J"],
+            }
+        )
+        result = select_for_targets(
+            source,
+            candidates,
+            target_column="score",
+            final_count=4,
+            target_mean=4.5,
+            target_min=1,
+            target_max=5,
+            count_targets=(CountTarget("jeju", "region", frozenset({"J"}), 1),),
+            share_targets=(
+                ShareTarget("female", "gender", frozenset({"F"}), 0.5),
+                ShareTarget("seoul", "region", frozenset({"S"}), 0.5),
+            ),
+        )
+        self.assertEqual(result.counts[0].achieved_count, 1)
+        self.assertEqual(result.counts[0].absolute_error, 0)
+        self.assertTrue(all(target.absolute_error == 0 for target in result.shares))
 
     def test_one_checkbox_row_contributes_to_multiple_conditional_targets(self) -> None:
         source = pd.DataFrame(

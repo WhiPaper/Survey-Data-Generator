@@ -87,7 +87,7 @@ const original = {
 describe("synthesis flat parquet transport", () => {
   it("writes target score and lossless non-target answer slots", async () => {
     const path = tempFile("source.parquet");
-    const plan = createFlatTablePlan(form, "q-score" as never);
+    const plan = createFlatTablePlan(form, ["q-score" as never]);
     await writeSourceParquet(
       path,
       form,
@@ -104,7 +104,7 @@ describe("synthesis flat parquet transport", () => {
     const file = await asyncBufferFromFile(path);
     const rows = await parquetReadObjects({ file });
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ response_id: "r1", target_score: 4 });
+    expect(rows[0]).toMatchObject({ response_id: "r1", target_score_0: 4 });
     expect(JSON.parse(String(rows[0]?.q_0))).toEqual(original.answers["q-text" as never]);
   });
 
@@ -140,15 +140,18 @@ describe("synthesis flat parquet transport", () => {
       },
     ];
 
-    expect(valueGroupMemberCells(responses, "q-choice" as never, ["festival"])).toEqual([
+    expect(valueGroupMemberCells(responses, "q-choice" as never, ["festival"], form)).toEqual([
       JSON.stringify(festivalSlot),
     ]);
-    expect(valueGroupMemberCells(responses, "q-choice" as never, ["performance"])).toEqual([]);
+    expect(valueGroupMemberCells(responses, "q-choice" as never, ["performance"], form)).toEqual(
+      [],
+    );
     expect(
       valueGroupMemberCells(
         [{ responseId: "r-text", submittedAtMs: 3, response: original }],
         "q-text" as never,
         ["good"],
+        form,
       ),
     ).toEqual([JSON.stringify(original.answers["q-text" as never])]);
   });
@@ -249,7 +252,7 @@ describe("synthesis flat parquet transport", () => {
           type: "STRING",
           nullable: false,
         },
-        { name: "target_score", data: [4, 5], type: "DOUBLE", nullable: false },
+        { name: "target_score_0", data: [4, 5], type: "DOUBLE", nullable: false },
         {
           name: "q_0",
           data: [
@@ -268,7 +271,7 @@ describe("synthesis flat parquet transport", () => {
       ],
     });
 
-    const plan = createFlatTablePlan(form, "q-score" as never);
+    const plan = createFlatTablePlan(form, ["q-score" as never]);
     const rows = await readResultParquet(
       path,
       form,

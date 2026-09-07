@@ -36,6 +36,14 @@ export type EngineShareAchievement = {
   bestPossibleAbsoluteError: number;
 };
 
+export type EngineCountAchievement = {
+  id: string;
+  value: number;
+  count: number;
+  absoluteError: number;
+  exact: boolean;
+};
+
 export type EngineConditionalShareAchievement = {
   id: string;
   value: number;
@@ -76,6 +84,7 @@ export type EngineEditPlanTargetOutcome = {
   absoluteError: number;
   exact: boolean;
   shares: EngineEditPlanShareOutcome[];
+  counts?: EngineCountAchievement[];
   conditionalShares: EngineEditPlanConditionalOutcome[];
   quality?: EngineQualityDiagnostics;
   duplicateRowCount?: number;
@@ -114,6 +123,7 @@ export type EngineSynthesisSuccessReport = {
     maximum: number;
   };
   shareTargets: Array<{ id: string; column: string; value: number }>;
+  countTargets?: Array<{ id: string; column: string; value: number }>;
   conditionalShareTargets: Array<{
     id: string;
     populationColumn: string;
@@ -127,6 +137,7 @@ export type EngineSynthesisSuccessReport = {
     bestPossibleMean: number;
     bestPossibleAbsoluteError: number;
     shares: EngineShareAchievement[];
+    counts?: EngineCountAchievement[];
     conditionalShares: EngineConditionalShareAchievement[];
   };
   editPlan: EngineEditPlan;
@@ -142,6 +153,7 @@ export type EngineSynthesisInfeasibleReport = {
   finalCount: number;
   target: { kind: "mean"; column: string; value: number };
   shareTargets: Array<{ id: string; column: string; value: number }>;
+  countTargets?: Array<{ id: string; column: string; value: number }>;
   conditionalShareTargets: Array<{
     id: string;
     populationColumn: string;
@@ -264,6 +276,18 @@ const validShareAchievement = (value: unknown): boolean => {
   );
 };
 
+const validCountAchievement = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const count = value as Record<string, unknown>;
+  return (
+    typeof count.id === "string" &&
+    typeof count.value === "number" &&
+    typeof count.count === "number" &&
+    typeof count.absoluteError === "number" &&
+    typeof count.exact === "boolean"
+  );
+};
+
 const validConditionalShareAchievement = (value: unknown): boolean => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const share = value as Record<string, unknown>;
@@ -305,6 +329,8 @@ const validEditPlanTargetOutcome = (value: unknown): boolean => {
     typeof outcome.exact === "boolean" &&
     Array.isArray(outcome.shares) &&
     outcome.shares.every(validEditPlanShareOutcome) &&
+    (outcome.counts === undefined ||
+      (Array.isArray(outcome.counts) && outcome.counts.every(validCountAchievement))) &&
     Array.isArray(outcome.conditionalShares) &&
     outcome.conditionalShares.every(validEditPlanConditionalOutcome)
   );
@@ -389,6 +415,9 @@ const parseSynthesisReport = (input: unknown): EngineSynthesisReport => {
     typeof achievedRecord.bestPossibleAbsoluteError !== "number" ||
     !Array.isArray(achievedRecord.shares) ||
     !achievedRecord.shares.every(validShareAchievement) ||
+    (achievedRecord.counts !== undefined &&
+      (!Array.isArray(achievedRecord.counts) ||
+        !achievedRecord.counts.every(validCountAchievement))) ||
     !Array.isArray(achievedRecord.conditionalShares) ||
     !achievedRecord.conditionalShares.every(validConditionalShareAchievement) ||
     !validEditPlan(report.editPlan)

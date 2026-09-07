@@ -90,12 +90,12 @@ class EngineSmokeTest(unittest.TestCase):
                         "result_parquet": "result.parquet",
                         "report_json": "report.json",
                         "final_count": 9,
-                        "mean_target": {
+                        "mean_targets": [{"id": "mean",
                             "column": "score",
                             "value": sum(scores) / len(scores),
                             "minimum": 1,
                             "maximum": 5,
-                        },
+                        }],
                         "seed": 42,
                         "categorical_columns": ["q_2"],
                         "timestamp_column": "submitted_at",
@@ -145,12 +145,12 @@ class EngineSmokeTest(unittest.TestCase):
                         "result_parquet": "result.parquet",
                         "report_json": "report.json",
                         "final_count": 120,
-                        "mean_target": {
+                        "mean_targets": [{"id": "mean",
                             "column": "score",
                             "value": 4.3,
                             "minimum": 1,
                             "maximum": 5,
-                        },
+                        }],
                         "seed": 20260906,
                         "categorical_columns": ["segment"],
                         "timestamp_column": "submitted_at",
@@ -216,12 +216,12 @@ class EngineSmokeTest(unittest.TestCase):
                         "result_parquet": "result.parquet",
                         "report_json": "report.json",
                         "final_count": 120,
-                        "mean_target": {
+                        "mean_targets": [{"id": "mean",
                             "column": "score",
                             "value": 4.7,
                             "minimum": 1,
                             "maximum": 5,
-                        },
+                        }],
                         "share_targets": [
                             {
                                 "id": "group-1",
@@ -292,12 +292,12 @@ class EngineSmokeTest(unittest.TestCase):
                         "result_parquet": "result.parquet",
                         "report_json": "report.json",
                         "final_count": 120,
-                        "mean_target": {
+                        "mean_targets": [{"id": "mean",
                             "column": "score",
                             "value": 4.7,
                             "minimum": 1,
                             "maximum": 5,
-                        },
+                        }],
                         "share_targets": [
                             {
                                 "id": "population-P",

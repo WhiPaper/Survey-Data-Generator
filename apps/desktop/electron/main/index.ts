@@ -17,6 +17,7 @@ import { runPackagedSmoke } from "./packaged-smoke";
 import { openAppDatabase, type AppDatabase } from "./persistence/database";
 import { createProjectService } from "./projects/service";
 import { createSynthesisService } from "./synthesis/service";
+import { createTargetService } from "./targets/service";
 import { schedulePrivateGitHubUpdateCheck } from "./updater/github-release-updater";
 import { createValueGroupService } from "./value-groups/service";
 
@@ -44,11 +45,9 @@ const createWindow = (): BrowserWindow => {
   });
 
   window.once("ready-to-show", () => window.show());
-
   const devServerUrl = process.env.ELECTRON_RENDERER_URL;
   if (devServerUrl) void window.loadURL(devServerUrl);
   else void window.loadFile(join(__dirname, "../renderer/index.html"));
-
   return window;
 };
 
@@ -86,12 +85,7 @@ void app
     });
     const jobs = createJobRegistry();
     const googleForms = createGoogleFormsClient({ auth });
-    const forms = createFormsService({
-      auth,
-      google: googleForms,
-      db: appDatabase.db,
-      jobs,
-    });
+    const forms = createFormsService({ auth, google: googleForms, db: appDatabase.db, jobs });
     const engine = createPythonEngine({
       jobs,
       launch: resolveEngineLaunch({
@@ -100,6 +94,11 @@ void app
         resourcesPath: process.resourcesPath,
       }),
     });
+    const synthesis = createSynthesisService({
+      db: appDatabase.db,
+      engine,
+      workRoot: join(userDataPath, "compute-jobs"),
+    });
     const runExports = createRunExportService(appDatabase.db);
 
     backendServices = {
@@ -107,11 +106,8 @@ void app
       forms,
       projects: createProjectService({ db: appDatabase.db }),
       valueGroups: createValueGroupService(appDatabase.db),
-      synthesis: createSynthesisService({
-        db: appDatabase.db,
-        engine,
-        workRoot: join(userDataPath, "compute-jobs"),
-      }),
+      targets: createTargetService(appDatabase.db, synthesis),
+      synthesis,
       runExports,
       pickRunExportDestination: async ({ format }) => {
         const isCsv = format === "csv";

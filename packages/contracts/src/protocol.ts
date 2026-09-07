@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import type { FormId, GoogleAccountId } from "@survey-synth/domain";
+import type { FormId, GoogleAccountId, TargetId } from "@survey-synth/domain";
 import { VERSIONS } from "./version.js";
 
-export type { FormId, GoogleAccountId } from "@survey-synth/domain";
+export type { FormId, GoogleAccountId, TargetId } from "@survey-synth/domain";
 
 export const BackendErrorCodeSchema = z.enum([
   "UNAUTHENTICATED",
@@ -38,6 +38,10 @@ export const FormIdSchema = z
   .string()
   .min(1)
   .transform((value) => value as FormId);
+export const TargetIdSchema = z
+  .string()
+  .min(1)
+  .transform((value) => value as TargetId);
 
 export const GoogleAccountViewSchema = z
   .object({
@@ -173,8 +177,48 @@ export const ValueGroupObservedValueSchema = z
   .strict();
 export type ValueGroupObservedValue = z.infer<typeof ValueGroupObservedValueSchema>;
 
+export const TargetSubjectSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("option"),
+      questionId: z.string().min(1),
+      optionKey: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("checkbox_option"),
+      questionId: z.string().min(1),
+      optionKey: z.string().min(1),
+    })
+    .strict(),
+  z.object({ kind: z.literal("value_group"), valueGroupId: z.string().min(1) }).strict(),
+]);
+export type TargetSubject = z.infer<typeof TargetSubjectSchema>;
+
+export const CountTargetSchema = z
+  .object({
+    id: TargetIdSchema,
+    kind: z.literal("count"),
+    subject: TargetSubjectSchema,
+    value: z.number().int().nonnegative(),
+  })
+  .strict();
+export type CountTarget = z.infer<typeof CountTargetSchema>;
+
+export const ShareTargetSchema = z
+  .object({
+    id: TargetIdSchema,
+    kind: z.literal("share"),
+    subject: TargetSubjectSchema,
+    value: z.number().min(0).max(1),
+  })
+  .strict();
+export type ShareTarget = z.infer<typeof ShareTargetSchema>;
+
 export const MeanTargetSchema = z
   .object({
+    id: TargetIdSchema,
     kind: z.literal("mean"),
     questionId: z.string().min(1),
     value: z.number().finite(),
@@ -182,19 +226,13 @@ export const MeanTargetSchema = z
   .strict();
 export type MeanTarget = z.infer<typeof MeanTargetSchema>;
 
-export const ShareTargetSchema = z
-  .object({
-    kind: z.literal("share"),
-    valueGroupId: z.string().min(1),
-    value: z.number().min(0).max(1),
-  })
-  .strict();
-export type ShareTarget = z.infer<typeof ShareTargetSchema>;
-
 export const ConditionalShareTargetSchema = z
   .object({
+    id: TargetIdSchema,
     kind: z.literal("conditional_share"),
-    valueGroupId: z.string().min(1),
+    population: z
+      .object({ kind: z.literal("value_group"), valueGroupId: z.string().min(1) })
+      .strict(),
     questionId: z.string().min(1),
     optionKey: z.string().min(1),
     value: z.number().min(0).max(1),
@@ -203,11 +241,108 @@ export const ConditionalShareTargetSchema = z
 export type ConditionalShareTarget = z.infer<typeof ConditionalShareTargetSchema>;
 
 export const SynthesisTargetSchema = z.discriminatedUnion("kind", [
-  MeanTargetSchema,
+  CountTargetSchema,
   ShareTargetSchema,
+  MeanTargetSchema,
   ConditionalShareTargetSchema,
 ]);
 export type SynthesisTarget = z.infer<typeof SynthesisTargetSchema>;
+
+export const TargetIntentSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("absolute"), value: z.number().finite() }).strict(),
+  z.object({ kind: z.literal("percentage_point_delta"), value: z.number().finite() }).strict(),
+  z.object({ kind: z.literal("relative_percent_delta"), value: z.number().finite() }).strict(),
+  z.object({ kind: z.literal("count_delta"), value: z.number().int() }).strict(),
+]);
+export type TargetIntent = z.infer<typeof TargetIntentSchema>;
+
+const DraftIntentSchema = TargetIntentSchema.nullable();
+export const TargetDraftTargetSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      id: TargetIdSchema,
+      kind: z.literal("count"),
+      subject: TargetSubjectSchema,
+      intent: DraftIntentSchema,
+    })
+    .strict(),
+  z
+    .object({
+      id: TargetIdSchema,
+      kind: z.literal("share"),
+      subject: TargetSubjectSchema,
+      intent: DraftIntentSchema,
+    })
+    .strict(),
+  z
+    .object({
+      id: TargetIdSchema,
+      kind: z.literal("mean"),
+      questionId: z.string().min(1),
+      intent: DraftIntentSchema,
+    })
+    .strict(),
+  z
+    .object({
+      id: TargetIdSchema,
+      kind: z.literal("conditional_share"),
+      population: z
+        .object({ kind: z.literal("value_group"), valueGroupId: z.string().min(1) })
+        .strict(),
+      questionId: z.string().min(1),
+      optionKey: z.string().min(1),
+      intent: DraftIntentSchema,
+    })
+    .strict(),
+]);
+export type TargetDraftTarget = z.infer<typeof TargetDraftTargetSchema>;
+
+export const TargetDraftSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    finalCount: z.number().int().positive().nullable(),
+    sourceScope: SourceScopeSchema,
+    seed: z.number().int(),
+    targets: z.array(TargetDraftTargetSchema),
+  })
+  .strict();
+export type TargetDraft = z.infer<typeof TargetDraftSchema>;
+export const TargetDraftViewSchema = TargetDraftSchema.extend({
+  updatedAt: z.string().min(1),
+}).strict();
+export type TargetDraftView = z.infer<typeof TargetDraftViewSchema>;
+
+export const TargetProfileMetricSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("subject"),
+      subject: TargetSubjectSchema,
+      count: z.number().int().nonnegative(),
+      denominatorCount: z.number().int().nonnegative(),
+      share: z.number().min(0).max(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("mean"),
+      questionId: z.string().min(1),
+      mean: z.number().finite(),
+      denominatorCount: z.number().int().nonnegative(),
+    })
+    .strict(),
+]);
+export type TargetProfileMetric = z.infer<typeof TargetProfileMetricSchema>;
+export const TargetProfileResultSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    sourceRevisionId: z.string().min(1),
+    sourceScope: SourceScopeSchema,
+    responseCount: z.number().int().nonnegative(),
+    responseSetHash: z.string().min(1),
+    metrics: z.array(TargetProfileMetricSchema),
+  })
+  .strict();
+export type TargetProfileResult = z.infer<typeof TargetProfileResultSchema>;
 
 export const SynthesisStartParamsSchema = z
   .object({
@@ -218,34 +353,41 @@ export const SynthesisStartParamsSchema = z
     seed: z.number().int(),
     operationId: z.string().min(1).max(200).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const seen = new Set<string>();
+    value.targets.forEach((target, index) => {
+      const id = String(target.id);
+      if (seen.has(id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["targets", index, "id"],
+          message: "TargetId must be unique within a Run",
+        });
+      }
+      seen.add(id);
+    });
+  });
 export type SynthesisStartParams = z.infer<typeof SynthesisStartParamsSchema>;
 
-export const EditPlanShareOutcomeSchema = z
+export const TargetOutcomeSchema = z
   .object({
-    id: z.string().min(1),
-    value: z.number().min(0).max(1),
-    share: z.number().min(0).max(1),
+    targetId: TargetIdSchema,
+    kind: z.enum(["count", "share", "mean", "conditional_share"]),
+    requested: z.number().finite(),
+    achieved: z.number().finite(),
     absoluteError: z.number().nonnegative(),
     exact: z.boolean(),
+    numeratorCount: z.number().int().nonnegative().optional(),
+    denominatorCount: z.number().int().nonnegative().optional(),
   })
   .strict();
+export type TargetOutcome = z.infer<typeof TargetOutcomeSchema>;
 
-export const EditPlanConditionalOutcomeSchema = EditPlanShareOutcomeSchema.extend({
-  numeratorCount: z.number().int().nonnegative(),
-  denominatorCount: z.number().int().positive(),
-}).strict();
-
-export const EditPlanTargetOutcomeSchema = z
-  .object({
-    mean: z.number().finite(),
-    absoluteError: z.number().nonnegative(),
-    exact: z.boolean(),
-    shares: z.array(EditPlanShareOutcomeSchema),
-    conditionalShares: z.array(EditPlanConditionalOutcomeSchema),
-  })
-  .strict();
-export type EditPlanTargetOutcome = z.infer<typeof EditPlanTargetOutcomeSchema>;
+export const TargetSetOutcomeSchema = z.object({ targets: z.array(TargetOutcomeSchema) }).strict();
+export type TargetSetOutcome = z.infer<typeof TargetSetOutcomeSchema>;
+export const EditPlanTargetOutcomeSchema = TargetSetOutcomeSchema;
+export type EditPlanTargetOutcome = TargetSetOutcome;
 
 export const ProposedReplacementSchema = z
   .object({
@@ -260,11 +402,35 @@ export const EditPlanPreviewSchema = z
     status: z.literal("available"),
     replacementCount: z.number().int().positive(),
     proposedReplacements: z.array(ProposedReplacementSchema).min(1),
-    appendOnlyOutcome: EditPlanTargetOutcomeSchema,
-    replacementOutcome: EditPlanTargetOutcomeSchema,
+    appendOnlyOutcome: TargetSetOutcomeSchema,
+    replacementOutcome: TargetSetOutcomeSchema,
   })
   .strict();
 export type EditPlanPreview = z.infer<typeof EditPlanPreviewSchema>;
+
+export const TargetIssueCodeSchema = z.enum([
+  "out_of_range",
+  "invalid_subject",
+  "immutable_source_conflict",
+  "zero_denominator",
+  "target_conflict",
+  "candidate_support",
+  "domain_unsupported",
+]);
+export type TargetIssueCode = z.infer<typeof TargetIssueCodeSchema>;
+
+export const TargetIssueSchema = z
+  .object({
+    targetIds: z.array(TargetIdSchema),
+    code: TargetIssueCodeSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type TargetIssue = z.infer<typeof TargetIssueSchema>;
+export const TargetsValidateResultSchema = z
+  .object({ issues: z.array(TargetIssueSchema) })
+  .strict();
+export type TargetsValidateResult = z.infer<typeof TargetsValidateResultSchema>;
 
 export const SynthesisSuccessResultSchema = z
   .object({
@@ -272,6 +438,7 @@ export const SynthesisSuccessResultSchema = z
     runId: z.string().min(1),
     syntheticResponseCount: z.number().int().nonnegative(),
     finalResponseCount: z.number().int().nonnegative(),
+    outcome: TargetSetOutcomeSchema,
   })
   .strict();
 export type SynthesisSuccessResult = z.infer<typeof SynthesisSuccessResultSchema>;
@@ -288,7 +455,7 @@ export const SynthesisStartResultSchema = z.discriminatedUnion("status", [
   z
     .object({
       status: z.literal("infeasible"),
-      issues: z.array(z.object({ code: z.string(), message: z.string() }).strict()),
+      issues: z.array(TargetIssueSchema),
     })
     .strict(),
 ]);
@@ -312,20 +479,51 @@ export const FrozenValueGroupSchema = z
   .strict();
 export type FrozenValueGroup = z.infer<typeof FrozenValueGroupSchema>;
 
-export const FrozenRunTargetSchema = z.discriminatedUnion("kind", [
-  MeanTargetSchema,
+export const FrozenTargetSubjectSchema = z.discriminatedUnion("kind", [
   z
     .object({
-      kind: z.literal("share"),
-      value: z.number().min(0).max(1),
-      valueGroup: FrozenValueGroupSchema,
+      kind: z.literal("option"),
+      questionId: z.string().min(1),
+      optionKey: z.string().min(1),
     })
     .strict(),
   z
     .object({
+      kind: z.literal("checkbox_option"),
+      questionId: z.string().min(1),
+      optionKey: z.string().min(1),
+    })
+    .strict(),
+  z.object({ kind: z.literal("value_group"), valueGroup: FrozenValueGroupSchema }).strict(),
+]);
+export type FrozenTargetSubject = z.infer<typeof FrozenTargetSubjectSchema>;
+
+export const FrozenRunTargetSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      id: TargetIdSchema,
+      kind: z.literal("count"),
+      subject: FrozenTargetSubjectSchema,
+      value: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      id: TargetIdSchema,
+      kind: z.literal("share"),
+      subject: FrozenTargetSubjectSchema,
+      value: z.number().min(0).max(1),
+    })
+    .strict(),
+  MeanTargetSchema,
+  z
+    .object({
+      id: TargetIdSchema,
       kind: z.literal("conditional_share"),
       value: z.number().min(0).max(1),
-      valueGroup: FrozenValueGroupSchema,
+      population: z
+        .object({ kind: z.literal("value_group"), valueGroup: FrozenValueGroupSchema })
+        .strict(),
       questionId: z.string().min(1),
       optionKey: z.string().min(1),
     })
@@ -349,6 +547,7 @@ export const RunsGetResultSchema = z
     projectId: ProjectIdSchema,
     sourceRevisionId: z.string().min(1),
     targetSnapshot: RunTargetSnapshotSchema,
+    outcome: TargetSetOutcomeSchema,
     validation: z.record(z.string(), z.unknown()),
     finalResponseCount: z.number().int().nonnegative(),
     appVersion: z.string().min(1),
@@ -389,6 +588,12 @@ const ValueGroupsCreateParamsSchema = z
   })
   .strict();
 const ValueGroupsDeleteParamsSchema = z.object({ valueGroupId: z.string().min(1) }).strict();
+const TargetsProfileParamsSchema = z
+  .object({ projectId: ProjectIdSchema, sourceScope: SourceScopeSchema.optional() })
+  .strict();
+const TargetsDraftStartParamsSchema = z
+  .object({ projectId: ProjectIdSchema, operationId: z.string().min(1).max(200).optional() })
+  .strict();
 
 export interface BackendRpc {
   "system.ping": { input: z.infer<typeof EmptyParamsSchema>; output: SystemPingResult };
@@ -422,6 +627,20 @@ export interface BackendRpc {
     input: z.infer<typeof ValueGroupsDeleteParamsSchema>;
     output: ActionResult;
   };
+  "targets.profile": {
+    input: z.infer<typeof TargetsProfileParamsSchema>;
+    output: TargetProfileResult;
+  };
+  "targets.validate": { input: TargetDraft; output: TargetsValidateResult };
+  "targets.draft.get": {
+    input: z.infer<typeof ProjectParamsSchema>;
+    output: TargetDraftView | null;
+  };
+  "targets.draft.save": { input: TargetDraft; output: TargetDraftView };
+  "targets.draft.start": {
+    input: z.infer<typeof TargetsDraftStartParamsSchema>;
+    output: SynthesisStartResult;
+  };
   "synthesis.start": { input: SynthesisStartParams; output: SynthesisStartResult };
   "synthesis.resolveEditPlan": {
     input: SynthesisResolveEditPlanParams;
@@ -454,6 +673,11 @@ const rpcMethods = [
   "valueGroups.values",
   "valueGroups.create",
   "valueGroups.delete",
+  "targets.profile",
+  "targets.validate",
+  "targets.draft.get",
+  "targets.draft.save",
+  "targets.draft.start",
   "synthesis.start",
   "synthesis.resolveEditPlan",
   "synthesis.cancel",
@@ -494,6 +718,11 @@ const rpcParamSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "valueGroups.values": ValueGroupsValuesParamsSchema,
   "valueGroups.create": ValueGroupsCreateParamsSchema,
   "valueGroups.delete": ValueGroupsDeleteParamsSchema,
+  "targets.profile": TargetsProfileParamsSchema,
+  "targets.validate": TargetDraftSchema,
+  "targets.draft.get": ProjectParamsSchema,
+  "targets.draft.save": TargetDraftSchema,
+  "targets.draft.start": TargetsDraftStartParamsSchema,
   "synthesis.start": SynthesisStartParamsSchema,
   "synthesis.resolveEditPlan": SynthesisResolveEditPlanParamsSchema,
   "synthesis.cancel": SynthesisCancelParamsSchema,
@@ -521,6 +750,11 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "valueGroups.values": z.array(ValueGroupObservedValueSchema),
   "valueGroups.create": ValueGroupSchema,
   "valueGroups.delete": ActionResultSchema,
+  "targets.profile": TargetProfileResultSchema,
+  "targets.validate": TargetsValidateResultSchema,
+  "targets.draft.get": TargetDraftViewSchema.nullable(),
+  "targets.draft.save": TargetDraftViewSchema,
+  "targets.draft.start": SynthesisStartResultSchema,
   "synthesis.start": SynthesisStartResultSchema,
   "synthesis.resolveEditPlan": SynthesisSuccessResultSchema,
   "synthesis.cancel": ActionResultSchema,

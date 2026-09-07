@@ -6,9 +6,10 @@ import { eq } from "drizzle-orm";
 
 import {
   EditPlanPreviewSchema,
-  EditPlanTargetOutcomeSchema,
+  TargetSetOutcomeSchema,
   type EditPlanPreview,
   type FrozenRunTarget,
+  type FrozenTargetSubject,
   type FrozenValueGroup,
   type RunTargetSnapshot,
   type RunsGetResult,
@@ -17,6 +18,8 @@ import {
   type SynthesisStartParams,
   type SynthesisStartResult,
   type SynthesisSuccessResult,
+  type TargetIssue,
+  type TargetSetOutcome,
 } from "@survey-synth/contracts";
 import type { FormSnapshot, QuestionId } from "@survey-synth/domain";
 
@@ -36,7 +39,6 @@ import {
   multiChoiceOptionSupport,
   readResultParquet,
   RESPONSE_ID_COLUMN,
-  TARGET_SCORE_COLUMN,
   TIMESTAMP_COLUMN,
   valueGroupMemberCells,
   writeSourceParquet,
@@ -81,6 +83,8 @@ type PendingEditPlan = {
   syntheticResponseCount: number;
   editPlan: EditPlanPreview;
 };
+
+type OutcomeTarget = Pick<FrozenRunTarget, "id" | "kind" | "value">;
 
 const parseFormSnapshot = (schemaJson: string): FormSnapshot => {
   const parsed = JSON.parse(schemaJson) as unknown;
@@ -179,48 +183,170 @@ const frozenValueGroup = (row: ValueGroupRecord, members: string[]): FrozenValue
   members,
 });
 
-const loadValueGroup = (
+const findValueGroup = (
   db: SurveyDatabase,
   projectId: string,
   valueGroupId: string,
-): { row: ValueGroupRecord; members: string[] } => {
+): { row: ValueGroupRecord; members: string[] } | null => {
   const row = db.select().from(valueGroups).where(eq(valueGroups.id, valueGroupId)).get();
-  if (!row || row.projectId !== projectId) {
-    throw backendFailure("VALIDATION_FAILED", "Target ValueGroup was not found in this project");
-  }
+  if (!row || row.projectId !== projectId) return null;
   return { row, members: parseMembers(row.membersJson) };
 };
 
-const ensureGroupableQuestion = (form: FormSnapshot, questionId: string): void => {
+const isGroupableQuestion = (form: FormSnapshot, questionId: string): boolean => {
   const question = form.questions.find((candidate) => candidate.id === questionId);
-  if (!question || (question.kind !== "single_choice" && question.kind !== "text")) {
-    throw backendFailure(
-      "VALIDATION_FAILED",
-      "ValueGroup targets require a single-choice or text population question",
-    );
-  }
+  return question?.kind === "single_choice" || question?.kind === "text";
 };
-
-const conditionalTargetId = (valueGroupId: string, questionId: string, optionKey: string): string =>
-  `conditional:${valueGroupId}:${questionId}:${optionKey}`;
 
 const jsonRecord = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 
-const editPlanOutcome = (value: unknown) => {
-  const record = jsonRecord(value);
-  return EditPlanTargetOutcomeSchema.parse({
-    mean: record.mean,
-    absoluteError: record.absoluteError,
-    exact: record.exact,
-    shares: record.shares,
-    conditionalShares: record.conditionalShares,
-  });
+const issue = (
+  targetIds: readonly { id: unknown }[],
+  code: TargetIssue["code"],
+  message: string,
+): TargetIssue => ({
+  targetIds: targetIds.map((target) => String(target.id) as TargetIssue["targetIds"][number]),
+  code,
+  message,
+});
+
+const normalizeEngineIssue = (
+  raw: { code: string; message: string },
+  targets: readonly OutcomeTarget[],
+): TargetIssue => {
+  const code: TargetIssue["code"] =
+    raw.code === "final_count_below_source"
+      ? "immutable_source_conflict"
+      : raw.code.includes("candidate") || raw.code.endsWith("_support")
+        ? "candidate_support"
+        : raw.code.includes("out_of_range")
+          ? "out_of_range"
+          : raw.code.includes("denominator") || raw.code.includes("population_empty")
+            ? "zero_denominator"
+            : raw.code.includes("missing") || raw.code.includes("requires")
+              ? "domain_unsupported"
+              : "target_conflict";
+  return issue(targets, code, raw.message);
 };
 
-const availableEditPlan = (report: unknown): EditPlanPreview | null => {
+const completeOutcome = (
+  outcome: TargetSetOutcome,
+  targets: readonly OutcomeTarget[],
+): TargetSetOutcome => {
+  if (outcome.targets.length !== targets.length) {
+    throw backendFailure("INTERNAL", "Synthesis outcome is missing one or more target results");
+  }
+  const expected = new Map(targets.map((target) => [String(target.id), target.kind] as const));
+  const seen = new Set<string>();
+  for (const result of outcome.targets) {
+    const id = String(result.targetId);
+    if (seen.has(id) || expected.get(id) !== result.kind) {
+      throw backendFailure("INTERNAL", "Synthesis outcome contains invalid target identity");
+    }
+    seen.add(id);
+  }
+  return outcome;
+};
+
+const targetSetOutcome = (value: unknown, targets: readonly OutcomeTarget[]): TargetSetOutcome => {
+  const record = jsonRecord(value);
+  if (Array.isArray(record.targets)) {
+    return completeOutcome(TargetSetOutcomeSchema.parse(record), targets);
+  }
+
+  const rawShares = Array.isArray(record.shares) ? record.shares.map(jsonRecord) : [];
+  const rawCounts = Array.isArray(record.counts) ? record.counts.map(jsonRecord) : [];
+  const rawConditionals = Array.isArray(record.conditionalShares)
+    ? record.conditionalShares.map(jsonRecord)
+    : [];
+  const rawMeans = Array.isArray(record.means) ? record.means.map(jsonRecord) : [];
+
+  const outcome = TargetSetOutcomeSchema.parse({
+    targets: targets.flatMap<TargetSetOutcome["targets"][number]>((target) => {
+      if (target.kind === "count") {
+        const raw = rawCounts.find((candidate) => String(candidate.id) === String(target.id));
+        if (!raw || typeof raw.count !== "number" || typeof raw.absoluteError !== "number") {
+          return [];
+        }
+        return [
+          {
+            targetId: target.id,
+            kind: "count",
+            requested: target.value,
+            achieved: raw.count,
+            absoluteError: raw.absoluteError,
+            exact: typeof raw.exact === "boolean" ? raw.exact : raw.absoluteError === 0,
+            numeratorCount: raw.count,
+          },
+        ];
+      }
+      if (target.kind === "mean") {
+        const raw = rawMeans.find((candidate) => String(candidate.id) === String(target.id));
+        if (raw && typeof raw.mean === "number" && typeof raw.absoluteError === "number") {
+          return [
+            {
+              targetId: target.id,
+              kind: "mean",
+              requested: target.value,
+              achieved: raw.mean,
+              absoluteError: raw.absoluteError,
+              exact: typeof raw.exact === "boolean" ? raw.exact : raw.absoluteError <= 1e-9,
+              ...(typeof raw.denominatorCount === "number"
+                ? { denominatorCount: raw.denominatorCount }
+                : {}),
+            },
+          ];
+        }
+        if (
+          typeof record.mean !== "number" ||
+          typeof record.absoluteError !== "number" ||
+          typeof record.exact !== "boolean"
+        ) {
+          return [];
+        }
+        return [
+          {
+            targetId: target.id,
+            kind: "mean",
+            requested: target.value,
+            achieved: record.mean,
+            absoluteError: record.absoluteError,
+            exact: record.exact,
+          },
+        ];
+      }
+
+      const values = target.kind === "share" ? rawShares : rawConditionals;
+      const raw = values.find((candidate) => String(candidate.id) === String(target.id));
+      if (!raw || typeof raw.share !== "number" || typeof raw.absoluteError !== "number") {
+        return [];
+      }
+      return [
+        {
+          targetId: target.id,
+          kind: target.kind,
+          requested: target.value,
+          achieved: raw.share,
+          absoluteError: raw.absoluteError,
+          exact: typeof raw.exact === "boolean" ? raw.exact : raw.absoluteError <= 1e-9,
+          ...(typeof raw.numeratorCount === "number" ? { numeratorCount: raw.numeratorCount } : {}),
+          ...(typeof raw.denominatorCount === "number"
+            ? { denominatorCount: raw.denominatorCount }
+            : {}),
+        },
+      ];
+    }),
+  });
+  return completeOutcome(outcome, targets);
+};
+
+const availableEditPlan = (
+  report: unknown,
+  targets: readonly OutcomeTarget[],
+): EditPlanPreview | null => {
   const raw = jsonRecord(jsonRecord(report).editPlan);
   if (raw.status !== "available") return null;
   try {
@@ -228,8 +354,8 @@ const availableEditPlan = (report: unknown): EditPlanPreview | null => {
       status: "available",
       replacementCount: raw.replacementCount,
       proposedReplacements: raw.proposedReplacements,
-      appendOnlyOutcome: editPlanOutcome(raw.appendOnlyOutcome),
-      replacementOutcome: editPlanOutcome(raw.replacementOutcome),
+      appendOnlyOutcome: targetSetOutcome(raw.appendOnlyOutcome, targets),
+      replacementOutcome: targetSetOutcome(raw.replacementOutcome, targets),
     });
   } catch {
     throw backendFailure("INTERNAL", "Python synthesis engine returned an invalid EditPlan");
@@ -247,6 +373,7 @@ const persistedScope = (scope: FrozenScope): PersistRunInput["scope"] => ({
 const persistCompletedRun = (
   db: SurveyDatabase,
   input: Omit<PersistRunInput, "id">,
+  outcome: TargetSetOutcome,
 ): SynthesisSuccessResult => {
   const runId = randomUUID();
   persistRun(db, { id: runId, ...input });
@@ -255,6 +382,7 @@ const persistCompletedRun = (
     runId,
     syntheticResponseCount: Math.max(0, input.finalResponseCount - input.scope.responseCount),
     finalResponseCount: input.finalResponseCount,
+    outcome,
   };
 };
 
@@ -287,33 +415,81 @@ export const createSynthesisService = ({
         return {
           status: "infeasible",
           issues: [
-            { code: "empty_source_scope", message: "Selected SourceScope has no responses" },
+            issue(params.targets, "candidate_support", "Selected SourceScope has no responses"),
           ],
         };
       }
 
+      const counts = params.targets.filter((target) => target.kind === "count");
       const means = params.targets.filter((target) => target.kind === "mean");
       const shares = params.targets.filter((target) => target.kind === "share");
       const conditionals = params.targets.filter((target) => target.kind === "conditional_share");
-      if (means.length !== 1) {
-        throw backendFailure("VALIDATION_FAILED", "M7 requires exactly one ordinal mean target");
-      }
-      if (shares.length > 1) {
-        throw backendFailure(
-          "VALIDATION_FAILED",
-          "M7 supports at most one overall ValueGroup share target",
+
+      const directOptionTargets = [...counts, ...shares].filter(
+        (target) => target.subject.kind === "option",
+      );
+      for (const target of directOptionTargets) {
+        if (target.subject.kind !== "option") continue;
+        const questionId = target.subject.questionId;
+        const peers = directOptionTargets.filter(
+          (candidate) =>
+            candidate.subject.kind === "option" && candidate.subject.questionId === questionId,
         );
+        const sharePeers = peers.filter((peer) => peer.kind === "share");
+        if (sharePeers.reduce((sum, peer) => sum + peer.value, 0) > 1 + 1e-9) {
+          return {
+            status: "infeasible",
+            issues: [
+              issue(sharePeers, "target_conflict", "Single-choice share targets exceed 100%"),
+            ],
+          };
+        }
+        const countPeers = peers.filter((peer) => peer.kind === "count");
+        if (countPeers.reduce((sum, peer) => sum + peer.value, 0) > params.finalCount) {
+          return {
+            status: "infeasible",
+            issues: [
+              issue(
+                countPeers,
+                "target_conflict",
+                "Single-choice count targets exceed the final response count",
+              ),
+            ],
+          };
+        }
       }
 
-      const mean = means[0]!;
       const form = loadForm(db, revision.formSnapshotId);
-      const meanQuestion = form.questions.find((question) => question.id === mean.questionId);
-      if (!meanQuestion || meanQuestion.kind !== "ordinal") {
-        throw backendFailure("VALIDATION_FAILED", "Mean target question is not ordinal");
+      for (const mean of means) {
+        const question = form.questions.find((candidate) => candidate.id === mean.questionId);
+        if (!question || question.kind !== "ordinal") {
+          return {
+            status: "infeasible",
+            issues: [
+              issue([mean], "invalid_subject", "Mean target must reference an ordinal question"),
+            ],
+          };
+        }
+        if (mean.value < question.min || mean.value > question.max) {
+          return {
+            status: "infeasible",
+            issues: [
+              issue([mean], "out_of_range", "Mean target is outside the ordinal question range"),
+            ],
+          };
+        }
       }
-
-      const plan = createFlatTablePlan(form, mean.questionId as QuestionId);
+      const plan = createFlatTablePlan(
+        form,
+        means.map((mean) => mean.questionId as QuestionId),
+      );
       const shareJobTargets: Array<{
+        id: string;
+        column: string;
+        member_values: string[];
+        value: number;
+      }> = [];
+      const countJobTargets: Array<{
         id: string;
         column: string;
         member_values: string[];
@@ -328,50 +504,194 @@ export const createSynthesisService = ({
         schema_option_values: string[];
         value: number;
       }> = [];
-      const frozenTargets: FrozenRunTarget[] = [{ ...mean }];
+      const frozenTargets: FrozenRunTarget[] = [...means];
 
-      for (const share of shares) {
-        const { row, members } = loadValueGroup(db, project.id, share.valueGroupId);
-        ensureGroupableQuestion(form, row.questionId);
-        const column = plan.questionColumns.get(row.questionId as QuestionId);
-        if (!column) {
-          throw backendFailure(
-            "INTERNAL",
-            "ValueGroup question is not available in the synthesis table",
+      for (const share of [...counts, ...shares]) {
+        let column: string | undefined;
+        let memberValues: string[] = [];
+        let frozenSubject: FrozenTargetSubject;
+        const subject = share.subject;
+
+        if (subject.kind === "value_group") {
+          const group = findValueGroup(db, project.id, subject.valueGroupId);
+          if (!group) {
+            return {
+              status: "infeasible",
+              issues: [
+                issue(
+                  [share],
+                  "invalid_subject",
+                  "Share target ValueGroup was not found in this project",
+                ),
+              ],
+            };
+          }
+          const { row, members } = group;
+          if (!isGroupableQuestion(form, row.questionId)) {
+            return {
+              status: "infeasible",
+              issues: [
+                issue(
+                  [share],
+                  "invalid_subject",
+                  "Share target ValueGroup must reference a single-choice or text question",
+                ),
+              ],
+            };
+          }
+          column = plan.questionColumns.get(row.questionId as QuestionId);
+          memberValues = valueGroupMemberCells(
+            scope.responses,
+            row.questionId as QuestionId,
+            members,
+            form,
           );
-        }
-        const memberValues = valueGroupMemberCells(
-          scope.responses,
-          row.questionId as QuestionId,
-          members,
-        );
-        if (memberValues.length === 0) {
-          return {
-            status: "infeasible",
-            issues: [
-              {
-                code: "share_member_support",
-                message: `ValueGroup “${row.name}” has no observed member values in this SourceScope`,
-              },
-            ],
+          frozenSubject = {
+            kind: "value_group",
+            valueGroup: frozenValueGroup(row, members),
+          };
+          if (memberValues.length === 0) {
+            return {
+              status: "infeasible",
+              issues: [
+                issue(
+                  [share],
+                  "candidate_support",
+                  `ValueGroup “${row.name}” has no observed member values in this SourceScope`,
+                ),
+              ],
+            };
+          }
+        } else if (subject.kind === "option") {
+          const question = form.questions.find((candidate) => candidate.id === subject.questionId);
+          if (!question || question.kind !== "single_choice") {
+            return {
+              status: "infeasible",
+              issues: [
+                issue(
+                  [share],
+                  "invalid_subject",
+                  "Option share subject must reference a single-choice question",
+                ),
+              ],
+            };
+          }
+          const option = question.options.find(
+            (candidate) => String(candidate.key) === subject.optionKey,
+          );
+          if (!option) {
+            return {
+              status: "infeasible",
+              issues: [
+                issue([share], "invalid_subject", "Option share subject was not found in the Form"),
+              ],
+            };
+          }
+          column = plan.questionColumns.get(question.id);
+          memberValues = valueGroupMemberCells(
+            scope.responses,
+            question.id,
+            [subject.optionKey],
+            form,
+          );
+          if (memberValues.length === 0) {
+            memberValues = [
+              JSON.stringify({
+                state: "answered",
+                value: { kind: "single_choice", optionKey: option.key, label: option.label },
+              }),
+            ];
+          }
+          frozenSubject = {
+            kind: "option",
+            questionId: subject.questionId,
+            optionKey: subject.optionKey,
+          };
+        } else {
+          const question = form.questions.find((candidate) => candidate.id === subject.questionId);
+          if (!question || question.kind !== "multi_choice") {
+            return {
+              status: "infeasible",
+              issues: [
+                issue(
+                  [share],
+                  "invalid_subject",
+                  "Checkbox option share subject must reference a checkbox question",
+                ),
+              ],
+            };
+          }
+          if (!question.options.some((option) => String(option.key) === subject.optionKey)) {
+            return {
+              status: "infeasible",
+              issues: [
+                issue(
+                  [share],
+                  "invalid_subject",
+                  "Checkbox option share subject was not found in the Form",
+                ),
+              ],
+            };
+          }
+          column = plan.questionColumns.get(question.id);
+          memberValues = multiChoiceOptionSupport(
+            scope.responses,
+            question,
+            subject.optionKey,
+          ).optionValues;
+          frozenSubject = {
+            kind: "checkbox_option",
+            questionId: subject.questionId,
+            optionKey: subject.optionKey,
           };
         }
-        shareJobTargets.push({
-          id: row.id,
+
+        if (!column) {
+          throw backendFailure("INTERNAL", "Share subject is not available in the synthesis table");
+        }
+        const jobTarget = {
+          id: String(share.id),
           column,
           member_values: memberValues,
           value: share.value,
-        });
+        };
+        if (share.kind === "count") countJobTargets.push(jobTarget);
+        else shareJobTargets.push(jobTarget);
         frozenTargets.push({
-          kind: "share",
+          id: share.id,
+          kind: share.kind,
+          subject: frozenSubject,
           value: share.value,
-          valueGroup: frozenValueGroup(row, members),
         });
       }
 
       for (const target of conditionals) {
-        const { row, members } = loadValueGroup(db, project.id, target.valueGroupId);
-        ensureGroupableQuestion(form, row.questionId);
+        const group = findValueGroup(db, project.id, target.population.valueGroupId);
+        if (!group) {
+          return {
+            status: "infeasible",
+            issues: [
+              issue(
+                [target],
+                "invalid_subject",
+                "Conditional population ValueGroup was not found in this project",
+              ),
+            ],
+          };
+        }
+        const { row, members } = group;
+        if (!isGroupableQuestion(form, row.questionId)) {
+          return {
+            status: "infeasible",
+            issues: [
+              issue(
+                [target],
+                "invalid_subject",
+                "Conditional population ValueGroup must reference a single-choice or text question",
+              ),
+            ],
+          };
+        }
         const populationColumn = plan.questionColumns.get(row.questionId as QuestionId);
         if (!populationColumn) {
           throw backendFailure(
@@ -383,31 +703,45 @@ export const createSynthesisService = ({
           scope.responses,
           row.questionId as QuestionId,
           members,
+          form,
         );
         if (populationMemberValues.length === 0) {
           return {
             status: "infeasible",
             issues: [
-              {
-                code: "conditional_population_support",
-                message: `ValueGroup “${row.name}” has no observed population values in this SourceScope`,
-              },
+              issue(
+                [target],
+                "candidate_support",
+                `ValueGroup “${row.name}” has no observed population values in this SourceScope`,
+              ),
             ],
           };
         }
 
         const checkbox = form.questions.find((question) => question.id === target.questionId);
         if (!checkbox || checkbox.kind !== "multi_choice") {
-          throw backendFailure(
-            "VALIDATION_FAILED",
-            "Conditional share targets require a checkbox question",
-          );
+          return {
+            status: "infeasible",
+            issues: [
+              issue(
+                [target],
+                "invalid_subject",
+                "Conditional share target must reference a checkbox question",
+              ),
+            ],
+          };
         }
         if (!checkbox.options.some((option) => String(option.key) === target.optionKey)) {
-          throw backendFailure(
-            "VALIDATION_FAILED",
-            "Conditional share option was not found in the Form",
-          );
+          return {
+            status: "infeasible",
+            issues: [
+              issue(
+                [target],
+                "invalid_subject",
+                "Conditional share option was not found in the Form",
+              ),
+            ],
+          };
         }
         const optionColumn = plan.questionColumns.get(checkbox.id);
         if (!optionColumn) {
@@ -424,9 +758,8 @@ export const createSynthesisService = ({
           );
         }
 
-        const id = conditionalTargetId(row.id, checkbox.id, target.optionKey);
         conditionalJobTargets.push({
-          id,
+          id: String(target.id),
           population_column: populationColumn,
           population_member_values: populationMemberValues,
           option_column: optionColumn,
@@ -435,22 +768,16 @@ export const createSynthesisService = ({
           value: target.value,
         });
         frozenTargets.push({
+          id: target.id,
           kind: "conditional_share",
           value: target.value,
-          valueGroup: frozenValueGroup(row, members),
+          population: {
+            kind: "value_group",
+            valueGroup: frozenValueGroup(row, members),
+          },
           questionId: checkbox.id,
           optionKey: target.optionKey,
         });
-      }
-
-      if (
-        new Set(conditionalJobTargets.map((target) => target.id)).size !==
-        conditionalJobTargets.length
-      ) {
-        throw backendFailure(
-          "VALIDATION_FAILED",
-          "Duplicate conditional share targets are not allowed",
-        );
       }
 
       const targetSnapshot: RunTargetSnapshot = {
@@ -480,12 +807,29 @@ export const createSynthesisService = ({
               result_parquet: "result.parquet",
               report_json: "report.json",
               final_count: params.finalCount,
-              mean_target: {
-                column: TARGET_SCORE_COLUMN,
-                value: mean.value,
-                minimum: meanQuestion.min,
-                maximum: meanQuestion.max,
-              },
+              mean_targets: means.map((mean) => {
+                const question = form.questions.find(
+                  (candidate) => candidate.id === mean.questionId,
+                );
+                if (!question || question.kind !== "ordinal") {
+                  throw backendFailure("INTERNAL", "Validated mean question was lost");
+                }
+                const column = plan.targetScoreColumns.get(mean.questionId as QuestionId);
+                if (!column) {
+                  throw backendFailure(
+                    "INTERNAL",
+                    "Mean question is unavailable in the synthesis table",
+                  );
+                }
+                return {
+                  id: String(mean.id),
+                  column,
+                  value: mean.value,
+                  minimum: question.min,
+                  maximum: question.max,
+                };
+              }),
+              count_targets: countJobTargets,
               share_targets: shareJobTargets,
               conditional_share_targets: conditionalJobTargets,
               seed: params.seed,
@@ -507,7 +851,10 @@ export const createSynthesisService = ({
 
         const report = await engine.synthesize(operationId, jobPath, reportPath);
         if (report.status === "infeasible") {
-          return { status: "infeasible", issues: report.issues };
+          return {
+            status: "infeasible",
+            issues: report.issues.map((raw) => normalizeEngineIssue(raw, frozenTargets)),
+          };
         }
 
         const appendOnlyRows = await readResultParquet(resultPath, form, scope.responses, plan);
@@ -521,7 +868,7 @@ export const createSynthesisService = ({
           );
         }
 
-        const editPlan = availableEditPlan(report);
+        const editPlan = availableEditPlan(report, frozenTargets);
         if (editPlan) {
           const replacementRows = await readResultParquet(
             replacementResultPath,
@@ -542,6 +889,16 @@ export const createSynthesisService = ({
           ) {
             throw backendFailure("INTERNAL", "Replacement preview does not match its EditPlan");
           }
+          if (
+            editPlan.replacementOutcome.targets.some(
+              (target) => target.kind === "count" && !target.exact,
+            )
+          ) {
+            throw backendFailure(
+              "INTERNAL",
+              "Replacement plan does not satisfy exact count targets",
+            );
+          }
 
           const planId = randomUUID();
           pendingPlans.set(planId, {
@@ -559,16 +916,28 @@ export const createSynthesisService = ({
           return { status: "approval_required", planId, editPlan };
         }
 
-        return persistCompletedRun(db, {
-          projectId: project.id,
-          sourceRevisionId: revision.id,
-          scope: persistedScope(scope),
-          finalResponseCount: report.finalCount,
-          target: targetSnapshot,
-          seed: params.seed,
-          engineReport: report,
-          rows: appendOnlyRows,
-        });
+        const outcome = targetSetOutcome(report.achieved, frozenTargets);
+        if (outcome.targets.some((target) => target.kind === "count" && !target.exact)) {
+          throw backendFailure("INTERNAL", "Successful synthesis returned an inexact count target");
+        }
+        const engineReport: Record<string, unknown> = {
+          ...jsonRecord(report),
+          achieved: outcome,
+        };
+        return persistCompletedRun(
+          db,
+          {
+            projectId: project.id,
+            sourceRevisionId: revision.id,
+            scope: persistedScope(scope),
+            finalResponseCount: report.finalCount,
+            target: targetSnapshot,
+            seed: params.seed,
+            engineReport,
+            rows: appendOnlyRows,
+          },
+          outcome,
+        );
       } finally {
         await rm(workDir, { recursive: true, force: true });
       }
@@ -579,15 +948,29 @@ export const createSynthesisService = ({
       if (!pending) {
         throw backendFailure("NOT_FOUND", "EditPlan is no longer available");
       }
+      if (
+        choice === "append_only" &&
+        pending.editPlan.appendOnlyOutcome.targets.some(
+          (target) => target.kind === "count" && !target.exact,
+        )
+      ) {
+        throw backendFailure(
+          "TARGET_CONFLICT",
+          "Append-only cannot be approved because count targets are exact; choose replacement",
+        );
+      }
 
       const useReplacement = choice === "replacement";
+      const selectedOutcome = useReplacement
+        ? pending.editPlan.replacementOutcome
+        : pending.editPlan.appendOnlyOutcome;
       const rawEditPlan = jsonRecord(pending.engineReport.editPlan);
       const rawReplacementOutcome = jsonRecord(rawEditPlan.replacementOutcome);
       const engineReport: Record<string, unknown> = {
         ...pending.engineReport,
+        achieved: selectedOutcome,
         ...(useReplacement
           ? {
-              achieved: pending.editPlan.replacementOutcome,
               quality:
                 typeof rawReplacementOutcome.quality === "object" &&
                 rawReplacementOutcome.quality !== null
@@ -607,16 +990,20 @@ export const createSynthesisService = ({
         : pending.targetSnapshot;
       const rows = useReplacement ? pending.replacementRows : pending.appendOnlyRows;
 
-      const result = persistCompletedRun(db, {
-        projectId: pending.projectId,
-        sourceRevisionId: pending.sourceRevisionId,
-        scope: pending.scope,
-        finalResponseCount: rows.length,
-        target: targetSnapshot,
-        seed: pending.seed,
-        engineReport,
-        rows,
-      });
+      const result = persistCompletedRun(
+        db,
+        {
+          projectId: pending.projectId,
+          sourceRevisionId: pending.sourceRevisionId,
+          scope: pending.scope,
+          finalResponseCount: rows.length,
+          target: targetSnapshot,
+          seed: pending.seed,
+          engineReport,
+          rows,
+        },
+        selectedOutcome,
+      );
       pendingPlans.delete(planId);
       return {
         ...result,
@@ -629,12 +1016,16 @@ export const createSynthesisService = ({
     getRun: async (runId) => {
       const run = getRunRecord(db, runId);
       if (!run) throw backendFailure("NOT_FOUND", "Run was not found");
+      const targetSnapshot = JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"];
+      const validation = jsonRecord(JSON.parse(run.engineReportJson) as unknown);
+      const outcome = targetSetOutcome(validation.achieved, targetSnapshot.targets);
       return {
         runId: run.id,
         projectId: run.projectId,
         sourceRevisionId: run.sourceRevisionId,
-        targetSnapshot: JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"],
-        validation: jsonRecord(JSON.parse(run.engineReportJson) as unknown),
+        targetSnapshot,
+        outcome,
+        validation,
         finalResponseCount: run.finalResponseCount,
         appVersion: run.appVersion,
         engineVersion: run.engineVersion,

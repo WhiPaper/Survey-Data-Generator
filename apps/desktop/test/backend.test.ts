@@ -112,7 +112,7 @@ describe("typed v2 desktop backend client", () => {
     });
   });
 
-  it("exposes ValueGroup and M7 synthesis RPCs", async () => {
+  it("exposes ValueGroup and target synthesis RPCs", async () => {
     const invoke = vi.fn(async (_command: string, args?: Record<string, unknown>) => {
       const request = parseRpcRequest(JSON.parse(String(args?.request)) as unknown);
       if (request.method === "valueGroups.list") return [];
@@ -133,8 +133,9 @@ describe("typed v2 desktop backend client", () => {
           sourceScope: { kind: "all" },
           targets: expect.arrayContaining([
             {
+              id: "t-conditional",
               kind: "conditional_share",
-              valueGroupId: "group-1",
+              population: { kind: "value_group", valueGroupId: "group-1" },
               questionId: "q-checkbox",
               optionKey: "music",
               value: 0.6,
@@ -154,18 +155,28 @@ describe("typed v2 desktop backend client", () => {
               },
             ],
             appendOnlyOutcome: {
-              mean: 4.2,
-              absoluteError: 0.1,
-              exact: false,
-              shares: [],
-              conditionalShares: [],
+              targets: [
+                {
+                  targetId: "t-mean",
+                  kind: "mean",
+                  requested: 4.3,
+                  achieved: 4.2,
+                  absoluteError: 0.1,
+                  exact: false,
+                },
+              ],
             },
             replacementOutcome: {
-              mean: 4.3,
-              absoluteError: 0,
-              exact: true,
-              shares: [],
-              conditionalShares: [],
+              targets: [
+                {
+                  targetId: "t-mean",
+                  kind: "mean",
+                  requested: 4.3,
+                  achieved: 4.3,
+                  absoluteError: 0,
+                  exact: true,
+                },
+              ],
             },
           },
         };
@@ -177,6 +188,18 @@ describe("typed v2 desktop backend client", () => {
           runId: "run-1",
           syntheticResponseCount: 40,
           finalResponseCount: 120,
+          outcome: {
+            targets: [
+              {
+                targetId: "t-mean",
+                kind: "mean",
+                requested: 4.3,
+                achieved: 4.3,
+                absoluteError: 0,
+                exact: true,
+              },
+            ],
+          },
         };
       }
       throw new Error(`Unexpected method ${request.method}`);
@@ -201,11 +224,17 @@ describe("typed v2 desktop backend client", () => {
           finalCount: 120,
           sourceScope: { kind: "all" },
           targets: [
-            { kind: "mean", questionId: "q-score", value: 4.3 },
-            { kind: "share", valueGroupId: "group-1", value: 0.35 },
+            { id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 4.3 },
             {
+              id: "t-share" as never,
+              kind: "share",
+              subject: { kind: "value_group", valueGroupId: "group-1" },
+              value: 0.35,
+            },
+            {
+              id: "t-conditional" as never,
               kind: "conditional_share",
-              valueGroupId: "group-1",
+              population: { kind: "value_group", valueGroupId: "group-1" },
               questionId: "q-checkbox",
               optionKey: "music",
               value: 0.6,
@@ -218,6 +247,10 @@ describe("typed v2 desktop backend client", () => {
     ).resolves.toMatchObject({ status: "approval_required", planId: "plan-1" });
     await expect(
       resolveSynthesisEditPlan("plan-1", "replacement", { invoke }),
-    ).resolves.toMatchObject({ status: "success", runId: "run-1" });
+    ).resolves.toMatchObject({
+      status: "success",
+      runId: "run-1",
+      outcome: { targets: [{ targetId: "t-mean", achieved: 4.3, exact: true }] },
+    });
   });
 });

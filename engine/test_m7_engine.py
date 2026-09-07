@@ -36,12 +36,12 @@ class M7EngineEditPlanTest(unittest.TestCase):
                         "result_parquet": result_path.name,
                         "report_json": report_path.name,
                         "final_count": 4,
-                        "mean_target": {
+                        "mean_targets": [{"id": "mean",
                             "column": "score",
                             "value": 3.0,
                             "minimum": 1,
                             "maximum": 5,
-                        },
+                        }],
                         "seed": 7,
                         "candidate_pool_size": 4,
                     }

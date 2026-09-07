@@ -103,6 +103,14 @@ export const valueGroups = sqliteTable(
   (table) => [index("value_groups_project_idx").on(table.projectId)],
 );
 
+export const targetDrafts = sqliteTable("target_drafts", {
+  projectId: text("project_id")
+    .primaryKey()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  draftJson: text("draft_json").notNull(),
+  updatedAtMs: integer("updated_at_ms").notNull(),
+});
+
 export const runs = sqliteTable(
   "runs",
   {
@@ -163,6 +171,7 @@ export const persistenceSchema = {
   sourceRevisions,
   sourceResponses,
   valueGroups,
+  targetDrafts,
   runs,
   runRows,
   preferences,
