@@ -476,6 +476,12 @@ describe("v2 RPC contracts", () => {
           },
         },
         outcome,
+        diagnostics: {
+          sourceResponseCount: 80,
+          syntheticResponseCount: 40,
+          replacementCount: 0,
+          structuralValidation: "passed",
+        },
         validation: {},
         finalResponseCount: 120,
         appVersion: VERSIONS.appVersion,
