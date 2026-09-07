@@ -56,6 +56,23 @@ The backend is authoritative for these values. The renderer must not rebuild his
 
 Historical baseline computation must remain valid after source refreshes, ValueGroup edits/deletions, draft changes, and app restarts because the Run points at immutable source evidence and freezes the target/group definition it used.
 
+## Frozen historical target intent
+
+A Run created from the Question Explorer draft must preserve the target intent that the user actually entered, not only the absolute value resolved for synthesis.
+
+For a newly persisted Run, each frozen target may therefore carry the original `TargetIntent` used by `targets.draft.start`:
+
+- `absolute`
+- `count_delta`
+- `percentage_point_delta`
+- `relative_percent_delta`
+
+The synthesis engine still receives the resolved absolute target value. The frozen intent is presentation evidence for the historical Result and must not alter solver/generation semantics.
+
+Direct `synthesis.start` callers do not have a separate draft intent, so their frozen targets may omit this field. Existing persisted Runs from before this contract also omit it. `runs.get` and the renderer must remain backward compatible and fall back to displaying the resolved goal when a frozen intent is absent.
+
+A historical Result must never recover intent by looking at the Project's current target draft. After app restart, source refresh, or later target edits, a Run that was created with `+10%p`, `+20%`, or `+15명` should still display that original change intent together with the frozen resolved goal.
+
 ## `runs.get` historical target presentation
 
 A historical Result must also keep the user-facing target identity that belonged to the Run's source revision. The renderer must not look up a historical target's question or option label from the Project's current Form snapshot.
@@ -93,6 +110,7 @@ Raw engine keys remain internal. The Result UI should present these diagnostics 
 
 - no renderer-side denominator reconstruction
 - no renderer-side historical Form label lookup
+- no recovery of historical intent from the current Project draft
 - no ordinal targeting by individual score
 - no mutation of historical Runs
 - no raw engine validation object in user-facing UI
