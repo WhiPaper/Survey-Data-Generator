@@ -1,0 +1,182 @@
+name: ci-historical-presentation
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  wire-and-check:
+    if: github.head_ref == 'backend/run-historical-presentation'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pnpm install --frozen-lockfile
+      - name: Wire historical Run presentation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected exactly one match in {path}, found {count}")
+              file.write_text(text.replace(old, new, 1))
+
+          protocol = "packages/contracts/src/protocol.ts"
+          replace_once(
+              protocol,
+              'export const RunResultDiagnosticsSchema = z\n',
+              '''export const RunTargetPresentationSchema = z\n  .object({\n    targetId: TargetIdSchema,\n    questionId: z.string().min(1),\n    questionTitle: z.string().min(1),\n    subjectLabel: z.string().min(1),\n    populationLabel: z.string().min(1).optional(),\n  })\n  .strict();\nexport type RunTargetPresentation = z.infer<typeof RunTargetPresentationSchema>;\n\nexport const RunResultDiagnosticsSchema = z\n''',
+          )
+          replace_once(
+              protocol,
+              '    baselines: z.array(RunTargetBaselineSchema),\n    diagnostics: RunResultDiagnosticsSchema,\n',
+              '    baselines: z.array(RunTargetBaselineSchema),\n    presentations: z.array(RunTargetPresentationSchema),\n    diagnostics: RunResultDiagnosticsSchema,\n',
+          )
+
+          synthesis = "apps/desktop/electron/main/synthesis/service.ts"
+          replace_once(
+              synthesis,
+              '  getRun(runId: string): Promise<RunsGetResult>;\n',
+              '  getRun(runId: string): Promise<Omit<RunsGetResult, "presentations">>;\n',
+          )
+
+          projects = "apps/desktop/electron/main/projects/service.ts"
+          replace_once(
+              projects,
+              '''  FormId,\n  GoogleAccountId,\n  ProjectDetailView,\n  ProjectSummaryView,\n''',
+              '''  FormId,\n  FrozenRunTarget,\n  GoogleAccountId,\n  ProjectDetailView,\n  ProjectSummaryView,\n  RunTargetPresentation,\n''',
+          )
+          replace_once(
+              projects,
+              'import { invalidValueGroupIdsForCurrentSource } from "../value-groups/service";\n',
+              'import { invalidValueGroupIdsForCurrentSource } from "../value-groups/service";\nimport { buildRunTargetPresentations } from "./run-presentation";\n',
+          )
+          replace_once(
+              projects,
+              '''  sourceReview(projectId: string): Promise<{\n    sourceRevisionId: string;\n    invalidValueGroupIds: string[];\n  }>;\n  delete(projectId: string): Promise<void>;\n''',
+              '''  sourceReview(projectId: string): Promise<{\n    sourceRevisionId: string;\n    invalidValueGroupIds: string[];\n  }>;\n  runTargetPresentations(\n    projectId: string,\n    sourceRevisionId: string,\n    targets: readonly FrozenRunTarget[],\n  ): Promise<RunTargetPresentation[]>;\n  delete(projectId: string): Promise<void>;\n''',
+          )
+          replace_once(
+              projects,
+              '''  sourceReview: async (projectId) => invalidValueGroupIdsForCurrentSource(db, projectId),\n\n  delete: async (projectId) => {\n''',
+              '''  sourceReview: async (projectId) => invalidValueGroupIdsForCurrentSource(db, projectId),\n\n  runTargetPresentations: async (projectId, sourceRevisionId, targets) => {\n    const revision = getSourceRevision(db, sourceRevisionId);\n    if (!revision || revision.projectId !== projectId) {\n      throw backendFailure("INTERNAL", "Historical Run source revision is invalid");\n    }\n    const snapshot = db\n      .select()\n      .from(formSnapshots)\n      .where(eq(formSnapshots.id, revision.formSnapshotId))\n      .get();\n    if (!snapshot) throw backendFailure("INTERNAL", "Historical Run Form snapshot is missing");\n    return buildRunTargetPresentations(parseForm(snapshot.schemaJson), targets);\n  },\n\n  delete: async (projectId) => {\n''',
+          )
+
+          backend = "apps/desktop/electron/main/backend.ts"
+          replace_once(
+              backend,
+              '''    case "runs.get":\n      return requireSynthesis(services).getRun((request.params as { runId: string }).runId);\n''',
+              '''    case "runs.get": {\n      const run = await requireSynthesis(services).getRun(\n        (request.params as { runId: string }).runId,\n      );\n      const presentations = await requireProjects(services).runTargetPresentations(\n        run.projectId,\n        run.sourceRevisionId,\n        run.targetSnapshot.targets,\n      );\n      return { ...run, presentations };\n    }\n''',
+          )
+
+          result_view = "apps/desktop/src/QuestionExplorerPanel/ResultView.tsx"
+          replace_once(result_view, '  FrozenRunTarget,\n', '')
+          replace_once(
+              result_view,
+              'import { runBaselineValue } from "./runBaseline";\n',
+              'import { runBaselineValue } from "./runBaseline";\nimport { runPresentationLabel } from "./runPresentation";\n',
+          )
+          replace_once(
+              result_view,
+              '''import {\n  intentLabel,\n  outcomeValue,\n  questionIdForTarget,\n  targetLabel,\n  type QuestionView,\n} from "./model";\n''',
+              '''import { intentLabel, outcomeValue, type QuestionView } from "./model";\n''',
+          )
+          start = result_view
+          text = Path(start).read_text()
+          block_start = text.index('const frozenTargetLabel = (')
+          block_end = text.index('export function ResultView', block_start)
+          Path(start).write_text(text[:block_start] + text[block_end:])
+          replace_once(
+              result_view,
+              '''  groups,\n  exportBusy,\n''',
+              '''  exportBusy,\n''',
+          )
+          replace_once(
+              result_view,
+              '''          const target = context.draft?.targets.find(\n            (candidate) => String(candidate.id) === String(outcome.targetId),\n          );\n          const frozenTarget = context.run.targetSnapshot.targets.find(\n            (candidate) => String(candidate.id) === String(outcome.targetId),\n          );\n          const baseline = context.run.baselines.find(\n            (candidate) => String(candidate.targetId) === String(outcome.targetId),\n          );\n          const label = frozenTarget\n            ? frozenTargetLabel(frozenTarget, questions)\n            : target\n              ? targetLabel(target, questions, groups)\n              : "목표";\n''',
+              '''          const baseline = context.run.baselines.find(\n            (candidate) => String(candidate.targetId) === String(outcome.targetId),\n          );\n          const presentation = context.run.presentations.find(\n            (candidate) => String(candidate.targetId) === String(outcome.targetId),\n          );\n          const label = runPresentationLabel(presentation);\n''',
+          )
+          replace_once(
+              result_view,
+              '''          const questionId = frozenTarget\n            ? frozenQuestionId(frozenTarget)\n            : target\n              ? questionIdForTarget(target, groups)\n              : null;\n''',
+              '''          const questionId =\n            presentation && questions.some((question) => question.id === presentation.questionId)\n              ? presentation.questionId\n              : null;\n''',
+          )
+
+          protocol_test = "packages/contracts/test/protocol.test.ts"
+          replace_once(
+              protocol_test,
+              '''        baselines: [\n          { targetId: "t-mean", kind: "mean", mean: 4.1, denominatorCount: 80 },\n          {\n            targetId: "t-share",\n            kind: "share",\n            count: 28,\n            denominatorCount: 80,\n            share: 0.35,\n          },\n          {\n            targetId: "t-conditional",\n            kind: "conditional_share",\n            count: 12,\n            denominatorCount: 20,\n            share: 0.6,\n          },\n        ],\n        diagnostics: {\n''',
+              '''        baselines: [\n          { targetId: "t-mean", kind: "mean", mean: 4.1, denominatorCount: 80 },\n          {\n            targetId: "t-share",\n            kind: "share",\n            count: 28,\n            denominatorCount: 80,\n            share: 0.35,\n          },\n          {\n            targetId: "t-conditional",\n            kind: "conditional_share",\n            count: 12,\n            denominatorCount: 20,\n            share: 0.6,\n          },\n        ],\n        presentations: [\n          {\n            targetId: "t-mean",\n            questionId: "q-score",\n            questionTitle: "만족도",\n            subjectLabel: "만족도",\n          },\n          {\n            targetId: "t-share",\n            questionId: "q-choice",\n            questionTitle: "관심 분야",\n            subjectLabel: "행사 관심",\n          },\n          {\n            targetId: "t-conditional",\n            questionId: "q-checkbox",\n            questionTitle: "선호 채널",\n            subjectLabel: "음악",\n            populationLabel: "행사 관심",\n          },\n        ],\n        diagnostics: {\n''',
+          )
+          replace_once(
+              protocol_test,
+              '''      baselines: [\n        { targetId: "t-mean", kind: "mean", mean: 4.1, denominatorCount: 80 },\n        {\n          targetId: "t-share",\n          kind: "share",\n          count: 28,\n          denominatorCount: 80,\n          share: 0.35,\n        },\n        {\n          targetId: "t-conditional",\n          kind: "conditional_share",\n          count: 12,\n          denominatorCount: 20,\n          share: 0.6,\n        },\n      ],\n      targetSnapshot: { editPlan: { replacementCount: 1 } },\n''',
+              '''      baselines: [\n        { targetId: "t-mean", kind: "mean", mean: 4.1, denominatorCount: 80 },\n        {\n          targetId: "t-share",\n          kind: "share",\n          count: 28,\n          denominatorCount: 80,\n          share: 0.35,\n        },\n        {\n          targetId: "t-conditional",\n          kind: "conditional_share",\n          count: 12,\n          denominatorCount: 20,\n          share: 0.6,\n        },\n      ],\n      presentations: [\n        {\n          targetId: "t-mean",\n          questionId: "q-score",\n          questionTitle: "만족도",\n          subjectLabel: "만족도",\n        },\n        {\n          targetId: "t-share",\n          questionId: "q-choice",\n          questionTitle: "관심 분야",\n          subjectLabel: "행사 관심",\n        },\n        {\n          targetId: "t-conditional",\n          questionId: "q-checkbox",\n          questionTitle: "선호 채널",\n          subjectLabel: "음악",\n          populationLabel: "행사 관심",\n        },\n      ],\n      targetSnapshot: { editPlan: { replacementCount: 1 } },\n''',
+          )
+
+          backend_test = "apps/desktop/test/electron-backend.test.ts"
+          replace_once(
+              backend_test,
+              '''      sourceReview: async (_projectId: string) => ({\n        sourceRevisionId: "revision-1",\n        invalidValueGroupIds: [],\n      }),\n      delete: remove,\n''',
+              '''      sourceReview: async (_projectId: string) => ({\n        sourceRevisionId: "revision-1",\n        invalidValueGroupIds: [],\n      }),\n      runTargetPresentations: vi.fn(async () => []),\n      delete: remove,\n''',
+          )
+          replace_once(
+              backend_test,
+              '''      sourceReview,\n      delete: async (_projectId: string) => undefined,\n''',
+              '''      sourceReview,\n      runTargetPresentations: vi.fn(async () => []),\n      delete: async (_projectId: string) => undefined,\n''',
+          )
+          insert = '''\n  it("composes runs.get with presentation from the historical Project source revision", async () => {\n    const frozenTarget = {\n      id: "t-mean" as never,\n      kind: "mean" as const,\n      questionId: "q-score",\n      value: 4.3,\n    };\n    const run = {\n      runId: "run-1",\n      projectId: "project-1",\n      sourceRevisionId: "revision-1",\n      targetSnapshot: {\n        finalCount: 3,\n        sourceScope: { kind: "all" as const },\n        targets: [frozenTarget],\n      },\n      outcome: {\n        targets: [\n          {\n            targetId: "t-mean" as never,\n            kind: "mean" as const,\n            requested: 4.3,\n            achieved: 4.3,\n            absoluteError: 0,\n            exact: true,\n          },\n        ],\n      },\n      baselines: [{ targetId: "t-mean" as never, kind: "mean" as const, mean: 4, denominatorCount: 2 }],\n      diagnostics: {\n        sourceResponseCount: 2,\n        syntheticResponseCount: 1,\n        replacementCount: 0,\n        structuralValidation: "passed" as const,\n      },\n      validation: {},\n      finalResponseCount: 3,\n      appVersion: "0.1.0",\n      engineVersion: 1,\n    };\n    const presentation = {\n      targetId: "t-mean" as never,\n      questionId: "q-score",\n      questionTitle: "생성 당시 만족도",\n      subjectLabel: "생성 당시 만족도",\n    };\n    const runTargetPresentations = vi.fn(async () => [presentation]);\n    const projects = {\n      list: async () => [],\n      get: async (_projectId: string) => null,\n      sourceReview: async (_projectId: string) => ({\n        sourceRevisionId: "revision-1",\n        invalidValueGroupIds: [],\n      }),\n      runTargetPresentations,\n      delete: async (_projectId: string) => undefined,\n    };\n    const synthesis = {\n      start: vi.fn(),\n      resolveEditPlan: vi.fn(),\n      cancel: vi.fn(),\n      listRuns: vi.fn(),\n      getRun: vi.fn(async () => run),\n    };\n\n    await expect(\n      handleBackendCall(serialize(createRequest("test_run", "runs.get", { runId: "run-1" })), {\n        projects,\n        synthesis,\n      }),\n    ).resolves.toEqual({ ...run, presentations: [presentation] });\n    expect(runTargetPresentations).toHaveBeenCalledWith(\n      "project-1",\n      "revision-1",\n      [frozenTarget],\n    );\n  });\n'''
+          text = Path(backend_test).read_text()
+          marker = '\n  it("routes ValueGroup creation to the ValueGroup service", async () => {'
+          if text.count(marker) != 1:
+              raise SystemExit("backend test insertion marker missing")
+          Path(backend_test).write_text(text.replace(marker, insert + marker, 1))
+          PY
+          pnpm exec prettier --write \
+            packages/contracts/src/protocol.ts \
+            packages/contracts/test/protocol.test.ts \
+            apps/desktop/electron/main/synthesis/service.ts \
+            apps/desktop/electron/main/projects/service.ts \
+            apps/desktop/electron/main/projects/run-presentation.ts \
+            apps/desktop/electron/main/backend.ts \
+            apps/desktop/src/QuestionExplorerPanel/ResultView.tsx \
+            apps/desktop/src/QuestionExplorerPanel/runPresentation.ts \
+            apps/desktop/test/electron-backend.test.ts \
+            apps/desktop/test/run-presentation.test.ts \
+            apps/desktop/test/run-presentation-renderer.test.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add packages/contracts/src/protocol.ts packages/contracts/test/protocol.test.ts \
+              apps/desktop/electron/main/synthesis/service.ts \
+              apps/desktop/electron/main/projects/service.ts \
+              apps/desktop/electron/main/projects/run-presentation.ts \
+              apps/desktop/electron/main/backend.ts \
+              apps/desktop/src/QuestionExplorerPanel/ResultView.tsx \
+              apps/desktop/src/QuestionExplorerPanel/runPresentation.ts \
+              apps/desktop/test/electron-backend.test.ts \
+              apps/desktop/test/run-presentation.test.ts \
+              apps/desktop/test/run-presentation-renderer.test.ts
+            git commit -m "feat(result): freeze historical target presentation"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
+      - run: pnpm run check
+      - run: python -m pip install -r engine/requirements.txt
+      - run: pnpm run engine:test
