@@ -20,8 +20,12 @@ import { createSynthesisService } from "./synthesis/service";
 import { createTargetService } from "./targets/service";
 import { schedulePrivateGitHubUpdateCheck } from "./updater/github-release-updater";
 import { createValueGroupService } from "./value-groups/service";
+import { createWindowCloseGate } from "./window-close-gate";
 
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
+const WINDOW_CLOSE_REQUEST_CHANNEL = "survey-synth:window-close-request";
+const WINDOW_CLOSE_RESPONSE_CHANNEL = "survey-synth:window-close-response";
+const closeGates = new WeakMap<BrowserWindow, ReturnType<typeof createWindowCloseGate>>();
 const packagedSmoke = app.isPackaged && process.env.SURVEY_SYNTH_PACKAGED_SMOKE === "1";
 const packagedSmokeUserData = process.env.SURVEY_SYNTH_PACKAGED_SMOKE_DIR?.trim();
 if (packagedSmoke && packagedSmokeUserData) app.setPath("userData", packagedSmokeUserData);
@@ -44,12 +48,32 @@ const createWindow = (): BrowserWindow => {
     },
   });
 
+  const closeGate = createWindowCloseGate();
+  closeGates.set(window, closeGate);
+  window.on("close", (event) => {
+    if (window.webContents.isDestroyed()) return;
+    const decision = closeGate.requestClose();
+    if (decision === "allow") return;
+    event.preventDefault();
+    if (decision === "prevent_and_request") {
+      window.webContents.send(WINDOW_CLOSE_REQUEST_CHANNEL);
+    }
+  });
+
   window.once("ready-to-show", () => window.show());
   const devServerUrl = process.env.ELECTRON_RENDERER_URL;
   if (devServerUrl) void window.loadURL(devServerUrl);
   else void window.loadFile(join(__dirname, "../renderer/index.html"));
   return window;
 };
+
+ipcMain.on(WINDOW_CLOSE_RESPONSE_CHANNEL, (event, canClose: unknown) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return;
+  const closeGate = closeGates.get(window);
+  if (!closeGate) return;
+  if (closeGate.resolve(canClose === true) && !window.isDestroyed()) window.close();
+});
 
 ipcMain.handle(BACKEND_CALL_CHANNEL, async (_event, serializedRequest: string) => {
   try {

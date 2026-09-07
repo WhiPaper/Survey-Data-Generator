@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+import { createBeforeCloseRegistry, type BeforeCloseListener } from "./close-request-registry";
+
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
+const WINDOW_CLOSE_REQUEST_CHANNEL = "survey-synth:window-close-request";
+const WINDOW_CLOSE_RESPONSE_CHANNEL = "survey-synth:window-close-response";
 
 type BackendIpcResult = { ok: true; result: unknown } | { ok: false; error: unknown };
 
@@ -10,4 +14,15 @@ const backendCall = async (request: string): Promise<unknown> => {
   throw response.error;
 };
 
-contextBridge.exposeInMainWorld("surveySynth", { backendCall });
+const beforeCloseRegistry = createBeforeCloseRegistry();
+
+ipcRenderer.on(WINDOW_CLOSE_REQUEST_CHANNEL, () => {
+  void beforeCloseRegistry
+    .resolve()
+    .then((canClose) => ipcRenderer.send(WINDOW_CLOSE_RESPONSE_CHANNEL, canClose));
+});
+
+const onBeforeClose = (listener: BeforeCloseListener): (() => void) =>
+  beforeCloseRegistry.setListener(listener);
+
+contextBridge.exposeInMainWorld("surveySynth", { backendCall, onBeforeClose });

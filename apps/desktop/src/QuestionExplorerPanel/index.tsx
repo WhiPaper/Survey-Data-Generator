@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
   EditPlanPreview,
@@ -56,6 +56,7 @@ import {
 } from "@/components/ui/sheet";
 import { ResultView, type RunContext } from "./ResultView";
 import { TextInspector } from "./TextInspector";
+import { createDraftSaveCoordinator } from "./draftSaveCoordinator";
 import {
   conditionalProfileMetric,
   conditionalTarget,
@@ -134,9 +135,11 @@ const migratedGroupTarget = (
 export function QuestionExplorerPanel({
   project,
   sourceReview,
+  onDraftFlushReady,
 }: {
   project: ProjectDetailView;
   sourceReview?: ProjectSourceReviewResult | null;
+  onDraftFlushReady?: (flush: (() => Promise<void>) | null) => void;
 }) {
   const questions = useMemo(() => projectQuestions(project), [project]);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("setup");
@@ -179,6 +182,10 @@ export function QuestionExplorerPanel({
   const [exportBusy, setExportBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const draftSaveCoordinator = useMemo(
+    () => createDraftSaveCoordinator(saveTargetDraft),
+    [project.id],
+  );
 
   const selectedQuestion =
     questions.find((question) => question.id === selectedQuestionId) ?? questions[0];
@@ -257,6 +264,7 @@ export function QuestionExplorerPanel({
               seed: 42,
               targets: [],
             };
+        draftSaveCoordinator.setLatest(nextDraft, saved !== null);
         setDraft(nextDraft);
         setGroups(nextGroups);
         setRunSummaries(nextRunSummaries);
@@ -271,7 +279,7 @@ export function QuestionExplorerPanel({
     return () => {
       active = false;
     };
-  }, [project.currentSourceRevisionId, project.id, project.responseCount]);
+  }, [draftSaveCoordinator, project.currentSourceRevisionId, project.id, project.responseCount]);
 
   useEffect(() => {
     setSourceTargetIssues(sourceReview?.targetIssues ?? []);
@@ -290,13 +298,25 @@ export function QuestionExplorerPanel({
 
   useEffect(() => {
     if (!loaded) return;
+    draftSaveCoordinator.setLatest(draft);
     const timer = window.setTimeout(() => {
-      void saveTargetDraft(draft).catch((cause: unknown) => {
+      void draftSaveCoordinator.flush().catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : "변경사항을 저장하지 못했습니다.");
       });
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [draft, loaded]);
+  }, [draft, draftSaveCoordinator, loaded]);
+
+  const flushDraft = useCallback(async (): Promise<void> => {
+    if (!loaded) return;
+    draftSaveCoordinator.setLatest(draft);
+    await draftSaveCoordinator.flush();
+  }, [draft, draftSaveCoordinator, loaded]);
+
+  useEffect(() => {
+    onDraftFlushReady?.(flushDraft);
+    return () => onDraftFlushReady?.(null);
+  }, [flushDraft, onDraftFlushReady]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -659,7 +679,13 @@ export function QuestionExplorerPanel({
             migratedGroupTarget(target, previous.id, created!.id),
           ),
         };
-        await saveTargetDraft(nextDraft);
+        draftSaveCoordinator.setLatest(nextDraft);
+        try {
+          await draftSaveCoordinator.flush();
+        } catch (cause: unknown) {
+          draftSaveCoordinator.setLatest(draft);
+          throw cause;
+        }
         migrated = true;
         setDraft(nextDraft);
         await deleteValueGroup(previous.id);
@@ -780,7 +806,7 @@ export function QuestionExplorerPanel({
     setIssues([]);
     setEditPlan(null);
     try {
-      await saveTargetDraft(draft);
+      await flushDraft();
       const result = await startTargetDraft(project.id, `ui-generate-${Date.now()}`);
       if (result.status === "success") {
         await recordRun(result.runId);
