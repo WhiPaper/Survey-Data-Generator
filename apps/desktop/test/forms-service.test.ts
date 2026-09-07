@@ -153,6 +153,62 @@ describe("Google Forms service", () => {
     });
   });
 
+  it("creates a new immutable source revision only after an explicit successful refresh", async () => {
+    const database = createDatabase();
+    const google = fakeGoogle();
+    let clock = 2_000;
+    const service = createFormsService({
+      auth: fakeAuth(),
+      google,
+      db: database.db,
+      jobs: createJobRegistry(),
+      now: () => (clock += 1_000),
+    });
+
+    const imported = await service.importForm({ formId: "form-1" as FormId });
+    const previousRevisionId = imported.sourceRevisionId;
+    vi.mocked(google.getAllResponses).mockResolvedValue([
+      ...rawResponses,
+      {
+        responseId: "r2",
+        createTime: "2026-08-02T00:00:00.000Z",
+        lastSubmittedTime: "2026-08-02T00:01:00.000Z",
+        answers: { q1: { textAnswers: { answers: [{ value: "4" }] } } },
+      },
+    ]);
+
+    const refreshed = await service.refreshProjectSource({ projectId: imported.projectId });
+    expect(refreshed.previousSourceRevisionId).toBe(previousRevisionId);
+    expect(refreshed.sourceRevisionId).not.toBe(previousRevisionId);
+    expect(getProject(database.db, imported.projectId)?.currentSourceRevisionId).toBe(
+      refreshed.sourceRevisionId,
+    );
+    expect(getSourceRevision(database.db, previousRevisionId)?.responseCount).toBe(1);
+    expect(listSourceResponses(database.db, previousRevisionId)).toHaveLength(1);
+    expect(listSourceResponses(database.db, refreshed.sourceRevisionId)).toHaveLength(2);
+  });
+
+  it("keeps the previous current revision when refresh capture has no responses", async () => {
+    const database = createDatabase();
+    const google = fakeGoogle();
+    const service = createFormsService({
+      auth: fakeAuth(),
+      google,
+      db: database.db,
+      jobs: createJobRegistry(),
+      now: () => 2_000,
+    });
+    const imported = await service.importForm({ formId: "form-1" as FormId });
+    vi.mocked(google.getAllResponses).mockResolvedValue([]);
+
+    await expect(
+      service.refreshProjectSource({ projectId: imported.projectId }),
+    ).rejects.toMatchObject({ backendError: { code: "VALIDATION_FAILED" } });
+    expect(getProject(database.db, imported.projectId)?.currentSourceRevisionId).toBe(
+      imported.sourceRevisionId,
+    );
+  });
+
   it("does not create a project when the selected Form has no responses", async () => {
     const database = createDatabase();
     const service = createFormsService({

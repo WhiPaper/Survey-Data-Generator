@@ -11,7 +11,10 @@ import {
   createSourceRevision,
   upsertGoogleAccount,
 } from "../electron/main/persistence/store";
-import { createValueGroupService } from "../electron/main/value-groups/service";
+import {
+  createValueGroupService,
+  invalidValueGroupIdsForForm,
+} from "../electron/main/value-groups/service";
 
 const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
 const databases: AppDatabase[] = [];
@@ -170,6 +173,44 @@ describe("ValueGroup service", () => {
       name: "야간 행사 언급",
       members: ["야간축제", "불꽃놀이"],
     });
+  });
+
+  it("flags structured groups whose saved option keys disappear without rewriting membership", async () => {
+    const database = setup();
+    const service = createValueGroupService(database.db);
+    const structured = await service.create({
+      projectId: "project-1",
+      questionId: "q-choice",
+      name: "행사 관심",
+      members: ["festival", "performance"],
+    });
+    const text = await service.create({
+      projectId: "project-1",
+      questionId: "q-text",
+      name: "야간 행사",
+      members: ["야간축제"],
+    });
+
+    const refreshedForm = {
+      formId: "form-1",
+      questions: [
+        {
+          ...choiceQuestion,
+          options: choiceQuestion.options.filter((option) => option.key !== "performance"),
+        },
+        textQuestion,
+      ],
+    } as never;
+
+    expect(invalidValueGroupIdsForForm(database.db, "project-1", refreshedForm)).toEqual([
+      structured.id,
+    ]);
+    await expect(service.list("project-1")).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: structured.id, members: ["festival", "performance"] }),
+        expect.objectContaining({ id: text.id, members: ["야간축제"] }),
+      ]),
+    );
   });
 
   it("does not auto-join newly observed text values after a source revision", async () => {

@@ -91,6 +91,28 @@ const groupableQuestion = (form: FormSnapshot, questionId: string): GroupableQue
   return question;
 };
 
+export const invalidValueGroupIdsForForm = (
+  db: SurveyDatabase,
+  projectId: string,
+  form: FormSnapshot,
+): string[] =>
+  db
+    .select()
+    .from(valueGroups)
+    .where(eq(valueGroups.projectId, projectId))
+    .all()
+    .flatMap((row) => {
+      const question = form.questions.find((candidate) => candidate.id === row.questionId);
+      if (!question || (question.kind !== "single_choice" && question.kind !== "text")) {
+        return [row.id];
+      }
+      if (question.kind === "single_choice") {
+        const allowed = new Set(question.options.map((option) => String(option.key)));
+        if (parseMembers(row.membersJson).some((member) => !allowed.has(member))) return [row.id];
+      }
+      return [];
+    });
+
 const response = (value: unknown): NormalizedResponse => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw backendFailure("INTERNAL", "Stored normalized response is invalid");

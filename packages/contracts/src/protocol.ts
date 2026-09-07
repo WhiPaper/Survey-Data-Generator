@@ -143,6 +143,14 @@ export const ProjectDetailSchema = ProjectSummarySchema.extend({
 }).strict();
 export type ProjectDetailView = z.infer<typeof ProjectDetailSchema>;
 
+export const ProjectSourceRefreshParamsSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    operationId: z.string().min(1).max(200).optional(),
+  })
+  .strict();
+export type ProjectSourceRefreshParams = z.infer<typeof ProjectSourceRefreshParamsSchema>;
+
 export const SourceScopeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("all") }).strict(),
   z
@@ -461,6 +469,17 @@ export const TargetsValidateResultSchema = z
   .strict();
 export type TargetsValidateResult = z.infer<typeof TargetsValidateResultSchema>;
 
+export const ProjectSourceRefreshResultSchema = z
+  .object({
+    project: ProjectDetailSchema,
+    previousSourceRevisionId: z.string().min(1),
+    sourceRevisionId: z.string().min(1),
+    invalidValueGroupIds: z.array(z.string().min(1)),
+    targetIssues: z.array(TargetIssueSchema),
+  })
+  .strict();
+export type ProjectSourceRefreshResult = z.infer<typeof ProjectSourceRefreshResultSchema>;
+
 export const SynthesisSuccessResultSchema = z
   .object({
     status: z.literal("success"),
@@ -650,6 +669,10 @@ export interface BackendRpc {
   "forms.import.cancel": { input: FormsImportCancelParams; output: ActionResult };
   "projects.list": { input: z.infer<typeof EmptyParamsSchema>; output: ProjectSummaryView[] };
   "projects.get": { input: z.infer<typeof ProjectParamsSchema>; output: ProjectDetailView | null };
+  "projects.refreshSource": {
+    input: ProjectSourceRefreshParams;
+    output: ProjectSourceRefreshResult;
+  };
   "projects.delete": { input: z.infer<typeof ProjectParamsSchema>; output: ActionResult };
   "valueGroups.list": {
     input: z.infer<typeof ValueGroupsListParamsSchema>;
@@ -709,6 +732,7 @@ const rpcMethods = [
   "forms.import.cancel",
   "projects.list",
   "projects.get",
+  "projects.refreshSource",
   "projects.delete",
   "valueGroups.list",
   "valueGroups.values",
@@ -755,6 +779,7 @@ const rpcParamSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "forms.import.cancel": FormsImportCancelParamsSchema,
   "projects.list": EmptyParamsSchema,
   "projects.get": ProjectParamsSchema,
+  "projects.refreshSource": ProjectSourceRefreshParamsSchema,
   "projects.delete": ProjectParamsSchema,
   "valueGroups.list": ValueGroupsListParamsSchema,
   "valueGroups.values": ValueGroupsValuesParamsSchema,
@@ -788,6 +813,7 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "forms.import.cancel": ActionResultSchema,
   "projects.list": z.array(ProjectSummarySchema),
   "projects.get": ProjectDetailSchema.nullable(),
+  "projects.refreshSource": ProjectSourceRefreshResultSchema,
   "projects.delete": ActionResultSchema,
   "valueGroups.list": z.array(ValueGroupSchema),
   "valueGroups.values": z.array(ValueGroupObservedValueSchema),

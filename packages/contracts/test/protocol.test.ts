@@ -264,6 +264,50 @@ describe("v2 RPC contracts", () => {
     ).toMatchObject({ status: "success", outcome: { targets: [{ targetId: "t-mean" }] } });
   });
 
+  it("parses explicit Project source refresh requests and review diagnostics", () => {
+    expect(
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "refresh-source",
+        method: "projects.refreshSource",
+        params: { projectId: "project-1", operationId: "refresh-1" },
+      }),
+    ).toMatchObject({ method: "projects.refreshSource" });
+
+    expect(
+      parseRpcResult("projects.refreshSource", {
+        project: {
+          id: "project-1",
+          googleAccountId: "account-1",
+          googleFormId: "form-1",
+          name: "Survey",
+          currentSourceRevisionId: "revision-2",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          updatedAt: "2026-09-07T00:00:00.000Z",
+          responseCount: 10,
+          questionCount: 3,
+          form: { formId: "form-1", questions: [] },
+          responseTimestampRange: null,
+        },
+        previousSourceRevisionId: "revision-1",
+        sourceRevisionId: "revision-2",
+        invalidValueGroupIds: ["group-1"],
+        targetIssues: [
+          {
+            targetIds: ["target-1"],
+            code: "invalid_subject",
+            message: "Target subject is not valid for this Form",
+          },
+        ],
+      }),
+    ).toMatchObject({
+      sourceRevisionId: "revision-2",
+      invalidValueGroupIds: ["group-1"],
+      targetIssues: [{ code: "invalid_subject" }],
+    });
+  });
+
   it("accepts authoritative Question Explorer profile metrics and Run summaries", () => {
     expect(
       parseRpcResult("targets.profile", {
