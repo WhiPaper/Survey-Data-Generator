@@ -297,7 +297,11 @@ const confirmedNotReachedQuestions = (
   );
   const transitions = new Map(
     form.logic.transitions.map(
-      (transition) => [`${String(transition.sourceQuestionId)}\0${String(transition.optionKey)}`, transition] as const,
+      (transition) =>
+        [
+          `${String(transition.sourceQuestionId)}\0${String(transition.optionKey)}`,
+          transition,
+        ] as const,
     ),
   );
   const notReachedSections = new Set<string>();
