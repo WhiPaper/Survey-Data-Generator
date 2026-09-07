@@ -35,6 +35,26 @@ If Google fetch, normalization, account verification, or persistence fails, the 
 
 A source with zero responses is rejected in this slice. No new revision is created and the previous current revision remains active.
 
+### Completion boundary after apply
+
+Source capture/apply failure and review-diagnostic failure are different outcomes.
+
+If a refresh request reports an error after the new SourceRevision has already become the Project's current revision, the renderer must not describe the source update itself as failed or attempt to roll the Project back.
+
+The renderer may recover using local-only reads:
+
+1. remember the current SourceRevision id before starting the explicit refresh,
+2. if the refresh call throws, reload the Project locally,
+3. when the reloaded current SourceRevision id differs from the remembered id, treat the new source as applied,
+4. retry the local source-review calculation once for the applied revision,
+5. keep the Project open on the new revision even if that review retry still fails.
+
+When the applied revision is confirmed but review remains unavailable, close the refresh confirmation, reload visible Project metadata where possible, leave review state unset, and show a recoverable user-facing message that the source was updated but setup review could not be loaded.
+
+Do not automatically contact Google again during this recovery path. Do not create another revision, roll back the applied revision, or infer that an unchanged revision was applied.
+
+If the local Project reload cannot establish that the current revision changed, surface the original refresh failure normally.
+
 ## Google identity
 
 Refresh uses the Project's stored `googleAccountId` and `googleFormId`.
