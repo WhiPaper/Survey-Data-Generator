@@ -28,226 +28,42 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
-      - name: Wire Question Explorer to authoritative public data
+      - name: Fix frozen Run subject narrowing
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          def replace(path: str, old: str, new: str) -> None:
-              file = Path(path)
-              text = file.read_text()
-              if old not in text:
-                  raise SystemExit(f"missing replacement in {path}: {old[:100]!r}")
-              file.write_text(text.replace(old, new, 1))
-
-          model = "apps/desktop/src/QuestionExplorerPanel/model.ts"
-          replace(
-              model,
-              '''export const editingMetric = (''',
-              '''export const conditionalProfileMetric = (\n  profile: TargetProfileResult | null,\n  valueGroupId: string,\n  questionId: string,\n  optionKey: string,\n): Extract<TargetProfileMetric, { kind: "conditional_share" }> | undefined =>\n  profile?.metrics.find(\n    (metric): metric is Extract<TargetProfileMetric, { kind: "conditional_share" }> =>\n      metric.kind === "conditional_share" &&\n      metric.population.valueGroupId === valueGroupId &&\n      metric.questionId === questionId &&\n      metric.optionKey === optionKey,\n  );\n\nexport const ordinalDistributionMetric = (\n  profile: TargetProfileResult | null,\n  questionId: string,\n): Extract<TargetProfileMetric, { kind: "ordinal_distribution" }> | undefined =>\n  profile?.metrics.find(\n    (metric): metric is Extract<TargetProfileMetric, { kind: "ordinal_distribution" }> =>\n      metric.kind === "ordinal_distribution" && metric.questionId === questionId,\n  );\n\nexport const editingMetric = (''',
-          )
-          replace(
-              model,
-              '''  if (target.kind === "conditional_share") return "—";''',
-              '''  if (target.kind === "conditional_share") {\n    const metric = conditionalProfileMetric(\n      profile,\n      target.population.valueGroupId,\n      target.questionId,\n      target.optionKey,\n    );\n    return metric ? formatShare(metric.share) : "—";\n  }''',
-          )
-
-          text_inspector = "apps/desktop/src/QuestionExplorerPanel/TextInspector.tsx"
-          replace(
-              text_inspector,
-              '''            <p className="text-xs text-muted-foreground">\n              저장된 그룹의 현재 인원수와 비율은 backend profile 값을 사용합니다.\n            </p>''',
-              '''            <p className="text-xs text-muted-foreground">\n              저장 후 현재 선택 범위 기준 인원수와 비율이 표시됩니다.\n            </p>''',
-          )
-
-          result = "apps/desktop/src/QuestionExplorerPanel/ResultView.tsx"
-          replace(
-              result,
-              '''import type {\n  RunsGetResult,\n  TargetDraft,''',
-              '''import type {\n  FrozenRunTarget,\n  RunSummary,\n  RunsGetResult,\n  TargetDraft,''',
-          )
-          replace(result, '  draft: TargetDraft;', '  draft: TargetDraft | null;')
-          replace(
-              result,
-              '''  contexts: RunContext[];\n  selectedRunId: string;''',
-              '''  contexts: RunContext[];\n  summaries: RunSummary[];\n  selectedRunId: string;''',
-          )
-          replace(
-              result,
-              '''export function ResultView({\n  contexts,\n  selectedRunId,''',
-              '''const frozenTargetLabel = (\n  target: FrozenRunTarget | undefined,\n  questions: readonly QuestionView[],\n): string => {\n  if (!target) return "목표";\n  if (target.kind === "mean") {\n    return questions.find((question) => question.id === target.questionId)?.title ?? "평균";\n  }\n  if (target.kind === "conditional_share") {\n    const question = questions.find((candidate) => candidate.id === target.questionId);\n    const option = question?.options.find((candidate) => candidate.key === target.optionKey);\n    return `${target.population.valueGroup.name} 중 ${option?.label ?? "선택지"}`;\n  }\n  if (target.subject.kind === "value_group") return target.subject.valueGroup.name;\n  const question = questions.find((candidate) => candidate.id === target.subject.questionId);\n  return question?.options.find((option) => option.key === target.subject.optionKey)?.label ?? "선택지";\n};\n\nconst frozenQuestionId = (target: FrozenRunTarget | undefined): string | null => {\n  if (!target) return null;\n  if (target.kind === "mean" || target.kind === "conditional_share") return target.questionId;\n  return target.subject.kind === "value_group"\n    ? target.subject.valueGroup.questionId\n    : target.subject.questionId;\n};\n\nexport function ResultView({\n  contexts,\n  summaries,\n  selectedRunId,''',
-          )
-          replace(
-              result,
-              '''            <SelectContent>\n              {contexts.map((candidate, index) => (\n                <SelectItem key={candidate.run.runId} value={candidate.run.runId}>\n                  {index === 0 ? "최신 결과" : `이전 결과 ${contexts.length - index}`}\n                </SelectItem>\n              ))}\n            </SelectContent>''',
-              '''            <SelectContent>\n              {summaries.map((summary, index) => (\n                <SelectItem key={summary.runId} value={summary.runId}>\n                  {index === 0\n                    ? "최신 결과"\n                    : new Date(summary.createdAt).toLocaleString()}\n                </SelectItem>\n              ))}\n            </SelectContent>''',
-          )
-          replace(
-              result,
-              '''          const target = context.draft.targets.find(\n            (candidate) => String(candidate.id) === String(outcome.targetId),\n          );\n          const label = target ? targetLabel(target, questions, groups) : "목표";''',
-              '''          const target = context.draft?.targets.find(\n            (candidate) => String(candidate.id) === String(outcome.targetId),\n          );\n          const frozenTarget = context.run.targetSnapshot.targets.find(\n            (candidate) => String(candidate.id) === String(outcome.targetId),\n          );\n          const label = target\n            ? targetLabel(target, questions, groups)\n            : frozenTargetLabel(frozenTarget, questions);''',
-          )
-          replace(
-              result,
-              '''          const questionId = target ? questionIdForTarget(target, groups) : null;''',
-              '''          const questionId = target\n            ? questionIdForTarget(target, groups)\n            : frozenQuestionId(frozenTarget);''',
-          )
-          replace(
-              result,
-              '''      <p className="mt-6 text-xs text-muted-foreground">\n        현재 backend에는 Run 목록 조회가 없어 이 선택기는 이번 앱 세션에서 생성한 결과만 표시합니다.\n        저장된 과거 Run 자체는 변경하지 않습니다.\n      </p>''',
-              '''      <p className="mt-6 text-xs text-muted-foreground">\n        과거 결과는 생성 당시 내용으로 보존됩니다.\n      </p>''',
-          )
-
-          index = "apps/desktop/src/QuestionExplorerPanel/index.tsx"
-          replace(
-              index,
-              '''  ProjectDetailView,\n  SourceScope,''',
-              '''  ProjectDetailView,\n  RunSummary,\n  SourceScope,''',
-          )
-          replace(
-              index,
-              '''  listValueGroups,\n  listValueGroupValues,''',
-              '''  listRuns,\n  listValueGroups,\n  listValueGroupValues,''',
-          )
-          replace(
-              index,
-              '''  conditionalTarget,\n  conditionalTargetId,''',
-              '''  conditionalProfileMetric,\n  conditionalTarget,\n  conditionalTargetId,''',
-          )
-          replace(
-              index,
-              '''  meanTargetId,\n  projectQuestions,''',
-              '''  meanTargetId,\n  ordinalDistributionMetric,\n  projectQuestions,''',
-          )
-          replace(
-              index,
-              '''  const [runContexts, setRunContexts] = useState<RunContext[]>([]);\n  const [selectedRunId, setSelectedRunId] = useState("");''',
-              '''  const [runContexts, setRunContexts] = useState<RunContext[]>([]);\n  const [runSummaries, setRunSummaries] = useState<RunSummary[]>([]);\n  const [selectedRunId, setSelectedRunId] = useState("");''',
-          )
-          replace(
-              index,
-              '''    setRunContexts([]);\n    setSelectedRunId("");\n\n    void Promise.all([getTargetDraft(project.id), listValueGroups(project.id)])\n      .then(async ([saved, nextGroups]) => {''',
-              '''    setRunContexts([]);\n    setRunSummaries([]);\n    setSelectedRunId("");\n\n    void Promise.all([getTargetDraft(project.id), listValueGroups(project.id), listRuns(project.id)])\n      .then(async ([saved, nextGroups, nextRunSummaries]) => {''',
-          )
-          replace(
-              index,
-              '''        setDraft(nextDraft);\n        setGroups(nextGroups);\n        setProfile(await getTargetProfile(project.id, nextDraft.sourceScope));''',
-              '''        setDraft(nextDraft);\n        setGroups(nextGroups);\n        setRunSummaries(nextRunSummaries);\n        setProfile(await getTargetProfile(project.id, nextDraft.sourceScope));''',
-          )
-          replace(
-              index,
-              '''  const currentTarget = populationGroupId === "all" ? directTarget : conditional;\n  const currentMetric = editingMetric(profile, editing);\n  const conditionalMode = editing?.subjectKind === "checkbox_option" && populationGroupId !== "all";''',
-              '''  const currentTarget = populationGroupId === "all" ? directTarget : conditional;\n  const currentMetric = editingMetric(profile, editing);\n  const conditionalMode = editing?.subjectKind === "checkbox_option" && populationGroupId !== "all";\n  const currentConditionalMetric =\n    conditionalMode && editing?.optionKey\n      ? conditionalProfileMetric(profile, populationGroupId, editing.questionId, editing.optionKey)\n      : undefined;\n  const activeMetric = conditionalMode ? currentConditionalMetric : currentMetric;''',
-          )
-          replace(
-              index,
-              '''  const resolvedShare =\n    !conditionalMode && currentMetric && Number.isFinite(parsedValue)\n      ? mode === "absolute_share"\n        ? parsedValue / 100\n        : mode === "percentage_point_delta"\n          ? currentMetric.share + parsedValue / 100\n          : mode === "relative_percent_delta"\n            ? currentMetric.share * (1 + parsedValue / 100)\n            : null\n      : null;''',
-              '''  const resolvedShare =\n    activeMetric && Number.isFinite(parsedValue)\n      ? mode === "absolute_share"\n        ? parsedValue / 100\n        : mode === "percentage_point_delta"\n          ? activeMetric.share + parsedValue / 100\n          : mode === "relative_percent_delta"\n            ? activeMetric.share * (1 + parsedValue / 100)\n            : null\n      : null;''',
-          )
-          replace(
-              index,
-              '''    (!conditionalMode &&\n      shareMode &&\n      mode !== "absolute_share" &&\n      currentMetric !== undefined &&''',
-              '''    (shareMode &&\n      mode !== "absolute_share" &&\n      activeMetric !== undefined &&''',
-          )
-          replace(
-              index,
-              '''  const selectedCheckboxDenominator =''',
-              '''  const selectedOrdinalDistribution =\n    selectedQuestion?.kind === "ordinal"\n      ? ordinalDistributionMetric(profile, selectedQuestion.id)\n      : undefined;\n\n  const selectedCheckboxDenominator =''',
-          )
-          replace(
-              index,
-              '''  const recordRun = async (runId: string): Promise<void> => {\n    const run = await getRun(runId);\n    setRunContexts((current) => [\n      { run, draft, profile },\n      ...current.filter((context) => context.run.runId !== runId),\n    ]);\n    setSelectedRunId(runId);\n    setWorkspaceView("result");\n  };''',
-              '''  const selectRun = async (runId: string): Promise<void> => {\n    const existing = runContexts.find((context) => context.run.runId === runId);\n    if (existing) {\n      setSelectedRunId(runId);\n      setWorkspaceView("result");\n      return;\n    }\n    setBusy(true);\n    setError(null);\n    try {\n      const run = await getRun(runId);\n      setRunContexts((current) => [\n        { run, draft: null, profile: null },\n        ...current.filter((context) => context.run.runId !== runId),\n      ]);\n      setSelectedRunId(runId);\n      setWorkspaceView("result");\n    } catch (cause: unknown) {\n      setError(cause instanceof Error ? cause.message : "결과를 불러오지 못했습니다.");\n    } finally {\n      setBusy(false);\n    }\n  };\n\n  const recordRun = async (runId: string): Promise<void> => {\n    const run = await getRun(runId);\n    setRunContexts((current) => [\n      { run, draft, profile },\n      ...current.filter((context) => context.run.runId !== runId),\n    ]);\n    setSelectedRunId(runId);\n    setWorkspaceView("result");\n    void listRuns(project.id).then(setRunSummaries).catch(() => undefined);\n  };''',
-          )
-          replace(
-              index,
-              '''          disabled={runContexts.length === 0}\n          onClick={() => setWorkspaceView("result")}''',
-              '''          disabled={runSummaries.length === 0 && runContexts.length === 0}\n          onClick={() => {\n            const runId = selectedRunId || runSummaries[0]?.runId || runContexts[0]?.run.runId;\n            if (runId) void selectRun(runId);\n          }}''',
-          )
-          replace(
-              index,
-              '''        <ResultView\n          contexts={runContexts}\n          selectedRunId={selectedRunId}''',
-              '''        <ResultView\n          contexts={runContexts}\n          summaries={runSummaries}\n          selectedRunId={selectedRunId}''',
-          )
-          replace(index, '          onSelectRun={setSelectedRunId}', '          onSelectRun={(runId) => void selectRun(runId)}')
-          replace(
-              index,
-              '''                      <p className="mt-8 text-sm text-muted-foreground">\n                        점수별 분포는 현재 profile 공개 계약에 없어 임의로 재계산하지 않습니다.\n                        평균만 목표로 설정할 수 있습니다.\n                      </p>''',
-              '''                      <div className="mt-8 border-t pt-5">\n                        <div className="flex items-center justify-between gap-3">\n                          <p className="text-sm font-medium">점수별 분포</p>\n                          <span className="text-xs tabular-nums text-muted-foreground">\n                            응답 {selectedOrdinalDistribution?.denominatorCount ?? 0}명\n                          </span>\n                        </div>\n                        <div className="mt-3 space-y-1">\n                          {selectedOrdinalDistribution?.values.map((item) => (\n                            <div\n                              key={item.value}\n                              className="grid grid-cols-[48px_64px_64px_minmax(120px,1fr)] items-center gap-3 py-1.5 text-sm"\n                            >\n                              <span className="font-medium tabular-nums">{item.value}점</span>\n                              <span className="text-right tabular-nums text-muted-foreground">\n                                {item.count}명\n                              </span>\n                              <span className="text-right tabular-nums">\n                                {formatShare(item.share)}\n                              </span>\n                              <span className="h-1.5 overflow-hidden rounded-full bg-muted">\n                                <span\n                                  className="block h-full rounded-full bg-foreground/45"\n                                  style={{ width: `${Math.max(0, Math.min(100, item.share * 100))}%` }}\n                                />\n                              </span>\n                            </div>\n                          ))}\n                        </div>\n                      </div>''',
-          )
-          replace(
-              index,
-              '''              {!conditionalMode && currentMetric\n                ? ` · 현재 ${currentMetric.count}/${currentMetric.denominatorCount}명 · ${formatShare(\n                    currentMetric.share,\n                  )}`''',
-              '''              {activeMetric\n                ? ` · 현재 ${activeMetric.count}/${activeMetric.denominatorCount}명 · ${formatShare(\n                    activeMetric.share,\n                  )}`''',
-          )
-          replace(
-              index,
-              '''                {conditionalMode ? (\n                  <p className="text-xs text-muted-foreground">\n                    이 그룹의 조건부 현재 비율은 공개 profile에 없으므로 UI에서 그룹 크기로 대신\n                    계산하지 않습니다. 생성 검증 시 backend가 기준값을 계산합니다.\n                  </p>\n                ) : null}''',
-              '''                {conditionalMode && !currentConditionalMetric ? (\n                  <p className="text-xs text-muted-foreground">\n                    현재 선택 범위에는 비율을 계산할 응답 대상이 없습니다.\n                  </p>\n                ) : null}''',
-          )
-          replace(
-              index,
-              '''            {!conditionalMode && currentMetric && value !== "" && !valueInvalid ? (\n              <div className="space-y-1 text-sm">\n                <p className="font-medium tabular-nums">현재 {formatShare(currentMetric.share)}</p>''',
-              '''            {activeMetric && value !== "" && !valueInvalid ? (\n              <div className="space-y-1 text-sm">\n                <p className="font-medium tabular-nums">현재 {formatShare(activeMetric.share)}</p>''',
-          )
-
-          targets_test = "apps/desktop/test/phase4-targets.test.ts"
-          replace(
-              targets_test,
-              '''import { createTargetService } from "../electron/main/targets/service";''',
-              '''import { createTargetService } from "../electron/main/targets/service";\nimport { createValueGroupService } from "../electron/main/value-groups/service";''',
-          )
-          replace(
-              targets_test,
-              '''          { id: "q-score", kind: "ordinal", min: 1, max: 5 },''',
-              '''          { id: "q-score", kind: "ordinal", min: 1, max: 5 },\n          { id: "q-city", kind: "text" },\n          {\n            id: "q-checkbox",\n            kind: "multi_choice",\n            options: [\n              { key: "music", label: "음악" },\n              { key: "bus", label: "버스" },\n            ],\n          },''',
-          )
-          replace(
-              targets_test,
-              '''            "q-score": { state: "answered", value: { kind: "ordinal", value: 4 } },''',
-              '''            "q-score": { state: "answered", value: { kind: "ordinal", value: 4 } },\n            "q-city": { state: "answered", value: { kind: "text", value: "Seoul" } },\n            "q-checkbox": {\n              state: "answered",\n              value: { kind: "multi_choice", optionKeys: ["music"], labels: ["음악"] },\n            },''',
-          )
-          replace(
-              targets_test,
-              '''            "q-score": { state: "answered", value: { kind: "ordinal", value: 5 } },''',
-              '''            "q-score": { state: "answered", value: { kind: "ordinal", value: 5 } },\n            "q-city": { state: "answered", value: { kind: "text", value: "Busan" } },\n            "q-checkbox": {\n              state: "answered",\n              value: { kind: "multi_choice", optionKeys: ["bus"], labels: ["버스"] },\n            },''',
-          )
-          replace(
-              targets_test,
-              '''    const all = await service.profile("project-1", { kind: "all" });''',
-              '''    const group = await createValueGroupService(database.db).create({\n      projectId: "project-1",\n      questionId: "q-city",\n      name: "서울",\n      members: ["Seoul"],\n    });\n\n    const all = await service.profile("project-1", { kind: "all" });''',
-          )
-          replace(
-              targets_test,
-              '''    expect(all.responseCount).toBe(2);\n    expect(femaleAll).toMatchObject({ count: 1, denominatorCount: 2, share: 0.5 });''',
-              '''    expect(all.responseCount).toBe(2);\n    expect(femaleAll).toMatchObject({ count: 1, denominatorCount: 2, share: 0.5 });\n    expect(\n      all.metrics.find(\n        (metric) => metric.kind === "ordinal_distribution" && metric.questionId === "q-score",\n      ),\n    ).toMatchObject({\n      denominatorCount: 2,\n      values: [\n        { value: 1, count: 0, share: 0 },\n        { value: 2, count: 0, share: 0 },\n        { value: 3, count: 0, share: 0 },\n        { value: 4, count: 1, share: 0.5 },\n        { value: 5, count: 1, share: 0.5 },\n      ],\n    });\n    expect(\n      all.metrics.find(\n        (metric) =>\n          metric.kind === "conditional_share" &&\n          metric.population.valueGroupId === group.id &&\n          metric.questionId === "q-checkbox" &&\n          metric.optionKey === "music",\n      ),\n    ).toMatchObject({ count: 1, denominatorCount: 1, share: 1 });''',
-          )
-
-          run_store_test = "apps/desktop/test/run-store.test.ts"
-          replace(
-              run_store_test,
-              '''  getRunRecord,\n  listPersistedRunRows,''',
-              '''  getRunRecord,\n  listPersistedRunRows,\n  listRunRecords,''',
-          )
-          replace(
-              run_store_test,
-              '''    const stored = getRunRecord(database.db, "run-1");''',
-              '''    persistRun(database.db, {\n      id: "run-2",\n      projectId: "project-1",\n      sourceRevisionId: "revision-1",\n      scope: {\n        kind: "all",\n        responseCount: 0,\n        responseSetHash: "scope-hash-2",\n      },\n      finalResponseCount: 2,\n      target: {},\n      seed: 43,\n      engineReport: {},\n      rows: [],\n      createdAtMs: 4000,\n    });\n    expect(listRunRecords(database.db, "project-1").map((run) => run.id)).toEqual([\n      "run-2",\n      "run-1",\n    ]);\n\n    const stored = getRunRecord(database.db, "run-1");''',
-          )
+          path = Path("apps/desktop/src/QuestionExplorerPanel/ResultView.tsx")
+          text = path.read_text()
+          old = '''  if (target.subject.kind === "value_group") return target.subject.valueGroup.name;
+  const question = questions.find((candidate) => candidate.id === target.subject.questionId);
+  return (
+    question?.options.find((option) => option.key === target.subject.optionKey)?.label ?? "선택지"
+  );'''
+          new = '''  const subject = target.subject;
+  if (subject.kind === "value_group") return subject.valueGroup.name;
+  const question = questions.find((candidate) => candidate.id === subject.questionId);
+  return question?.options.find((option) => option.key === subject.optionKey)?.label ?? "선택지";'''
+          if old not in text:
+              raise SystemExit("frozen target label narrowing block not found")
+          text = text.replace(old, new, 1)
+          old = '''  return target.subject.kind === "value_group"
+    ? target.subject.valueGroup.questionId
+    : target.subject.questionId;'''
+          new = '''  const subject = target.subject;
+  return subject.kind === "value_group" ? subject.valueGroup.questionId : subject.questionId;'''
+          if old not in text:
+              raise SystemExit("frozen question id narrowing block not found")
+          path.write_text(text.replace(old, new, 1))
           PY
-      - name: Format changed files
+      - name: Format frozen Run fix
         run: |
-          pnpm exec prettier --write \
-            apps/desktop/src/QuestionExplorerPanel/model.ts \
-            apps/desktop/src/QuestionExplorerPanel/TextInspector.tsx \
-            apps/desktop/src/QuestionExplorerPanel/ResultView.tsx \
-            apps/desktop/src/QuestionExplorerPanel/index.tsx \
-            apps/desktop/test/phase4-targets.test.ts \
-            apps/desktop/test/run-store.test.ts
+          pnpm exec prettier --write apps/desktop/src/QuestionExplorerPanel/ResultView.tsx
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet; then
-            git add apps/desktop/src/QuestionExplorerPanel apps/desktop/test/phase4-targets.test.ts apps/desktop/test/run-store.test.ts
-            git commit -m "feat(ui): consume authoritative profile and run history"
+          if ! git diff --quiet -- apps/desktop/src/QuestionExplorerPanel/ResultView.tsx; then
+            git add apps/desktop/src/QuestionExplorerPanel/ResultView.tsx
+            git commit -m "fix(ui): narrow frozen run subjects"
             git push origin HEAD:${{ github.event.pull_request.head.ref }}
           fi
       - run: pnpm run check
