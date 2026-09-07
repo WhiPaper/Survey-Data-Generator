@@ -57,6 +57,7 @@ import {
 import { ResultView, type RunContext } from "./ResultView";
 import { TextInspector } from "./TextInspector";
 import { createDraftSaveCoordinator } from "./draftSaveCoordinator";
+import { executeValueGroupRepair } from "./sourceReviewRepair";
 import {
   conditionalProfileMetric,
   conditionalTarget,
@@ -720,6 +721,55 @@ export function QuestionExplorerPanel({
         setError(cause instanceof Error ? cause.message : "그룹을 삭제하지 못했습니다.");
       })
       .finally(() => setGroupBusy(false));
+  };
+
+  const repairReviewGroup = async (group: ValueGroupView): Promise<void> => {
+    const dependencyCount = dependentTargets(draft.targets, group.id).length;
+    setGroupBusy(true);
+    setError(null);
+    let draftSaved = dependencyCount === 0;
+    let groupDeleted = false;
+
+    try {
+      const plan = await executeValueGroupRepair({
+        draft,
+        valueGroupId: group.id,
+        persistDraft: async (nextDraft) => {
+          draftSaveCoordinator.setLatest(nextDraft);
+          try {
+            await draftSaveCoordinator.flush();
+          } catch (cause: unknown) {
+            draftSaveCoordinator.setLatest(draft);
+            throw cause;
+          }
+          draftSaved = true;
+          setDraft(nextDraft);
+        },
+        deleteGroup: async (valueGroupId) => {
+          await deleteValueGroup(valueGroupId);
+          groupDeleted = true;
+        },
+      });
+
+      if (plan.removedTargetIds.length > 0) setDraft(plan.draft);
+      await reloadGroups();
+      await reloadProfile(plan.draft.sourceScope);
+      setSourceReviewOpen(false);
+    } catch {
+      if (!draftSaved && dependencyCount > 0) {
+        setError("연결된 목표 변경사항을 저장하지 못해 그룹을 삭제하지 않았습니다.");
+      } else if (!groupDeleted) {
+        setError(
+          dependencyCount > 0
+            ? "연결된 목표는 제거했지만 그룹을 삭제하지 못했습니다. 다시 시도해주세요."
+            : "그룹을 삭제하지 못했습니다.",
+        );
+      } else {
+        setError("그룹은 정리했지만 화면을 새로고치지 못했습니다.");
+      }
+    } finally {
+      setGroupBusy(false);
+    }
   };
 
   const navigateToGroupDependency = () => {
@@ -1425,6 +1475,7 @@ export function QuestionExplorerPanel({
           <div className="divide-y">
             {activeReviewGroups.map((group) => {
               const question = questions.find((candidate) => candidate.id === group.questionId);
+              const dependencyCount = dependentTargets(draft.targets, group.id).length;
               return (
                 <div key={group.id} className="flex items-center justify-between gap-4 py-3">
                   <div className="min-w-0">
@@ -1432,6 +1483,11 @@ export function QuestionExplorerPanel({
                     <p className="mt-1 text-xs text-muted-foreground">
                       {question?.title ?? "원본에서 사라진 문항"}
                     </p>
+                    {dependencyCount > 0 ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        연결 목표 {dependencyCount}개
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     {question ? (
@@ -1453,12 +1509,12 @@ export function QuestionExplorerPanel({
                       size="sm"
                       variant="ghost"
                       className="text-destructive"
-                      onClick={() => {
-                        setSourceReviewOpen(false);
-                        requestDeleteGroup(group);
-                      }}
+                      disabled={groupBusy}
+                      onClick={() => void repairReviewGroup(group)}
                     >
-                      그룹 삭제
+                      {dependencyCount > 0
+                        ? `목표 ${dependencyCount}개 제거 후 그룹 삭제`
+                        : "그룹 삭제"}
                     </Button>
                   </div>
                 </div>
