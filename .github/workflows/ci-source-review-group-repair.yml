@@ -1,0 +1,89 @@
+name: ci-source-review-group-repair
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  wire-and-check:
+    if: github.head_ref == 'ui/source-review-group-repair'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pnpm install --frozen-lockfile
+      - name: Wire source review group repair
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("apps/desktop/src/QuestionExplorerPanel/index.tsx")
+          text = path.read_text()
+
+          def replace_once(old: str, new: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected exactly one match, found {count}: {old[:80]!r}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              'import { createDraftSaveCoordinator } from "./draftSaveCoordinator";\n',
+              'import { createDraftSaveCoordinator } from "./draftSaveCoordinator";\nimport { executeValueGroupRepair } from "./sourceReviewRepair";\n',
+          )
+
+          replace_once(
+              '''  const navigateToGroupDependency = () => {\n''',
+              '''  const repairReviewGroup = async (group: ValueGroupView): Promise<void> => {\n    const dependencyCount = dependentTargets(draft.targets, group.id).length;\n    setGroupBusy(true);\n    setError(null);\n    let draftSaved = dependencyCount === 0;\n    let groupDeleted = false;\n\n    try {\n      const plan = await executeValueGroupRepair({\n        draft,\n        valueGroupId: group.id,\n        persistDraft: async (nextDraft) => {\n          draftSaveCoordinator.setLatest(nextDraft);\n          try {\n            await draftSaveCoordinator.flush();\n          } catch (cause: unknown) {\n            draftSaveCoordinator.setLatest(draft);\n            throw cause;\n          }\n          draftSaved = true;\n          setDraft(nextDraft);\n        },\n        deleteGroup: async (valueGroupId) => {\n          await deleteValueGroup(valueGroupId);\n          groupDeleted = true;\n        },\n      });\n\n      if (plan.removedTargetIds.length > 0) setDraft(plan.draft);\n      await reloadGroups();\n      await reloadProfile(plan.draft.sourceScope);\n      setSourceReviewOpen(false);\n    } catch {\n      if (!draftSaved && dependencyCount > 0) {\n        setError("연결된 목표 변경사항을 저장하지 못해 그룹을 삭제하지 않았습니다.");\n      } else if (!groupDeleted) {\n        setError(\n          dependencyCount > 0\n            ? "연결된 목표는 제거했지만 그룹을 삭제하지 못했습니다. 다시 시도해주세요."\n            : "그룹을 삭제하지 못했습니다.",\n        );\n      } else {\n        setError("그룹은 정리했지만 화면을 새로고치지 못했습니다.");\n      }\n    } finally {\n      setGroupBusy(false);\n    }\n  };\n\n  const navigateToGroupDependency = () => {\n''',
+          )
+
+          replace_once(
+              '''            {activeReviewGroups.map((group) => {\n              const question = questions.find((candidate) => candidate.id === group.questionId);\n              return (\n''',
+              '''            {activeReviewGroups.map((group) => {\n              const question = questions.find((candidate) => candidate.id === group.questionId);\n              const dependencyCount = dependentTargets(draft.targets, group.id).length;\n              return (\n''',
+          )
+
+          replace_once(
+              '''                    <p className="mt-1 text-xs text-muted-foreground">\n                      {question?.title ?? "원본에서 사라진 문항"}\n                    </p>\n''',
+              '''                    <p className="mt-1 text-xs text-muted-foreground">\n                      {question?.title ?? "원본에서 사라진 문항"}\n                    </p>\n                    {dependencyCount > 0 ? (\n                      <p className="mt-1 text-xs text-muted-foreground">\n                        연결 목표 {dependencyCount}개\n                      </p>\n                    ) : null}\n''',
+          )
+
+          replace_once(
+              '''                        variant="ghost"\n                        onClick={() => {\n''',
+              '''                        variant="ghost"\n                        disabled={groupBusy}\n                        onClick={() => {\n''',
+          )
+
+          replace_once(
+              '''                    <Button\n                      type="button"\n                      size="sm"\n                      variant="ghost"\n                      className="text-destructive"\n                      onClick={() => {\n                        setSourceReviewOpen(false);\n                        requestDeleteGroup(group);\n                      }}\n                    >\n                      그룹 삭제\n                    </Button>\n''',
+              '''                    <Button\n                      type="button"\n                      size="sm"\n                      variant="ghost"\n                      className="text-destructive"\n                      disabled={groupBusy}\n                      onClick={() => void repairReviewGroup(group)}\n                    >\n                      {dependencyCount > 0\n                        ? `목표 ${dependencyCount}개 제거 후 그룹 삭제`\n                        : "그룹 삭제"}\n                    </Button>\n''',
+          )
+
+          path.write_text(text)
+          PY
+          pnpm exec prettier --write \
+            apps/desktop/src/QuestionExplorerPanel/index.tsx \
+            apps/desktop/src/QuestionExplorerPanel/sourceReviewRepair.ts \
+            apps/desktop/test/source-review-repair.test.ts \
+            docs/contracts/20_SOURCE_REVIEW_REPAIR.md
+          if ! git diff --quiet; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add apps/desktop/src/QuestionExplorerPanel/index.tsx apps/desktop/src/QuestionExplorerPanel/sourceReviewRepair.ts apps/desktop/test/source-review-repair.test.ts docs/contracts/20_SOURCE_REVIEW_REPAIR.md
+            git commit -m "feat(ui): make source review group repair transactional"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
+      - run: pnpm run check
+      - run: python -m pip install -r engine/requirements.txt
+      - run: pnpm run engine:test
