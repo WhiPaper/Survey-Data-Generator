@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 jobs:
-  wire-and-check:
+  polish-and-check:
     if: github.head_ref == 'ui/value-group-count-targets'
     runs-on: ubuntu-22.04
     steps:
@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
-      - name: Wire ValueGroup count modes
+      - name: Add ValueGroup count preview
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -41,19 +41,17 @@ jobs:
               text = text.replace(old, new, 1)
 
           replace_once(
-              'import { createDraftSaveCoordinator } from "./draftSaveCoordinator";\n',
-              'import { createDraftSaveCoordinator } from "./draftSaveCoordinator";\nimport { targetKindForMode, targetModeAllowed } from "./targetModePolicy";\n',
-          )
-          replace_once('  const valueGroupMode = editing?.subjectKind === "value_group";\n', '')
-          replace_once(
-              '    ((conditionalMode || valueGroupMode) && !shareMode) ||\n',
-              '    !targetModeAllowed(mode, conditionalMode) ||\n',
+              'import { targetKindForMode, targetModeAllowed } from "./targetModePolicy";\n',
+              '''import {\n  resolvedCountForMode,\n  targetKindForMode,\n  targetModeAllowed,\n} from "./targetModePolicy";\n''',
           )
           replace_once(
-              '''    const shareOnly = valueGroupMode || conditionalMode;\n    const kind =\n      !shareOnly && (mode === "absolute_count" || mode === "count_delta") ? "count" : "share";\n''',
-              '    const kind = targetKindForMode(mode);\n',
+              '''      : null;\n  const valueInvalid =\n''',
+              '''      : null;\n  const resolvedCount =\n    activeMetric && Number.isFinite(parsedValue)\n      ? resolvedCountForMode(mode, activeMetric.count, parsedValue)\n      : null;\n  const valueInvalid =\n''',
           )
-          replace_once('                  {!conditionalMode && !valueGroupMode ? (\n', '                  {!conditionalMode ? (\n')
+          replace_once(
+              '''            {activeMetric && value !== "" && !valueInvalid ? (\n              <div className="space-y-1 text-sm">\n                <p className="font-medium tabular-nums">현재 {formatShare(activeMetric.share)}</p>\n                {resolvedShare !== null ? (\n                  <p className="tabular-nums text-muted-foreground">\n                    → 목표 {formatShare(resolvedShare)}\n                  </p>\n                ) : null}\n              </div>\n            ) : null}\n''',
+              '''            {activeMetric && value !== "" && !valueInvalid ? (\n              <div className="space-y-1 text-sm">\n                {shareMode ? (\n                  <>\n                    <p className="font-medium tabular-nums">\n                      현재 {formatShare(activeMetric.share)}\n                    </p>\n                    {resolvedShare !== null ? (\n                      <p className="tabular-nums text-muted-foreground">\n                        → 목표 {formatShare(resolvedShare)}\n                      </p>\n                    ) : null}\n                  </>\n                ) : (\n                  <>\n                    <p className="font-medium tabular-nums">현재 {activeMetric.count}명</p>\n                    {resolvedCount !== null ? (\n                      <p className="tabular-nums text-muted-foreground">\n                        → 목표 {resolvedCount}명\n                      </p>\n                    ) : null}\n                  </>\n                )}\n              </div>\n            ) : null}\n''',
+          )
           path.write_text(text)
           PY
           pnpm exec prettier --write apps/desktop/src/QuestionExplorerPanel/index.tsx apps/desktop/src/QuestionExplorerPanel/targetModePolicy.ts apps/desktop/test/target-mode-policy.test.ts
@@ -61,7 +59,7 @@ jobs:
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
             git add apps/desktop/src/QuestionExplorerPanel/index.tsx apps/desktop/src/QuestionExplorerPanel/targetModePolicy.ts apps/desktop/test/target-mode-policy.test.ts
-            git commit -m "fix(ui): enable ValueGroup count targets"
+            git commit -m "fix(ui): show ValueGroup count previews"
             git push origin HEAD:ui/value-group-count-targets
           fi
       - run: pnpm run check
