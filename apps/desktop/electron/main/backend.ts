@@ -156,10 +156,20 @@ export const handleBackendCall = async (
       return requireTargets(services).saveDraft(request.params as TargetDraft);
     case "targets.draft.start": {
       const params = request.params as { projectId: string; operationId?: string };
-      return requireTargets(services).startDraft(params.projectId, params.operationId);
+      const targetService = requireTargets(services);
+      const draft = await targetService.getDraft(params.projectId);
+      if (draft) {
+        const issues = semanticDuplicateTargetIssues(draft.targets);
+        if (issues.length > 0) return { status: "infeasible", issues };
+      }
+      return targetService.startDraft(params.projectId, params.operationId);
     }
-    case "synthesis.start":
-      return requireSynthesis(services).start(request.params as SynthesisStartParams);
+    case "synthesis.start": {
+      const params = request.params as SynthesisStartParams;
+      const issues = semanticDuplicateTargetIssues(params.targets);
+      if (issues.length > 0) return { status: "infeasible", issues };
+      return requireSynthesis(services).start(params);
+    }
     case "synthesis.resolveEditPlan":
       return requireSynthesis(services).resolveEditPlan(
         request.params as SynthesisResolveEditPlanParams,
