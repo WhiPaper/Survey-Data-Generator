@@ -259,6 +259,34 @@ const meanMetric = (
   };
 };
 
+const ordinalDistributionMetric = (
+  context: ScopeContext,
+  questionId: string,
+): {
+  denominatorCount: number;
+  values: Array<{ value: number; count: number; share: number }>;
+} | null => {
+  const question = context.form.questions.find((candidate) => candidate.id === questionId);
+  if (!question || question.kind !== "ordinal") return null;
+  const counts = new Map<number, number>();
+  let denominatorCount = 0;
+  for (const slot of answers(context.responses, question.id)) {
+    if (slot?.state !== "answered" || slot.value.kind !== "ordinal") continue;
+    denominatorCount += 1;
+    counts.set(slot.value.value, (counts.get(slot.value.value) ?? 0) + 1);
+  }
+  const values: Array<{ value: number; count: number; share: number }> = [];
+  for (let value = Math.ceil(question.min); value <= Math.floor(question.max); value += 1) {
+    const count = counts.get(value) ?? 0;
+    values.push({
+      value,
+      count,
+      share: denominatorCount === 0 ? 0 : count / denominatorCount,
+    });
+  }
+  return { denominatorCount, values };
+};
+
 const conditionalMetric = (
   context: ScopeContext,
   groups: readonly ValueGroupRecord[],
@@ -601,6 +629,14 @@ const profile = (
     } else if (question.kind === "ordinal") {
       const metric = meanMetric(context, String(question.id));
       if (metric) metrics.push({ kind: "mean", questionId: String(question.id), ...metric });
+      const distribution = ordinalDistributionMetric(context, String(question.id));
+      if (distribution) {
+        metrics.push({
+          kind: "ordinal_distribution",
+          questionId: String(question.id),
+          ...distribution,
+        });
+      }
     }
   }
 
@@ -608,6 +644,30 @@ const profile = (
     const subject = { kind: "value_group" as const, valueGroupId: group.id };
     const metric = subjectMetric(context, groups, subject);
     if (metric) metrics.push({ kind: "subject", subject, ...metric });
+
+    for (const question of context.form.questions) {
+      if (question.kind !== "multi_choice") continue;
+      for (const option of question.options) {
+        const target: Extract<TargetDraftTarget, { kind: "conditional_share" }> = {
+          id: `profile:${group.id}:${String(question.id)}:${String(option.key)}` as never,
+          kind: "conditional_share",
+          population: { kind: "value_group", valueGroupId: group.id },
+          questionId: String(question.id),
+          optionKey: String(option.key),
+          intent: null,
+        };
+        const conditional = conditionalMetric(context, groups, target);
+        if (conditional) {
+          metrics.push({
+            kind: "conditional_share",
+            population: target.population,
+            questionId: target.questionId,
+            optionKey: target.optionKey,
+            ...conditional,
+          });
+        }
+      }
+    }
   }
 
   return {

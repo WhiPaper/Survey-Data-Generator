@@ -177,6 +177,13 @@ export const handleBackendCall = async (
     case "synthesis.cancel":
       requireSynthesis(services).cancel((request.params as { operationId: string }).operationId);
       return { ok: true };
+    case "runs.list": {
+      const synthesis = requireSynthesis(services);
+      if (!synthesis.listRuns) {
+        throw backendFailure("BACKEND_UNAVAILABLE", "Run listing is not initialized");
+      }
+      return synthesis.listRuns((request.params as { projectId: string }).projectId);
+    }
     case "runs.get":
       return requireSynthesis(services).getRun((request.params as { runId: string }).runId);
     case "runs.export": {

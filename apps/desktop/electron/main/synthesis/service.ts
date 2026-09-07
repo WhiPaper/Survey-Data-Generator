@@ -11,6 +11,7 @@ import {
   type FrozenRunTarget,
   type FrozenTargetSubject,
   type FrozenValueGroup,
+  type RunSummary,
   type RunTargetSnapshot,
   type RunsGetResult,
   type SourceScope,
@@ -26,7 +27,12 @@ import type { FormSnapshot, QuestionId } from "@survey-synth/domain";
 import type { PythonEngine } from "../compute/python-engine";
 import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
-import { getRunRecord, persistRun, type PersistRunInput } from "../persistence/run-store";
+import {
+  getRunRecord,
+  listRunRecords,
+  persistRun,
+  type PersistRunInput,
+} from "../persistence/run-store";
 import { formSnapshots, valueGroups } from "../persistence/schema";
 import {
   getProject,
@@ -55,6 +61,7 @@ export interface SynthesisService {
   start(params: SynthesisStartParams): Promise<SynthesisStartResult>;
   resolveEditPlan(params: SynthesisResolveEditPlanParams): Promise<SynthesisSuccessResult>;
   cancel(operationId: string): boolean;
+  listRuns?(projectId: string): Promise<RunSummary[]>;
   getRun(runId: string): Promise<RunsGetResult>;
 }
 
@@ -1012,6 +1019,17 @@ export const createSynthesisService = ({
     },
 
     cancel: (operationId) => engine.cancel(operationId),
+
+    listRuns: async (projectId) => {
+      if (!getProject(db, projectId)) throw backendFailure("NOT_FOUND", "Project was not found");
+      return listRunRecords(db, projectId).map((run) => ({
+        runId: run.id,
+        projectId: run.projectId,
+        sourceRevisionId: run.sourceRevisionId,
+        createdAt: new Date(run.createdAtMs).toISOString(),
+        finalResponseCount: run.finalResponseCount,
+      }));
+    },
 
     getRun: async (runId) => {
       const run = getRunRecord(db, runId);

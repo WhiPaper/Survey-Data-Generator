@@ -264,6 +264,50 @@ describe("v2 RPC contracts", () => {
     ).toMatchObject({ status: "success", outcome: { targets: [{ targetId: "t-mean" }] } });
   });
 
+  it("accepts authoritative Question Explorer profile metrics and Run summaries", () => {
+    expect(
+      parseRpcResult("targets.profile", {
+        projectId: "project-1",
+        sourceRevisionId: "revision-1",
+        sourceScope: { kind: "all" },
+        responseCount: 2,
+        responseSetHash: "hash",
+        metrics: [
+          {
+            kind: "ordinal_distribution",
+            questionId: "q-score",
+            denominatorCount: 2,
+            values: [
+              { value: 1, count: 0, share: 0 },
+              { value: 2, count: 1, share: 0.5 },
+            ],
+          },
+          {
+            kind: "conditional_share",
+            population: { kind: "value_group", valueGroupId: "group-1" },
+            questionId: "q-checkbox",
+            optionKey: "music",
+            count: 1,
+            denominatorCount: 2,
+            share: 0.5,
+          },
+        ],
+      }),
+    ).toMatchObject({ metrics: [{ kind: "ordinal_distribution" }, { kind: "conditional_share" }] });
+
+    expect(
+      parseRpcResult("runs.list", [
+        {
+          runId: "run-1",
+          projectId: "project-1",
+          sourceRevisionId: "revision-1",
+          createdAt: "2026-09-07T00:00:00.000Z",
+          finalResponseCount: 120,
+        },
+      ]),
+    ).toMatchObject([{ runId: "run-1", finalResponseCount: 120 }]);
+  });
+
   it("accepts structured target issues", () => {
     expect(
       parseRpcResult("synthesis.start", {
