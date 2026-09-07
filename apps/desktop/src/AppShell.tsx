@@ -4,6 +4,7 @@ import type {
   FormImportResult,
   FormListItem,
   ProjectDetailView,
+  ProjectSourceRefreshResult,
   ProjectSummaryView,
   SessionView,
 } from "@survey-synth/contracts";
@@ -19,8 +20,17 @@ import {
   login,
   logout,
   pingBackend,
+  refreshProjectSource,
 } from "./api/backend";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { QuestionExplorerPanel } from "./QuestionExplorerPanel";
 
 type RuntimeState = "checking" | "ready" | "error";
@@ -37,6 +47,9 @@ export function AppShell() {
   const [projects, setProjects] = useState<ProjectSummaryView[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectDetailView | null>(null);
   const [projectsBusy, setProjectsBusy] = useState(false);
+  const [sourceReview, setSourceReview] = useState<ProjectSourceRefreshResult | null>(null);
+  const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
+  const [refreshBusy, setRefreshBusy] = useState(false);
   const [formsBusy, setFormsBusy] = useState(false);
   const [importOperationId, setImportOperationId] = useState<string | null>(null);
   const [importingFormId, setImportingFormId] = useState<string | null>(null);
@@ -70,6 +83,8 @@ export function AppShell() {
       setForms([]);
       setProjects([]);
       setSelectedProject(null);
+      setSourceReview(null);
+      setRefreshDialogOpen(false);
       return;
     }
 
@@ -102,6 +117,7 @@ export function AppShell() {
     setProjectsBusy(true);
     setError(null);
     try {
+      setSourceReview(null);
       setSelectedProject(await getProject(projectId));
     } catch (cause: unknown) {
       setError(errorMessage(cause));
@@ -153,6 +169,23 @@ export function AppShell() {
     } finally {
       setImportOperationId(null);
       setImportingFormId(null);
+    }
+  };
+
+  const handleRefreshProject = async (): Promise<void> => {
+    if (!selectedProject) return;
+    setRefreshBusy(true);
+    setError(null);
+    try {
+      const result = await refreshProjectSource(selectedProject.id, `source-refresh-${Date.now()}`);
+      setSelectedProject(result.project);
+      setSourceReview(result);
+      setProjects(await listProjects());
+      setRefreshDialogOpen(false);
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
+    } finally {
+      setRefreshBusy(false);
     }
   };
 
@@ -234,11 +267,21 @@ export function AppShell() {
                 원본 응답 {selectedProject.responseCount}개 · 문항 {selectedProject.questionCount}개
               </p>
             </div>
-            <Button size="sm" variant="outline" onClick={() => setSelectedProject(null)}>
-              프로젝트 변경
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={refreshBusy}
+                onClick={() => setRefreshDialogOpen(true)}
+              >
+                원본 업데이트
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setSelectedProject(null)}>
+                프로젝트 변경
+              </Button>
+            </div>
           </div>
-          <QuestionExplorerPanel project={selectedProject} />
+          <QuestionExplorerPanel project={selectedProject} sourceReview={sourceReview} />
         </div>
       ) : (
         <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-8 px-6 py-10 md:grid-cols-2">
@@ -325,6 +368,39 @@ export function AppShell() {
           </section>
         </div>
       )}
+
+      <Dialog open={refreshDialogOpen} onOpenChange={setRefreshDialogOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Google Forms 원본을 업데이트할까요?</DialogTitle>
+            <DialogDescription>
+              현재 문항과 응답을 다시 가져와 새 원본 버전으로 적용합니다. 이전 원본과 생성 결과는
+              그대로 보존되며, 저장한 그룹과 목표도 자동으로 바꾸지 않습니다.
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            바뀐 문항이나 선택지 때문에 확인이 필요한 설정이 생기면 업데이트 후 작업공간에
+            표시됩니다.
+          </p>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={refreshBusy}
+              onClick={() => setRefreshDialogOpen(false)}
+            >
+              취소
+            </Button>
+            <Button
+              type="button"
+              disabled={refreshBusy}
+              onClick={() => void handleRefreshProject()}
+            >
+              {refreshBusy ? "가져오는 중…" : "업데이트"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {error ? (
         <p

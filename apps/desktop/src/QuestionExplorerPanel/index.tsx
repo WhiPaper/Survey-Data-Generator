@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   EditPlanPreview,
   ProjectDetailView,
+  ProjectSourceRefreshResult,
   RunSummary,
   SourceScope,
   TargetDraft,
@@ -26,6 +27,7 @@ import {
   resolveSynthesisEditPlan,
   saveTargetDraft,
   startTargetDraft,
+  validateTargetDraft,
 } from "../api/backend";
 import { Button } from "@/components/ui/button";
 import {
@@ -129,7 +131,13 @@ const migratedGroupTarget = (
   return target;
 };
 
-export function QuestionExplorerPanel({ project }: { project: ProjectDetailView }) {
+export function QuestionExplorerPanel({
+  project,
+  sourceReview,
+}: {
+  project: ProjectDetailView;
+  sourceReview?: ProjectSourceRefreshResult | null;
+}) {
   const questions = useMemo(() => projectQuestions(project), [project]);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("setup");
   const [selectedQuestionId, setSelectedQuestionId] = useState(questions[0]?.id ?? "");
@@ -153,6 +161,10 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
   const [meanValue, setMeanValue] = useState("");
   const [populationGroupId, setPopulationGroupId] = useState("all");
   const [deleteBlockedGroup, setDeleteBlockedGroup] = useState<ValueGroupView | null>(null);
+  const [sourceReviewOpen, setSourceReviewOpen] = useState(false);
+  const [sourceTargetIssues, setSourceTargetIssues] = useState<TargetIssue[]>(
+    sourceReview?.targetIssues ?? [],
+  );
   const [issues, setIssues] = useState<TargetIssue[]>([]);
   const [editPlan, setEditPlan] = useState<{
     planId: string;
@@ -170,6 +182,31 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
 
   const selectedQuestion =
     questions.find((question) => question.id === selectedQuestionId) ?? questions[0];
+  const activeReviewGroups = (sourceReview?.invalidValueGroupIds ?? [])
+    .map((groupId) => groups.find((group) => group.id === groupId))
+    .filter((group): group is ValueGroupView => group !== undefined);
+  const activeReviewTargetIssues = sourceTargetIssues.filter(
+    (issue) =>
+      issue.targetIds.length === 0 ||
+      issue.targetIds.some((issueTargetId) =>
+        draft.targets.some((target) => String(target.id) === String(issueTargetId)),
+      ),
+  );
+  const sourceReviewCount = activeReviewGroups.length + activeReviewTargetIssues.length;
+  const reviewQuestionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const group of activeReviewGroups) ids.add(group.questionId);
+    for (const issue of activeReviewTargetIssues) {
+      for (const issueTargetId of issue.targetIds) {
+        const target = draft.targets.find(
+          (candidate) => String(candidate.id) === String(issueTargetId),
+        );
+        const questionId = target ? questionIdForTarget(target, groups) : null;
+        if (questionId) ids.add(questionId);
+      }
+    }
+    return ids;
+  }, [activeReviewGroups, activeReviewTargetIssues, draft.targets, groups]);
 
   const reloadGroups = async (): Promise<ValueGroupView[]> => {
     const nextGroups = await listValueGroups(project.id);
@@ -235,6 +272,21 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
       active = false;
     };
   }, [project.currentSourceRevisionId, project.id, project.responseCount]);
+
+  useEffect(() => {
+    setSourceTargetIssues(sourceReview?.targetIssues ?? []);
+    setSourceReviewOpen(false);
+  }, [sourceReview?.sourceRevisionId]);
+
+  useEffect(() => {
+    if (!loaded || !sourceReview) return;
+    const timer = window.setTimeout(() => {
+      void validateTargetDraft(draft)
+        .then((result) => setSourceTargetIssues(result.issues))
+        .catch(() => undefined);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [draft, loaded, sourceReview?.sourceRevisionId]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -759,6 +811,14 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     }
   };
 
+  const removeReviewTargets = (issue: TargetIssue) => {
+    const ids = new Set(issue.targetIds.map(String));
+    setDraft((current) => ({
+      ...current,
+      targets: current.targets.filter((target) => !ids.has(String(target.id))),
+    }));
+  };
+
   const navigateToIssue = (issue: TargetIssue) => {
     const targetIdValue = issue.targetIds[0];
     const target = targetIdValue
@@ -947,6 +1007,19 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                 <span className="tabular-nums text-muted-foreground">+{additions}명</span>
               ) : null}
             </div>
+            {sourceReviewCount > 0 ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 text-destructive"
+                onClick={() => setSourceReviewOpen(true)}
+              >
+                확인 필요 {sourceReviewCount}
+              </Button>
+            ) : sourceReview ? (
+              <span className="text-xs text-muted-foreground">원본 업데이트 확인 완료</span>
+            ) : null}
             {profileBusy ? (
               <span className="text-xs text-muted-foreground">분포 갱신 중…</span>
             ) : null}
@@ -991,6 +1064,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
               <div className="max-h-[560px] overflow-y-auto p-2">
                 {filteredQuestions.map((question) => {
                   const count = targetCountFor(question.id);
+                  const needsReview = reviewQuestionIds.has(question.id);
                   return (
                     <button
                       key={question.id}
@@ -1001,9 +1075,14 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                       }`}
                     >
                       <span className="line-clamp-2 min-w-0">{question.title}</span>
-                      {count > 0 ? (
-                        <span className="shrink-0 text-xs font-normal text-muted-foreground">
-                          목표 {count}
+                      {needsReview || count > 0 ? (
+                        <span className="shrink-0 text-right text-xs font-normal">
+                          {needsReview ? (
+                            <span className="block text-destructive">확인 필요</span>
+                          ) : null}
+                          {count > 0 ? (
+                            <span className="block text-muted-foreground">목표 {count}</span>
+                          ) : null}
                         </span>
                       ) : null}
                     </button>
@@ -1109,6 +1188,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                       targets={draft.targets}
                       profile={profile}
                       busy={groupBusy}
+                      invalidGroupIds={sourceReview?.invalidValueGroupIds ?? []}
                       onOpenTarget={openTarget}
                       onSaveGroup={saveGroup}
                       onDeleteGroup={requestDeleteGroup}
@@ -1308,6 +1388,114 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      <Dialog open={sourceReviewOpen} onOpenChange={setSourceReviewOpen}>
+        <DialogContent className="sm:max-w-[640px]">
+          <DialogHeader>
+            <DialogTitle>원본 업데이트 후 확인이 필요합니다</DialogTitle>
+            <DialogDescription>
+              저장된 그룹과 목표를 자동으로 바꾸지 않았습니다. 필요한 항목만 직접 확인하거나
+              제거하세요.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="divide-y">
+            {activeReviewGroups.map((group) => {
+              const question = questions.find((candidate) => candidate.id === group.questionId);
+              return (
+                <div key={group.id} className="flex items-center justify-between gap-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">그룹 · {group.name}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {question?.title ?? "원본에서 사라진 문항"}
+                    </p>
+                  </div>
+                  {question ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setSelectedQuestionId(question.id);
+                        setWorkspaceView("setup");
+                        setSourceReviewOpen(false);
+                      }}
+                    >
+                      문항으로 이동
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive"
+                      onClick={() => {
+                        setSourceReviewOpen(false);
+                        requestDeleteGroup(group);
+                      }}
+                    >
+                      그룹 삭제
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+            {activeReviewTargetIssues.map((issue, index) => {
+              const target = issue.targetIds
+                .map((issueTargetId) =>
+                  draft.targets.find((candidate) => String(candidate.id) === String(issueTargetId)),
+                )
+                .find((candidate) => candidate !== undefined);
+              const questionId = target ? questionIdForTarget(target, groups) : null;
+              const question = questionId
+                ? questions.find((candidate) => candidate.id === questionId)
+                : undefined;
+              return (
+                <div
+                  key={`${issue.code}-${index}`}
+                  className="flex items-start justify-between gap-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">목표 설정</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{issueMessage(issue)}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {question ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setSelectedQuestionId(question.id);
+                          setWorkspaceView("setup");
+                          setSourceReviewOpen(false);
+                        }}
+                      >
+                        문항으로 이동
+                      </Button>
+                    ) : null}
+                    {issue.targetIds.length > 0 ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive"
+                        onClick={() => removeReviewTargets(issue)}
+                      >
+                        목표 제거
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setSourceReviewOpen(false)}>
+              닫기
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={deleteBlockedGroup !== null}

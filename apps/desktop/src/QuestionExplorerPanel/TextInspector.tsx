@@ -38,6 +38,7 @@ type TextInspectorProps = {
   targets: TargetDraftTarget[];
   profile: TargetProfileResult | null;
   busy: boolean;
+  invalidGroupIds: readonly string[];
   onOpenTarget: (editing: EditingTarget) => void;
   onSaveGroup: (previous: ValueGroupView | null, name: string, members: string[]) => Promise<void>;
   onDeleteGroup: (group: ValueGroupView) => void;
@@ -50,6 +51,7 @@ export function TextInspector({
   targets,
   profile,
   busy,
+  invalidGroupIds,
   onOpenTarget,
   onSaveGroup,
   onDeleteGroup,
@@ -112,6 +114,7 @@ export function TextInspector({
                 valueGroupId: group.id,
               };
               const target = subjectTarget(targets, editing);
+              const needsReview = invalidGroupIds.includes(group.id);
               const overlapCount = questionGroups.filter(
                 (candidate) =>
                   candidate.id !== group.id &&
@@ -126,7 +129,14 @@ export function TextInspector({
                     onClick={() => onOpenTarget(editing)}
                   >
                     <div className="flex items-baseline justify-between gap-3">
-                      <span className="truncate text-sm font-medium">{group.name}</span>
+                      <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                        <span className="truncate">{group.name}</span>
+                        {needsReview ? (
+                          <span className="shrink-0 text-xs font-normal text-destructive">
+                            확인 필요
+                          </span>
+                        ) : null}
+                      </span>
                       <span className="shrink-0 text-sm tabular-nums">
                         {metric?.count ?? 0}명 · {((metric?.share ?? 0) * 100).toFixed(1)}%
                       </span>

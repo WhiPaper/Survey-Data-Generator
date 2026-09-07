@@ -11,6 +11,7 @@ import {
   type GoogleAccountView,
   parseRpcResult,
   type ProjectDetailView,
+  type ProjectSourceRefreshResult,
   type ProjectSummaryView,
   type RpcMethod,
   type RunExportFormat,
@@ -156,6 +157,16 @@ export const getProject = (
   projectId: string,
   backend?: BackendInvoker,
 ): Promise<ProjectDetailView | null> => callBackend("projects.get", { projectId }, backend);
+export const refreshProjectSource = (
+  projectId: string,
+  operationId?: string,
+  backend?: BackendInvoker,
+): Promise<ProjectSourceRefreshResult> =>
+  callBackend(
+    "projects.refreshSource",
+    { projectId, ...(operationId === undefined ? {} : { operationId }) },
+    backend,
+  );
 export const deleteProject = (projectId: string, backend?: BackendInvoker): Promise<{ ok: true }> =>
   callBackend("projects.delete", { projectId }, backend);
 
