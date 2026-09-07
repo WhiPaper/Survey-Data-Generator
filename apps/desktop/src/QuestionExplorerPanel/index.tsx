@@ -1083,7 +1083,10 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
             {editing?.subjectKind === "checkbox_option" ? (
               <div className="space-y-2">
                 <label className="text-sm font-medium">기준</label>
-                <Select value={populationGroupId} onValueChange={changePopulation}>
+                <Select
+                  value={populationGroupId}
+                  onValueChange={(value) => value && changePopulation(value)}
+                >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>

@@ -243,8 +243,10 @@ export const questionIdForTarget = (
   groups: readonly ValueGroupView[],
 ): string | null => {
   if (target.kind === "mean" || target.kind === "conditional_share") return target.questionId;
-  if (target.subject.kind !== "value_group") return target.subject.questionId;
-  return groups.find((group) => group.id === target.subject.valueGroupId)?.questionId ?? null;
+  if ("valueGroupId" in target.subject) {
+    return groups.find((group) => group.id === target.subject.valueGroupId)?.questionId ?? null;
+  }
+  return target.subject.questionId;
 };
 
 export const dependentTargets = (
@@ -273,7 +275,7 @@ export const targetLabel = (
     const group = groups.find((candidate) => candidate.id === target.population.valueGroupId);
     return `${group?.name ?? "그룹"} 중 ${option?.label ?? "선택지"}`;
   }
-  if (target.subject.kind === "value_group") {
+  if ("valueGroupId" in target.subject) {
     return groups.find((group) => group.id === target.subject.valueGroupId)?.name ?? "그룹";
   }
   const question = questions.find((candidate) => candidate.id === target.subject.questionId);
@@ -348,7 +350,7 @@ export const currentValue = (
   }
   if (target.kind === "conditional_share") return "—";
   const metric =
-    target.subject.kind === "value_group"
+    "valueGroupId" in target.subject
       ? valueGroupMetric(profile, target.subject.valueGroupId)
       : subjectMetricFor(
           profile,

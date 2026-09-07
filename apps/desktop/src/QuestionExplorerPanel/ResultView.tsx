@@ -76,7 +76,7 @@ export function ResultView({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Select value={context.run.runId} onValueChange={onSelectRun}>
+          <Select value={context.run.runId} onValueChange={(value) => value && onSelectRun(value)}>
             <SelectTrigger className="w-[180px]">
               <SelectValue />
             </SelectTrigger>
