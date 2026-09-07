@@ -20,7 +20,8 @@ import {
   logout,
   pingBackend,
 } from "./api/backend";
-import { SynthesisPanel } from "./SynthesisPanel";
+import { Button } from "@/components/ui/button";
+import { QuestionExplorerPanel } from "./QuestionExplorerPanel";
 
 type RuntimeState = "checking" | "ready" | "error";
 
@@ -29,38 +30,34 @@ const errorMessage = (error: unknown): string =>
 
 export function AppShell() {
   const [runtimeState, setRuntimeState] = useState<RuntimeState>("checking");
-  const [message, setMessage] = useState("Electron Main 연결 확인 중…");
+  const [message, setMessage] = useState("앱을 준비하고 있습니다…");
   const [session, setSession] = useState<SessionView | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
   const [forms, setForms] = useState<FormListItem[]>([]);
-  const [formsBusy, setFormsBusy] = useState(false);
-  const [formsError, setFormsError] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummaryView[]>([]);
-  const [projectsBusy, setProjectsBusy] = useState(false);
-  const [projectsError, setProjectsError] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState<ProjectDetailView | null>(null);
+  const [projectsBusy, setProjectsBusy] = useState(false);
+  const [formsBusy, setFormsBusy] = useState(false);
   const [importOperationId, setImportOperationId] = useState<string | null>(null);
   const [importingFormId, setImportingFormId] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<FormImportResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
 
     void pingBackend()
-      .then(async (result) => {
+      .then(async () => {
         const restored = await getSession();
         if (!active) return;
         setSession(restored);
         setRuntimeState("ready");
-        setMessage(
-          result.message === "pong" ? "Electron Main 연결됨" : "Electron Main 응답 확인됨",
-        );
+        setMessage("");
       })
-      .catch((error: unknown) => {
+      .catch((cause: unknown) => {
         if (!active) return;
         setRuntimeState("error");
-        setMessage(errorMessage(error));
+        setMessage(errorMessage(cause));
       });
 
     return () => {
@@ -75,11 +72,11 @@ export function AppShell() {
       setSelectedProject(null);
       return;
     }
+
     let active = true;
     setFormsBusy(true);
     setProjectsBusy(true);
-    setFormsError(null);
-    setProjectsError(null);
+    setError(null);
 
     void Promise.all([listForms(), listProjects()])
       .then(([formsResult, projectResult]) => {
@@ -87,11 +84,8 @@ export function AppShell() {
         setForms(formsResult.items);
         setProjects(projectResult);
       })
-      .catch((error: unknown) => {
-        if (!active) return;
-        const text = errorMessage(error);
-        setFormsError(text);
-        setProjectsError(text);
+      .catch((cause: unknown) => {
+        if (active) setError(errorMessage(cause));
       })
       .finally(() => {
         if (!active) return;
@@ -104,13 +98,25 @@ export function AppShell() {
     };
   }, [session?.account.id]);
 
+  const openProject = async (projectId: string): Promise<void> => {
+    setProjectsBusy(true);
+    setError(null);
+    try {
+      setSelectedProject(await getProject(projectId));
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
+    } finally {
+      setProjectsBusy(false);
+    }
+  };
+
   const handleLogin = async (): Promise<void> => {
     setAuthBusy(true);
-    setAuthError(null);
+    setError(null);
     try {
       setSession(await login());
-    } catch (error: unknown) {
-      setAuthError(errorMessage(error));
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
     } finally {
       setAuthBusy(false);
     }
@@ -118,71 +124,15 @@ export function AppShell() {
 
   const handleLogout = async (): Promise<void> => {
     setAuthBusy(true);
-    setAuthError(null);
+    setError(null);
     try {
       await logout();
       setSession(null);
-      setImportSummary(null);
       setSelectedProject(null);
-    } catch (error: unknown) {
-      setAuthError(errorMessage(error));
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
     } finally {
       setAuthBusy(false);
-    }
-  };
-
-  const reloadForms = async (): Promise<void> => {
-    setFormsBusy(true);
-    setFormsError(null);
-    try {
-      setForms((await listForms()).items);
-    } catch (error: unknown) {
-      setFormsError(errorMessage(error));
-    } finally {
-      setFormsBusy(false);
-    }
-  };
-
-  const reloadProjects = async (): Promise<void> => {
-    setProjectsBusy(true);
-    setProjectsError(null);
-    try {
-      setProjects(await listProjects());
-    } catch (error: unknown) {
-      setProjectsError(errorMessage(error));
-    } finally {
-      setProjectsBusy(false);
-    }
-  };
-
-  const openProject = async (projectId: string): Promise<void> => {
-    setProjectsBusy(true);
-    setProjectsError(null);
-    try {
-      setSelectedProject(await getProject(projectId));
-    } catch (error: unknown) {
-      setProjectsError(errorMessage(error));
-    } finally {
-      setProjectsBusy(false);
-    }
-  };
-
-  const handleDeleteProject = async (project: ProjectSummaryView): Promise<void> => {
-    if (!window.confirm(`프로젝트 “${project.name}”을 삭제할까요? 저장된 Run도 함께 삭제됩니다.`)) {
-      return;
-    }
-
-    setProjectsBusy(true);
-    setProjectsError(null);
-    try {
-      await deleteProject(project.id);
-      if (selectedProject?.id === project.id) setSelectedProject(null);
-      if (importSummary?.projectId === project.id) setImportSummary(null);
-      setProjects(await listProjects());
-    } catch (error: unknown) {
-      setProjectsError(errorMessage(error));
-    } finally {
-      setProjectsBusy(false);
     }
   };
 
@@ -191,253 +141,199 @@ export function AppShell() {
     setImportOperationId(operationId);
     setImportingFormId(form.formId);
     setImportSummary(null);
-    setFormsError(null);
+    setError(null);
+
     try {
       const summary = await importForm(form.formId, operationId);
       setImportSummary(summary);
-      await reloadProjects();
+      setProjects(await listProjects());
       await openProject(summary.projectId);
-    } catch (error: unknown) {
-      setFormsError(errorMessage(error));
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
     } finally {
       setImportOperationId(null);
       setImportingFormId(null);
     }
   };
 
-  const handleCancelImport = async (): Promise<void> => {
-    if (!importOperationId) return;
+  const handleDeleteProject = async (project: ProjectSummaryView): Promise<void> => {
+    if (
+      !window.confirm(
+        `“${project.name}” 프로젝트를 삭제할까요? Google Form 원본은 변경되지 않습니다.`,
+      )
+    ) {
+      return;
+    }
+
+    setProjectsBusy(true);
+    setError(null);
     try {
-      await cancelFormImport(importOperationId);
-    } catch (error: unknown) {
-      setFormsError(errorMessage(error));
+      await deleteProject(project.id);
+      if (selectedProject?.id === project.id) setSelectedProject(null);
+      setProjects(await listProjects());
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
+    } finally {
+      setProjectsBusy(false);
     }
   };
 
+  if (runtimeState !== "ready") {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background text-foreground">
+        <p className="text-sm text-muted-foreground">{message}</p>
+      </main>
+    );
+  }
+
+  if (!session) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background px-6 text-foreground">
+        <section className="w-full max-w-sm text-center">
+          <h1 className="text-xl font-semibold tracking-tight">Survey Data Generator</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Google Forms의 기존 응답을 바탕으로 원하는 분포의 응답 데이터를 만듭니다.
+          </p>
+          <Button className="mt-6" disabled={authBusy} onClick={() => void handleLogin()}>
+            {authBusy ? "연결 중…" : "Google로 계속"}
+          </Button>
+          <p className="mt-3 text-xs text-muted-foreground">
+            프로젝트와 생성 결과는 이 기기에 저장됩니다.
+          </p>
+          {error ? <p className="mt-4 text-sm text-destructive">{error}</p> : null}
+        </section>
+      </main>
+    );
+  }
+
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        padding: 32,
-        background: "var(--background)",
-        color: "var(--foreground)",
-      }}
-    >
-      <section style={{ width: "min(760px, 100%)" }}>
-        <p style={{ margin: 0, fontSize: 14, opacity: 0.6 }}>Survey Synth v2</p>
-        <h1 style={{ margin: "8px 0 12px", fontSize: 28, fontWeight: 600 }}>Desktop runtime</h1>
-        <p style={{ margin: 0, fontSize: 15 }}>{message}</p>
+    <main className="min-h-screen bg-background text-foreground">
+      <header className="flex h-12 items-center justify-between border-b px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="shrink-0 text-sm font-semibold">Survey Data Generator</span>
+          {selectedProject ? (
+            <span className="truncate text-sm text-muted-foreground">{selectedProject.name}</span>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="hidden text-xs text-muted-foreground sm:inline">
+            {session.account.email}
+          </span>
+          <Button size="sm" variant="ghost" disabled={authBusy} onClick={() => void handleLogout()}>
+            로그아웃
+          </Button>
+        </div>
+      </header>
 
-        {runtimeState === "ready" && session === null ? (
-          <div style={{ marginTop: 24 }}>
-            <button type="button" disabled={authBusy} onClick={() => void handleLogin()}>
-              {authBusy ? "Google 로그인 중…" : "Google로 로그인"}
-            </button>
-            <p style={{ marginTop: 12, fontSize: 13, opacity: 0.6 }}>
-              로그인은 시스템 브라우저에서 진행되고 토큰은 Renderer에 전달되지 않습니다.
-            </p>
+      {selectedProject ? (
+        <div className="mx-auto w-full max-w-[1440px] px-4 py-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h1 className="text-base font-semibold">{selectedProject.name}</h1>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                원본 응답 {selectedProject.responseCount}개 · 문항 {selectedProject.questionCount}개
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setSelectedProject(null)}>
+              프로젝트 변경
+            </Button>
           </div>
-        ) : null}
-
-        {runtimeState === "ready" && session !== null ? (
-          <div style={{ marginTop: 24 }}>
-            <p style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>
-              {session.account.displayName ?? session.account.email}
+          <QuestionExplorerPanel project={selectedProject} />
+        </div>
+      ) : (
+        <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-8 px-6 py-10 md:grid-cols-2">
+          <section>
+            <h1 className="text-lg font-semibold tracking-tight">프로젝트</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              최근 작업을 열거나 새 Google Form을 가져오세요.
             </p>
-            <p style={{ margin: "4px 0 12px", fontSize: 13, opacity: 0.65 }}>
-              {session.account.email}
-            </p>
-            <button type="button" disabled={authBusy} onClick={() => void handleLogout()}>
-              로그아웃
-            </button>
-
-            <div style={{ marginTop: 28, borderTop: "1px solid currentColor", paddingTop: 20 }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                }}
-              >
-                <h2 style={{ margin: 0, fontSize: 18 }}>프로젝트</h2>
-                <button type="button" disabled={projectsBusy} onClick={() => void reloadProjects()}>
-                  {projectsBusy ? "불러오는 중…" : "새로고침"}
-                </button>
-              </div>
-
-              {!projectsBusy && projects.length === 0 ? (
-                <p style={{ fontSize: 13, opacity: 0.65 }}>저장된 프로젝트가 없습니다.</p>
-              ) : null}
-
-              <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-                {projects.map((project) => (
-                  <div
-                    key={project.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 16,
-                      padding: 12,
-                      border: "1px solid currentColor",
-                      borderRadius: 8,
-                    }}
+            <div className="mt-5 divide-y border-y">
+              {projects.map((project) => (
+                <div key={project.id} className="flex items-center justify-between gap-4 py-3">
+                  <button
+                    type="button"
+                    className="min-w-0 text-left"
+                    disabled={projectsBusy}
+                    onClick={() => void openProject(project.id)}
                   >
-                    <div>
-                      <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{project.name}</p>
-                      <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
-                        응답 {project.responseCount}개 · 질문 {project.questionCount}개
-                      </p>
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        type="button"
-                        disabled={projectsBusy}
-                        onClick={() => void openProject(project.id)}
-                      >
-                        열기
-                      </button>
-                      <button
-                        type="button"
-                        disabled={projectsBusy}
-                        onClick={() => void handleDeleteProject(project)}
-                      >
-                        삭제
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    <p className="truncate text-sm font-medium">{project.name}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      응답 {project.responseCount}개 · 문항 {project.questionCount}개
+                    </p>
+                  </button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={projectsBusy}
+                    onClick={() => void handleDeleteProject(project)}
+                  >
+                    삭제
+                  </Button>
+                </div>
+              ))}
+              {!projectsBusy && projects.length === 0 ? (
+                <p className="py-5 text-sm text-muted-foreground">아직 만든 프로젝트가 없습니다.</p>
+              ) : null}
+            </div>
+          </section>
 
-              {selectedProject ? (
-                <div style={{ marginTop: 12 }}>
-                  <div style={{ padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
-                    <p style={{ margin: 0, fontWeight: 600 }}>
-                      열린 프로젝트: {selectedProject.name}
-                    </p>
-                    <p style={{ margin: "6px 0 0", fontSize: 13 }}>
-                      SourceRevision {selectedProject.currentSourceRevisionId} · 응답{" "}
-                      {selectedProject.responseCount}개
-                    </p>
-                    {selectedProject.responseTimestampRange ? (
-                      <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
-                        {selectedProject.responseTimestampRange.start} →{" "}
-                        {selectedProject.responseTimestampRange.end}
-                      </p>
+          <section>
+            <h2 className="text-lg font-semibold tracking-tight">Google Forms</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              사용할 Form을 선택해 프로젝트를 만듭니다.
+            </p>
+            <div className="mt-5 divide-y border-y">
+              {forms.map((form) => (
+                <div key={form.formId} className="flex items-center justify-between gap-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{form.title}</p>
+                    {form.modifiedAt ? (
+                      <p className="mt-0.5 text-xs text-muted-foreground">수정 {form.modifiedAt}</p>
                     ) : null}
                   </div>
-                  <SynthesisPanel project={selectedProject} />
-                </div>
-              ) : null}
-            </div>
-
-            <div style={{ marginTop: 28, borderTop: "1px solid currentColor", paddingTop: 20 }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                }}
-              >
-                <h2 style={{ margin: 0, fontSize: 18 }}>Google Forms</h2>
-                <button type="button" disabled={formsBusy} onClick={() => void reloadForms()}>
-                  {formsBusy ? "불러오는 중…" : "새로고침"}
-                </button>
-              </div>
-
-              {!formsBusy && forms.length === 0 ? (
-                <p style={{ fontSize: 13, opacity: 0.65 }}>접근 가능한 Google Form이 없습니다.</p>
-              ) : null}
-
-              <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-                {forms.map((form) => (
-                  <div
-                    key={form.formId}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 16,
-                      padding: 12,
-                      border: "1px solid currentColor",
-                      borderRadius: 8,
-                    }}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={formsBusy || importingFormId !== null}
+                    onClick={() => void handleImport(form)}
                   >
-                    <div style={{ minWidth: 0 }}>
-                      <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{form.title}</p>
-                      {form.modifiedAt ? (
-                        <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
-                          수정: {form.modifiedAt}
-                        </p>
-                      ) : null}
-                    </div>
-                    <button
-                      type="button"
-                      disabled={importingFormId !== null}
-                      onClick={() => void handleImport(form)}
-                    >
-                      {importingFormId === form.formId ? "가져오는 중…" : "가져오기"}
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              {importOperationId ? (
-                <button
-                  type="button"
-                  style={{ marginTop: 12 }}
-                  onClick={() => void handleCancelImport()}
-                >
-                  가져오기 취소
-                </button>
-              ) : null}
-
-              {importSummary ? (
-                <div
-                  style={{
-                    marginTop: 16,
-                    padding: 12,
-                    border: "1px solid currentColor",
-                    borderRadius: 8,
-                  }}
-                >
-                  <p style={{ margin: 0, fontWeight: 600 }}>프로젝트 생성 완료</p>
-                  <p style={{ margin: "6px 0 0", fontSize: 13 }}>
-                    {importSummary.title} · 응답 {importSummary.responseCount}개 · 질문{" "}
-                    {importSummary.questionCount}개
-                  </p>
-                  <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
-                    프로젝트 ID: {importSummary.projectId}
-                  </p>
-                  <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.6 }}>
-                    SourceRevision ID: {importSummary.sourceRevisionId}
-                  </p>
+                    {importingFormId === form.formId ? "가져오는 중…" : "가져오기"}
+                  </Button>
                 </div>
+              ))}
+              {!formsBusy && forms.length === 0 ? (
+                <p className="py-5 text-sm text-muted-foreground">
+                  접근 가능한 Google Form이 없습니다.
+                </p>
               ) : null}
             </div>
-          </div>
-        ) : null}
+            {importOperationId ? (
+              <Button
+                className="mt-3"
+                size="sm"
+                variant="ghost"
+                onClick={() => void cancelFormImport(importOperationId)}
+              >
+                가져오기 취소
+              </Button>
+            ) : null}
+            {importSummary ? (
+              <p className="mt-3 text-sm text-muted-foreground">
+                {importSummary.title} 프로젝트를 만들었습니다.
+              </p>
+            ) : null}
+          </section>
+        </div>
+      )}
 
-        {authError ? (
-          <p role="alert" style={{ marginTop: 16, fontSize: 13 }}>
-            {authError}
-          </p>
-        ) : null}
-        {formsError ? (
-          <p role="alert" style={{ marginTop: 16, fontSize: 13 }}>
-            {formsError}
-          </p>
-        ) : null}
-        {projectsError ? (
-          <p role="alert" style={{ marginTop: 16, fontSize: 13 }}>
-            {projectsError}
-          </p>
-        ) : null}
-      </section>
+      {error ? (
+        <p
+          role="alert"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 rounded-md border bg-background px-3 py-2 text-sm text-destructive shadow-sm"
+        >
+          {error}
+        </p>
+      ) : null}
     </main>
   );
 }
