@@ -320,9 +320,8 @@ const confirmedNotReachedQuestions = (
       continue;
     }
     if (transition.destination.type !== "section") continue;
-    const destination = form.logic.sections.find(
-      (section) => section.id === transition.destination.sectionId,
-    );
+    const destinationSectionId = transition.destination.sectionId;
+    const destination = form.logic.sections.find((section) => section.id === destinationSectionId);
     if (!destination || destination.order <= sourceSection.order) continue;
     for (const section of form.logic.sections) {
       if (section.order > sourceSection.order && section.order < destination.order) {
