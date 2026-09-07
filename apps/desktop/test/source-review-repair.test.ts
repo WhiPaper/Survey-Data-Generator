@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { TargetDraft } from "@survey-synth/contracts";
 
-import { planValueGroupRepair } from "../src/QuestionExplorerPanel/sourceReviewRepair";
+import {
+  executeValueGroupRepair,
+  planValueGroupRepair,
+} from "../src/QuestionExplorerPanel/sourceReviewRepair";
 
 const draft: TargetDraft = {
   projectId: "project-1",
@@ -66,5 +69,62 @@ describe("source review ValueGroup repair", () => {
 
     expect(plan.removedTargetIds).toEqual([]);
     expect(plan.draft).toBe(draft);
+  });
+
+  it("persists the filtered draft before deleting the group", async () => {
+    const calls: string[] = [];
+    const persistDraft = vi.fn(async (nextDraft: TargetDraft) => {
+      calls.push(`save:${nextDraft.targets.length}`);
+    });
+    const deleteGroup = vi.fn(async (valueGroupId: string) => {
+      calls.push(`delete:${valueGroupId}`);
+    });
+
+    const plan = await executeValueGroupRepair({
+      draft,
+      valueGroupId: "group-1",
+      persistDraft,
+      deleteGroup,
+    });
+
+    expect(plan.removedTargetIds).toHaveLength(2);
+    expect(calls).toEqual(["save:3", "delete:group-1"]);
+  });
+
+  it("does not delete the group when draft persistence fails", async () => {
+    const persistDraft = vi.fn(async () => {
+      throw new Error("save failed");
+    });
+    const deleteGroup = vi.fn(async () => undefined);
+
+    await expect(
+      executeValueGroupRepair({
+        draft,
+        valueGroupId: "group-1",
+        persistDraft,
+        deleteGroup,
+      }),
+    ).rejects.toThrow("save failed");
+    expect(deleteGroup).not.toHaveBeenCalled();
+  });
+
+  it("keeps the persisted target removal when group deletion fails", async () => {
+    let savedDraft: TargetDraft | null = null;
+    const persistDraft = vi.fn(async (nextDraft: TargetDraft) => {
+      savedDraft = nextDraft;
+    });
+    const deleteGroup = vi.fn(async () => {
+      throw new Error("delete failed");
+    });
+
+    await expect(
+      executeValueGroupRepair({
+        draft,
+        valueGroupId: "group-1",
+        persistDraft,
+        deleteGroup,
+      }),
+    ).rejects.toThrow("delete failed");
+    expect(savedDraft?.targets).toHaveLength(3);
   });
 });
