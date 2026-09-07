@@ -143,7 +143,9 @@ describe("synthesis flat parquet transport", () => {
     expect(valueGroupMemberCells(responses, "q-choice" as never, ["festival"], form)).toEqual([
       JSON.stringify(festivalSlot),
     ]);
-    expect(valueGroupMemberCells(responses, "q-choice" as never, ["performance"], form)).toEqual([]);
+    expect(valueGroupMemberCells(responses, "q-choice" as never, ["performance"], form)).toEqual(
+      [],
+    );
     expect(
       valueGroupMemberCells(
         [{ responseId: "r-text", submittedAtMs: 3, response: original }],

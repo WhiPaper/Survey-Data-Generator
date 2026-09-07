@@ -188,18 +188,14 @@ const candidateColumn = (
   return answerColumn ? { column: answerColumn, kind: "answer_slot" } : null;
 };
 
-const confirmedRoutingRules = (
-  form: FormSnapshot,
-  plan: FlatTablePlan,
-): CandidateRoutingRule[] => {
+const confirmedRoutingRules = (form: FormSnapshot, plan: FlatTablePlan): CandidateRoutingRule[] => {
+  if (!form.logic) return [];
   const sectionByQuestion = new Map(
     form.logic.sections.flatMap((section) =>
       section.questionIds.map((questionId) => [questionId, section] as const),
     ),
   );
-  const sectionById = new Map(
-    form.logic.sections.map((section) => [section.id, section] as const),
-  );
+  const sectionById = new Map(form.logic.sections.map((section) => [section.id, section] as const));
   const rules: CandidateRoutingRule[] = [];
 
   for (const transition of form.logic.transitions) {

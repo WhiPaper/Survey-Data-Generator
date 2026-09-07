@@ -118,9 +118,7 @@ describe("correctness regressions", () => {
     ).toEqual([canonicalA, canonicalC]);
     expect(
       valueGroupMemberCells(responses, "q-text" as never, ["seen", "unseen"], valueGroupForm),
-    ).toEqual([
-      JSON.stringify({ state: "answered", value: { kind: "text", value: "seen" } }),
-    ]);
+    ).toEqual([JSON.stringify({ state: "answered", value: { kind: "text", value: "seen" } })]);
   });
 
   it("rejects a synthetic downstream answer after a confirmed submit branch", async () => {
