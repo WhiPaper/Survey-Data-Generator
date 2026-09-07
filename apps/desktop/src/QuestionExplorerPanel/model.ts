@@ -243,10 +243,11 @@ export const questionIdForTarget = (
   groups: readonly ValueGroupView[],
 ): string | null => {
   if (target.kind === "mean" || target.kind === "conditional_share") return target.questionId;
-  if ("valueGroupId" in target.subject) {
-    return groups.find((group) => group.id === target.subject.valueGroupId)?.questionId ?? null;
+  const subject = target.subject;
+  if (subject.kind === "value_group") {
+    return groups.find((group) => group.id === subject.valueGroupId)?.questionId ?? null;
   }
-  return target.subject.questionId;
+  return subject.questionId;
 };
 
 export const dependentTargets = (
@@ -275,13 +276,12 @@ export const targetLabel = (
     const group = groups.find((candidate) => candidate.id === target.population.valueGroupId);
     return `${group?.name ?? "그룹"} 중 ${option?.label ?? "선택지"}`;
   }
-  if ("valueGroupId" in target.subject) {
-    return groups.find((group) => group.id === target.subject.valueGroupId)?.name ?? "그룹";
+  const subject = target.subject;
+  if (subject.kind === "value_group") {
+    return groups.find((group) => group.id === subject.valueGroupId)?.name ?? "그룹";
   }
-  const question = questions.find((candidate) => candidate.id === target.subject.questionId);
-  return (
-    question?.options.find((option) => option.key === target.subject.optionKey)?.label ?? "선택지"
-  );
+  const question = questions.find((candidate) => candidate.id === subject.questionId);
+  return question?.options.find((option) => option.key === subject.optionKey)?.label ?? "선택지";
 };
 
 export const issueMessage = (issue: TargetIssue): string => {
@@ -349,15 +349,11 @@ export const currentValue = (
     return metric ? metric.mean.toFixed(2) : "—";
   }
   if (target.kind === "conditional_share") return "—";
+  const subject = target.subject;
   const metric =
-    "valueGroupId" in target.subject
-      ? valueGroupMetric(profile, target.subject.valueGroupId)
-      : subjectMetricFor(
-          profile,
-          target.subject.kind,
-          target.subject.questionId,
-          target.subject.optionKey,
-        );
+    subject.kind === "value_group"
+      ? valueGroupMetric(profile, subject.valueGroupId)
+      : subjectMetricFor(profile, subject.kind, subject.questionId, subject.optionKey);
   if (!metric) return "—";
   return target.kind === "count" ? `${metric.count}명` : formatShare(metric.share);
 };
