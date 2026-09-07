@@ -52,10 +52,7 @@ describe("source review ValueGroup repair", () => {
   it("removes only targets that depend on the explicitly repaired group", () => {
     const plan = planValueGroupRepair(draft, "group-1");
 
-    expect(plan.removedTargetIds).toEqual([
-      "share:value_group:group-1",
-      "conditional:group-1",
-    ]);
+    expect(plan.removedTargetIds).toEqual(["share:value_group:group-1", "conditional:group-1"]);
     expect(plan.draft.targets.map((target) => String(target.id))).toEqual([
       "count:value_group:group-2",
       "share:option:q-choice:opt-a",
