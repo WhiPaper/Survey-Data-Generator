@@ -38,7 +38,9 @@ const profile: TargetProfileResult = {
   ],
 };
 
-const question = (value: Partial<QuestionView> & Pick<QuestionView, "id" | "kind">): QuestionView => ({
+const question = (
+  value: Partial<QuestionView> & Pick<QuestionView, "id" | "kind">,
+): QuestionView => ({
   id: value.id,
   kind: value.kind,
   title: value.title ?? value.id,

@@ -57,6 +57,7 @@ import {
 import { ResultView, type RunContext } from "./ResultView";
 import { TextInspector } from "./TextInspector";
 import { createDraftSaveCoordinator } from "./draftSaveCoordinator";
+import { questionPopulationText } from "./questionPopulation";
 import { executeValueGroupRepair } from "./sourceReviewRepair";
 import {
   conditionalProfileMetric,
@@ -437,15 +438,6 @@ export function QuestionExplorerPanel({
   const selectedOrdinalDistribution =
     selectedQuestion?.kind === "ordinal"
       ? ordinalDistributionMetric(profile, selectedQuestion.id)
-      : undefined;
-
-  const selectedCheckboxDenominator =
-    selectedQuestion?.kind === "multi_choice"
-      ? selectedQuestion.options
-          .map((option) =>
-            subjectMetricFor(profile, "checkbox_option", selectedQuestion.id, option.key),
-          )
-          .find((metric) => metric !== undefined)?.denominatorCount
       : undefined;
 
   const openTarget = (editingTarget: EditingTarget) => {
@@ -1172,9 +1164,7 @@ export function QuestionExplorerPanel({
                       {selectedQuestion.title}
                     </h2>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {selectedQuestion.kind === "multi_choice"
-                        ? `복수 선택 · 응답 대상 ${selectedCheckboxDenominator ?? 0}명`
-                        : `${kindLabel(selectedQuestion.kind)} · 응답 ${sourceCount}명`}
+                      {questionPopulationText(selectedQuestion, profile, sourceCount)}
                     </p>
                   </header>
 

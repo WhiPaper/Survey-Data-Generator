@@ -1,11 +1,6 @@
 import type { TargetProfileResult } from "@survey-synth/contracts";
 
-import {
-  kindLabel,
-  ordinalDistributionMetric,
-  subjectMetricFor,
-  type QuestionView,
-} from "./model";
+import { kindLabel, ordinalDistributionMetric, subjectMetricFor, type QuestionView } from "./model";
 
 const choiceDenominator = (
   question: QuestionView,
