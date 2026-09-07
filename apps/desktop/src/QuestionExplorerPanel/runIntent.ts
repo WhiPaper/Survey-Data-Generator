@@ -17,7 +17,8 @@ export const runIntentLabel = (
 ): string => {
   const goal = `목표 ${goalValue(outcome)}`;
   if (!intent || intent.kind === "absolute") return goal;
-  if (intent.kind === "count_delta") return `${intent.value > 0 ? "+" : ""}${intent.value}명 / ${goal}`;
+  if (intent.kind === "count_delta")
+    return `${intent.value > 0 ? "+" : ""}${intent.value}명 / ${goal}`;
   if (intent.kind === "percentage_point_delta") {
     return `${signed(intent.value * 100, "%p")} / ${goal}`;
   }

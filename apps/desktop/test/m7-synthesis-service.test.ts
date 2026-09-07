@@ -279,6 +279,7 @@ const startPendingPlan = async (database: AppDatabase, workRoot: string, operati
     projectId: "project-1",
     finalCount: 4,
     targets: [{ id: "t-mean" as never, kind: "mean", questionId: "q-score", value: 3 }],
+    targetIntents: [{ targetId: "t-mean" as never, intent: { kind: "absolute", value: 3 } }],
     sourceScope: { kind: "all" },
     seed: 7,
     operationId,
@@ -331,6 +332,10 @@ describe("M7 synthesis approval gate", () => {
 
     const run = await service.getRun(resolved.runId);
     expect(run.targetSnapshot.editPlan?.replacementCount).toBe(1);
+    expect(run.targetSnapshot.targets[0]).toMatchObject({
+      id: "t-mean",
+      intent: { kind: "absolute", value: 3 },
+    });
     expect(run.validation.achieved).toMatchObject({
       targets: [{ targetId: "t-mean", achieved: 3, absoluteError: 0, exact: true }],
     });

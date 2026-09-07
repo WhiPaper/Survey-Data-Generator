@@ -1,10 +1,4 @@
-import type {
-  RunSummary,
-  RunsGetResult,
-  TargetDraft,
-  TargetProfileResult,
-  ValueGroupView,
-} from "@survey-synth/contracts";
+import type { RunSummary, RunsGetResult } from "@survey-synth/contracts";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -22,13 +16,12 @@ import {
 } from "@/components/ui/select";
 import { resultDiagnosticsLines } from "./resultDiagnostics";
 import { runBaselineValue } from "./runBaseline";
+import { runIntentLabel } from "./runIntent";
 import { runPresentationLabel } from "./runPresentation";
-import { intentLabel, outcomeValue, type QuestionView } from "./model";
+import { outcomeValue, type QuestionView } from "./model";
 
 export type RunContext = {
   run: RunsGetResult;
-  draft: TargetDraft | null;
-  profile: TargetProfileResult | null;
 };
 
 type ResultViewProps = {
@@ -36,7 +29,6 @@ type ResultViewProps = {
   summaries: RunSummary[];
   selectedRunId: string;
   questions: QuestionView[];
-  groups: ValueGroupView[];
   exportBusy: boolean;
   onSelectRun: (runId: string) => void;
   onEditTarget: (questionId: string) => void;
@@ -110,6 +102,9 @@ export function ResultView({
           const presentation = context.run.presentations.find(
             (candidate) => String(candidate.targetId) === String(outcome.targetId),
           );
+          const frozenTarget = context.run.targetSnapshot.targets.find(
+            (candidate) => String(candidate.id) === String(outcome.targetId),
+          );
           const label = runPresentationLabel(presentation);
           const difference =
             outcome.kind === "share" || outcome.kind === "conditional_share"
@@ -131,8 +126,8 @@ export function ResultView({
                 {label}
               </button>
               <p className="mt-2 text-base tabular-nums">
-                현재 {runBaselineValue(baseline)} → {intentLabel(undefined, outcome)} → 결과{" "}
-                {outcomeValue(outcome)}
+                현재 {runBaselineValue(baseline)} → {runIntentLabel(frozenTarget?.intent, outcome)}{" "}
+                → 결과 {outcomeValue(outcome)}
               </p>
               {!outcome.exact ? (
                 <p className="mt-1 text-sm text-muted-foreground">목표와 {difference} 차이</p>

@@ -141,10 +141,44 @@ describe("v2 RPC contracts", () => {
               value: 0.6,
             },
           ],
+          targetIntents: [
+            {
+              targetId: "t-share-option",
+              intent: { kind: "relative_percent_delta", value: 0.2 },
+            },
+          ],
           seed: 42,
         },
       }),
-    ).toMatchObject({ method: "synthesis.start" });
+    ).toMatchObject({
+      method: "synthesis.start",
+      params: {
+        targetIntents: [
+          {
+            targetId: "t-share-option",
+            intent: { kind: "relative_percent_delta", value: 0.2 },
+          },
+        ],
+      },
+    });
+  });
+
+  it("rejects target intent metadata for an unknown TargetId", () => {
+    expect(() =>
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "unknown-target-intent",
+        method: "synthesis.start",
+        params: {
+          projectId: "project-1",
+          finalCount: 120,
+          targets: [{ id: "t-mean", kind: "mean", questionId: "q-score", value: 4.3 }],
+          targetIntents: [{ targetId: "missing", intent: { kind: "absolute", value: 4.3 } }],
+          seed: 42,
+        },
+      }),
+    ).toThrow(/must reference a target/);
   });
 
   it("requires stable unique TargetIds", () => {
@@ -424,6 +458,7 @@ describe("v2 RPC contracts", () => {
               id: "t-share",
               kind: "share",
               value: 0.35,
+              intent: { kind: "relative_percent_delta", value: 0.2 },
               subject: {
                 kind: "value_group",
                 valueGroup: {
@@ -528,6 +563,14 @@ describe("v2 RPC contracts", () => {
     ).toMatchObject({
       runId: "run-1",
       finalResponseCount: 120,
+      targetSnapshot: {
+        targets: expect.arrayContaining([
+          expect.objectContaining({
+            id: "t-share",
+            intent: { kind: "relative_percent_delta", value: 0.2 },
+          }),
+        ]),
+      },
       outcome: { targets: [{ targetId: "t-mean" }] },
       baselines: [
         { targetId: "t-mean", kind: "mean", mean: 4.1, denominatorCount: 80 },

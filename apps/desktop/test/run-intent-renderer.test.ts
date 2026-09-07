@@ -18,9 +18,9 @@ const label = (intent: TargetIntent | undefined, targetOutcome: TargetOutcome): 
 
 describe("historical Run intent labels", () => {
   it("shows the original percentage-point change together with the resolved goal", () => {
-    expect(
-      label({ kind: "percentage_point_delta", value: 0.1 }, outcome("share", 0.45)),
-    ).toBe("+10.0%p / 목표 45.0%");
+    expect(label({ kind: "percentage_point_delta", value: 0.1 }, outcome("share", 0.45))).toBe(
+      "+10.0%p / 목표 45.0%",
+    );
   });
 
   it("shows the original relative-percent change together with the resolved goal", () => {
