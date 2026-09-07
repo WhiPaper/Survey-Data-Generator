@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   EditPlanPreview,
   ProjectDetailView,
-  ProjectSourceRefreshResult,
+  ProjectSourceReviewResult,
   RunSummary,
   SourceScope,
   TargetDraft,
@@ -136,7 +136,7 @@ export function QuestionExplorerPanel({
   sourceReview,
 }: {
   project: ProjectDetailView;
-  sourceReview?: ProjectSourceRefreshResult | null;
+  sourceReview?: ProjectSourceReviewResult | null;
 }) {
   const questions = useMemo(() => projectQuestions(project), [project]);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("setup");
@@ -1017,8 +1017,6 @@ export function QuestionExplorerPanel({
               >
                 확인 필요 {sourceReviewCount}
               </Button>
-            ) : sourceReview ? (
-              <span className="text-xs text-muted-foreground">원본 업데이트 확인 완료</span>
             ) : null}
             {profileBusy ? (
               <span className="text-xs text-muted-foreground">분포 갱신 중…</span>

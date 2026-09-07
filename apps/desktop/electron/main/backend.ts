@@ -117,6 +117,24 @@ export const handleBackendCall = async (
       return requireProjects(services).list();
     case "projects.get":
       return requireProjects(services).get((request.params as { projectId: string }).projectId);
+    case "projects.sourceReview": {
+      const projectId = (request.params as { projectId: string }).projectId;
+      const source = await requireProjects(services).sourceReview(projectId);
+      const targetService = requireTargets(services);
+      const draft = await targetService.getDraft(projectId);
+      const targetIssues = draft
+        ? [
+            ...semanticDuplicateTargetIssues(draft.targets),
+            ...(await targetService.validate(draft)).issues,
+          ]
+        : [];
+      return {
+        projectId,
+        sourceRevisionId: source.sourceRevisionId,
+        invalidValueGroupIds: source.invalidValueGroupIds,
+        targetIssues,
+      };
+    }
     case "projects.refreshSource": {
       const params = request.params as ProjectSourceRefreshParams;
       const refreshed = await requireForms(services).refreshProjectSource(params);

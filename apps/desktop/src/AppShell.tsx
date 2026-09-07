@@ -4,7 +4,7 @@ import type {
   FormImportResult,
   FormListItem,
   ProjectDetailView,
-  ProjectSourceRefreshResult,
+  ProjectSourceReviewResult,
   ProjectSummaryView,
   SessionView,
 } from "@survey-synth/contracts";
@@ -13,6 +13,7 @@ import {
   cancelFormImport,
   deleteProject,
   getProject,
+  getProjectSourceReview,
   getSession,
   importForm,
   listForms,
@@ -47,7 +48,7 @@ export function AppShell() {
   const [projects, setProjects] = useState<ProjectSummaryView[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectDetailView | null>(null);
   const [projectsBusy, setProjectsBusy] = useState(false);
-  const [sourceReview, setSourceReview] = useState<ProjectSourceRefreshResult | null>(null);
+  const [sourceReview, setSourceReview] = useState<ProjectSourceReviewResult | null>(null);
   const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [formsBusy, setFormsBusy] = useState(false);
@@ -118,7 +119,12 @@ export function AppShell() {
     setError(null);
     try {
       setSourceReview(null);
-      setSelectedProject(await getProject(projectId));
+      const [project, review] = await Promise.all([
+        getProject(projectId),
+        getProjectSourceReview(projectId),
+      ]);
+      setSelectedProject(project);
+      setSourceReview(review);
     } catch (cause: unknown) {
       setError(errorMessage(cause));
     } finally {
@@ -179,7 +185,12 @@ export function AppShell() {
     try {
       const result = await refreshProjectSource(selectedProject.id, `source-refresh-${Date.now()}`);
       setSelectedProject(result.project);
-      setSourceReview(result);
+      setSourceReview({
+        projectId: result.project.id,
+        sourceRevisionId: result.sourceRevisionId,
+        invalidValueGroupIds: result.invalidValueGroupIds,
+        targetIssues: result.targetIssues,
+      });
       setProjects(await listProjects());
       setRefreshDialogOpen(false);
     } catch (cause: unknown) {
@@ -374,8 +385,8 @@ export function AppShell() {
           <DialogHeader>
             <DialogTitle>Google Forms 원본을 업데이트할까요?</DialogTitle>
             <DialogDescription>
-              현재 문항과 응답을 다시 가져와 새 원본 버전으로 적용합니다. 이전 원본과 생성 결과는
-              그대로 보존되며, 저장한 그룹과 목표도 자동으로 바꾸지 않습니다.
+              현재 문항과 응답을 다시 가져와 새 원본 버전으로 적용합니다. Google Forms의 문항과 응답
+              자체는 변경하지 않습니다. 이전 원본과 생성 결과는 그대로 보존됩니다.
             </DialogDescription>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">

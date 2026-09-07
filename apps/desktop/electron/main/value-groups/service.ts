@@ -113,6 +113,17 @@ export const invalidValueGroupIdsForForm = (
       return [];
     });
 
+export const invalidValueGroupIdsForCurrentSource = (
+  db: SurveyDatabase,
+  projectId: string,
+): { sourceRevisionId: string; invalidValueGroupIds: string[] } => {
+  const { form, revisionId } = loadCurrentForm(db, projectId);
+  return {
+    sourceRevisionId: revisionId,
+    invalidValueGroupIds: invalidValueGroupIdsForForm(db, projectId, form),
+  };
+};
+
 const response = (value: unknown): NormalizedResponse => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw backendFailure("INTERNAL", "Stored normalized response is invalid");

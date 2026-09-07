@@ -480,6 +480,16 @@ export const ProjectSourceRefreshResultSchema = z
   .strict();
 export type ProjectSourceRefreshResult = z.infer<typeof ProjectSourceRefreshResultSchema>;
 
+export const ProjectSourceReviewResultSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    sourceRevisionId: z.string().min(1),
+    invalidValueGroupIds: z.array(z.string().min(1)),
+    targetIssues: z.array(TargetIssueSchema),
+  })
+  .strict();
+export type ProjectSourceReviewResult = z.infer<typeof ProjectSourceReviewResultSchema>;
+
 export const SynthesisSuccessResultSchema = z
   .object({
     status: z.literal("success"),
@@ -669,6 +679,10 @@ export interface BackendRpc {
   "forms.import.cancel": { input: FormsImportCancelParams; output: ActionResult };
   "projects.list": { input: z.infer<typeof EmptyParamsSchema>; output: ProjectSummaryView[] };
   "projects.get": { input: z.infer<typeof ProjectParamsSchema>; output: ProjectDetailView | null };
+  "projects.sourceReview": {
+    input: z.infer<typeof ProjectParamsSchema>;
+    output: ProjectSourceReviewResult;
+  };
   "projects.refreshSource": {
     input: ProjectSourceRefreshParams;
     output: ProjectSourceRefreshResult;
@@ -732,6 +746,7 @@ const rpcMethods = [
   "forms.import.cancel",
   "projects.list",
   "projects.get",
+  "projects.sourceReview",
   "projects.refreshSource",
   "projects.delete",
   "valueGroups.list",
@@ -779,6 +794,7 @@ const rpcParamSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "forms.import.cancel": FormsImportCancelParamsSchema,
   "projects.list": EmptyParamsSchema,
   "projects.get": ProjectParamsSchema,
+  "projects.sourceReview": ProjectParamsSchema,
   "projects.refreshSource": ProjectSourceRefreshParamsSchema,
   "projects.delete": ProjectParamsSchema,
   "valueGroups.list": ValueGroupsListParamsSchema,
@@ -813,6 +829,7 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "forms.import.cancel": ActionResultSchema,
   "projects.list": z.array(ProjectSummarySchema),
   "projects.get": ProjectDetailSchema.nullable(),
+  "projects.sourceReview": ProjectSourceReviewResultSchema,
   "projects.refreshSource": ProjectSourceRefreshResultSchema,
   "projects.delete": ActionResultSchema,
   "valueGroups.list": z.array(ValueGroupSchema),
