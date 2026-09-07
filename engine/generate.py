@@ -197,6 +197,15 @@ def _sample_condition(
     if requested <= 0:
         return pd.DataFrame()
 
+    no_mean_sentinel = (
+        target_column == "__no_mean_score" and target_min == target_max == target_score == 0
+    )
+    sampling_conditions = (
+        {column: value for column, value in condition_values.items() if column != target_column}
+        if no_mean_sentinel
+        else condition_values
+    )
+
     batches: list[pd.DataFrame] = []
     accepted_count = 0
     for _ in range(5):
@@ -205,15 +214,19 @@ def _sample_condition(
             break
         sample_count = max(missing * 2, 20)
         try:
-            sampled = synthesizer.sample_from_conditions(
-                [Condition(num_rows=sample_count, column_values=condition_values)]
-            )
+            if sampling_conditions:
+                sampled = synthesizer.sample_from_conditions(
+                    [Condition(num_rows=sample_count, column_values=sampling_conditions)]
+                )
+            else:
+                sampled = synthesizer.sample(num_rows=sample_count)
         except Exception as error:  # SDV raises several sampling-specific exception classes.
-            details = ", ".join(f"{key}={value!r}" for key, value in condition_values.items())
-            raise RuntimeError(
-                f"SDV could not generate candidates conditioned on {details}: {error}"
-            ) from error
+            details = ", ".join(f"{key}={value!r}" for key, value in sampling_conditions.items())
+            suffix = f" conditioned on {details}" if details else ""
+            raise RuntimeError(f"SDV could not generate candidates{suffix}: {error}") from error
 
+        if no_mean_sentinel:
+            sampled[target_column] = target_score
         numeric = pd.to_numeric(sampled[target_column], errors="coerce")
         valid = _valid_ordinal_rows(sampled, target_column, target_min, target_max)
         valid &= np.isclose(numeric, target_score, atol=1e-9)
@@ -224,7 +237,7 @@ def _sample_condition(
             timestamp_end,
         )
         valid &= _valid_categorical_rows(sampled, allowed_values)
-        for column, value in condition_values.items():
+        for column, value in sampling_conditions.items():
             valid &= sampled[column] == value
         sampled = sampled.loc[valid].copy()
         if sampled.empty:
@@ -237,9 +250,10 @@ def _sample_condition(
         accepted_count += len(sampled)
 
     if accepted_count < requested:
-        details = ", ".join(f"{key}={value!r}" for key, value in condition_values.items())
+        details = ", ".join(f"{key}={value!r}" for key, value in sampling_conditions.items())
+        suffix = f" for {details}" if details else ""
         raise RuntimeError(
-            f"SDV produced only {accepted_count} valid candidates for {details}; required {requested}"
+            f"SDV produced only {accepted_count} valid candidates{suffix}; required {requested}"
         )
     return pd.concat(batches, ignore_index=True).iloc[:requested].copy()
 
