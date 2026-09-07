@@ -34,6 +34,28 @@ Expose project-scoped persisted Run summaries ordered newest first. A summary sh
 
 Selecting one summary continues to use `runs.get` for the immutable historical payload.
 
+## `runs.get` historical target baselines
+
+The Result grammar is `current → intent/goal → result`. For a persisted historical Run, `current` must mean the baseline at the time that Run was created, not the Project's current draft or current source revision.
+
+`runs.get` therefore exposes one typed baseline entry per frozen Run target. Baselines are computed from immutable Run evidence only:
+
+- the Run's persisted `sourceRevisionId`
+- the Run's frozen SourceScope
+- the source responses belonging to that historical revision/scope
+- frozen ValueGroup definitions embedded in the Run target snapshot
+
+Baseline semantics must match `targets.profile`:
+
+- count target: current count
+- share target: current numerator count, eligible denominator count, and share
+- mean target: current mean and answered denominator
+- conditional share target: current numerator count, eligible checkbox denominator inside the frozen ValueGroup population, and share
+
+The backend is authoritative for these values. The renderer must not rebuild historical denominators, reuse the Project's current `targets.profile`, or substitute current ValueGroup definitions for the frozen ValueGroup snapshot.
+
+Historical baseline computation must remain valid after source refreshes, ValueGroup edits/deletions, draft changes, and app restarts because the Run points at immutable source evidence and freezes the target/group definition it used.
+
 ## `runs.get` result diagnostics
 
 The Result view must not inspect raw engine validation records or reconstruct historical row provenance in the renderer.
