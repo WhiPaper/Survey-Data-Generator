@@ -79,6 +79,14 @@ The renderer may call this local review operation whenever a Project is opened a
 
 The local review result uses the same ValueGroup and target-review semantics as the explicit refresh result.
 
+### Review availability must not block Project open
+
+Project detail is the primary local workspace state. A failure while computing review diagnostics must not prevent the renderer from opening an otherwise readable Project.
+
+The renderer should load the Project first, then obtain local review diagnostics as a secondary operation. If that secondary operation fails, keep the Project open and surface a recoverable error while leaving source evidence and editable setup unchanged.
+
+This rule is about review availability only. A failure to read the Project itself remains a normal Project-open failure.
+
 ## Public result
 
 The refresh result should include:
@@ -112,3 +120,5 @@ After success, update the visible source response/question counts and reload the
 If diagnostics exist, show a compact `확인 필요` notice and retain the existing targets/groups so the user can inspect and repair them manually.
 
 When a Project is reopened, restore the same review state from the local review operation without contacting Google.
+
+Every invalid ValueGroup shown in the review dialog must retain an explicit removal path. If the source question still exists, the UI may also offer navigation to that question, but navigation must not be the only repair action when the group itself can no longer be edited there.
