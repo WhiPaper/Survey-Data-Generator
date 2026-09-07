@@ -33,6 +33,7 @@ describe("Electron v2 backend shell", () => {
         sourceRevisionId: "revision-1",
         invalidValueGroupIds: [],
       }),
+      runTargetPresentations: vi.fn(async () => []),
       delete: remove,
     };
 
@@ -69,6 +70,7 @@ describe("Electron v2 backend shell", () => {
       list: async () => [],
       get: async (_projectId: string) => project,
       sourceReview,
+      runTargetPresentations: vi.fn(async () => []),
       delete: async (_projectId: string) => undefined,
     };
     const forms = {
@@ -120,6 +122,82 @@ describe("Electron v2 backend shell", () => {
       targetIssues: [],
     });
     expect(sourceReview).toHaveBeenCalledTimes(2);
+  });
+
+  it("composes runs.get with presentation from the historical Project source revision", async () => {
+    const frozenTarget = {
+      id: "t-mean" as never,
+      kind: "mean" as const,
+      questionId: "q-score",
+      value: 4.3,
+    };
+    const run = {
+      runId: "run-1",
+      projectId: "project-1",
+      sourceRevisionId: "revision-1",
+      targetSnapshot: {
+        finalCount: 3,
+        sourceScope: { kind: "all" as const },
+        targets: [frozenTarget],
+      },
+      outcome: {
+        targets: [
+          {
+            targetId: "t-mean" as never,
+            kind: "mean" as const,
+            requested: 4.3,
+            achieved: 4.3,
+            absoluteError: 0,
+            exact: true,
+          },
+        ],
+      },
+      baselines: [
+        { targetId: "t-mean" as never, kind: "mean" as const, mean: 4, denominatorCount: 2 },
+      ],
+      diagnostics: {
+        sourceResponseCount: 2,
+        syntheticResponseCount: 1,
+        replacementCount: 0,
+        structuralValidation: "passed" as const,
+      },
+      validation: {},
+      finalResponseCount: 3,
+      appVersion: "0.1.0",
+      engineVersion: 1,
+    };
+    const presentation = {
+      targetId: "t-mean" as never,
+      questionId: "q-score",
+      questionTitle: "생성 당시 만족도",
+      subjectLabel: "생성 당시 만족도",
+    };
+    const runTargetPresentations = vi.fn(async () => [presentation]);
+    const projects = {
+      list: async () => [],
+      get: async (_projectId: string) => null,
+      sourceReview: async (_projectId: string) => ({
+        sourceRevisionId: "revision-1",
+        invalidValueGroupIds: [],
+      }),
+      runTargetPresentations,
+      delete: async (_projectId: string) => undefined,
+    };
+    const synthesis = {
+      start: vi.fn(),
+      resolveEditPlan: vi.fn(),
+      cancel: vi.fn(),
+      listRuns: vi.fn(),
+      getRun: vi.fn(async () => run),
+    };
+
+    await expect(
+      handleBackendCall(serialize(createRequest("test_run", "runs.get", { runId: "run-1" })), {
+        projects,
+        synthesis,
+      }),
+    ).resolves.toEqual({ ...run, presentations: [presentation] });
+    expect(runTargetPresentations).toHaveBeenCalledWith("project-1", "revision-1", [frozenTarget]);
   });
 
   it("routes ValueGroup creation to the ValueGroup service", async () => {

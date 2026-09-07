@@ -493,6 +493,27 @@ describe("v2 RPC contracts", () => {
             share: 0.6,
           },
         ],
+        presentations: [
+          {
+            targetId: "t-mean",
+            questionId: "q-score",
+            questionTitle: "만족도",
+            subjectLabel: "만족도",
+          },
+          {
+            targetId: "t-share",
+            questionId: "q-choice",
+            questionTitle: "관심 분야",
+            subjectLabel: "행사 관심",
+          },
+          {
+            targetId: "t-conditional",
+            questionId: "q-checkbox",
+            questionTitle: "선호 채널",
+            subjectLabel: "음악",
+            populationLabel: "행사 관심",
+          },
+        ],
         diagnostics: {
           sourceResponseCount: 80,
           syntheticResponseCount: 40,
@@ -523,6 +544,27 @@ describe("v2 RPC contracts", () => {
           count: 12,
           denominatorCount: 20,
           share: 0.6,
+        },
+      ],
+      presentations: [
+        {
+          targetId: "t-mean",
+          questionId: "q-score",
+          questionTitle: "만족도",
+          subjectLabel: "만족도",
+        },
+        {
+          targetId: "t-share",
+          questionId: "q-choice",
+          questionTitle: "관심 분야",
+          subjectLabel: "행사 관심",
+        },
+        {
+          targetId: "t-conditional",
+          questionId: "q-checkbox",
+          questionTitle: "선호 채널",
+          subjectLabel: "음악",
+          populationLabel: "행사 관심",
         },
       ],
       targetSnapshot: { editPlan: { replacementCount: 1 } },

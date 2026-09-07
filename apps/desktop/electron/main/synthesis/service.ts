@@ -64,7 +64,7 @@ export interface SynthesisService {
   resolveEditPlan(params: SynthesisResolveEditPlanParams): Promise<SynthesisSuccessResult>;
   cancel(operationId: string): boolean;
   listRuns?(projectId: string): Promise<RunSummary[]>;
-  getRun(runId: string): Promise<RunsGetResult>;
+  getRun(runId: string): Promise<Omit<RunsGetResult, "presentations">>;
 }
 
 type FrozenScope = {

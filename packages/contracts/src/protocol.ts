@@ -636,6 +636,17 @@ export const RunTargetBaselineSchema = z.discriminatedUnion("kind", [
 ]);
 export type RunTargetBaseline = z.infer<typeof RunTargetBaselineSchema>;
 
+export const RunTargetPresentationSchema = z
+  .object({
+    targetId: TargetIdSchema,
+    questionId: z.string().min(1),
+    questionTitle: z.string().min(1),
+    subjectLabel: z.string().min(1),
+    populationLabel: z.string().min(1).optional(),
+  })
+  .strict();
+export type RunTargetPresentation = z.infer<typeof RunTargetPresentationSchema>;
+
 export const RunResultDiagnosticsSchema = z
   .object({
     sourceResponseCount: z.number().int().nonnegative(),
@@ -654,6 +665,7 @@ export const RunsGetResultSchema = z
     targetSnapshot: RunTargetSnapshotSchema,
     outcome: TargetSetOutcomeSchema,
     baselines: z.array(RunTargetBaselineSchema),
+    presentations: z.array(RunTargetPresentationSchema),
     diagnostics: RunResultDiagnosticsSchema,
     validation: z.record(z.string(), z.unknown()),
     finalResponseCount: z.number().int().nonnegative(),

@@ -26,10 +26,7 @@ const historicalQuestion = (
   return question;
 };
 
-const historicalQuestionTitle = (
-  form: Record<string, unknown>,
-  questionId: string,
-): string => {
+const historicalQuestionTitle = (form: Record<string, unknown>, questionId: string): string => {
   const question = historicalQuestion(form, questionId);
   return typeof question.title === "string" && question.title.trim().length > 0
     ? question.title
