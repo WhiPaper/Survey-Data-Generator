@@ -599,6 +599,16 @@ export const RunTargetSnapshotSchema = z
   .strict();
 export type RunTargetSnapshot = z.infer<typeof RunTargetSnapshotSchema>;
 
+export const RunResultDiagnosticsSchema = z
+  .object({
+    sourceResponseCount: z.number().int().nonnegative(),
+    syntheticResponseCount: z.number().int().nonnegative(),
+    replacementCount: z.number().int().nonnegative(),
+    structuralValidation: z.enum(["passed", "unknown"]),
+  })
+  .strict();
+export type RunResultDiagnostics = z.infer<typeof RunResultDiagnosticsSchema>;
+
 export const RunsGetResultSchema = z
   .object({
     runId: z.string().min(1),
@@ -606,6 +616,7 @@ export const RunsGetResultSchema = z
     sourceRevisionId: z.string().min(1),
     targetSnapshot: RunTargetSnapshotSchema,
     outcome: TargetSetOutcomeSchema,
+    diagnostics: RunResultDiagnosticsSchema,
     validation: z.record(z.string(), z.unknown()),
     finalResponseCount: z.number().int().nonnegative(),
     appVersion: z.string().min(1),

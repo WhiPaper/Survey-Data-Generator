@@ -254,7 +254,14 @@ const replacementEngine = (): PythonEngine => ({
           conditionalShares: [],
         },
       },
-      validation: { replacementApplied: false },
+      validation: {
+        finalCount: true,
+        targetDomain: true,
+        categoricalSupport: true,
+        shareTargets: true,
+        conditionalShareTargets: true,
+        replacementApplied: false,
+      },
       quality: { sdmetricsScore: null, warning: null },
       dependencies: {},
     };
@@ -331,6 +338,12 @@ describe("M7 synthesis approval gate", () => {
       replacementApplied: true,
       approvedReplacementCount: 1,
     });
+    expect(run.diagnostics).toEqual({
+      sourceResponseCount: 3,
+      syntheticResponseCount: 2,
+      replacementCount: 1,
+      structuralValidation: "passed",
+    });
 
     const rows = listPersistedRunRows(database.db, resolved.runId);
     expect(rows).toHaveLength(4);
@@ -360,6 +373,12 @@ describe("M7 synthesis approval gate", () => {
     expect(run.validation.validation).toMatchObject({
       replacementApplied: false,
       approvedReplacementCount: 0,
+    });
+    expect(run.diagnostics).toEqual({
+      sourceResponseCount: 3,
+      syntheticResponseCount: 1,
+      replacementCount: 0,
+      structuralValidation: "passed",
     });
 
     const rows = listPersistedRunRows(database.db, resolved.runId);

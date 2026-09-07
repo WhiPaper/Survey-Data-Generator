@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { resultDiagnosticsLines } from "./resultDiagnostics";
 import {
   currentValue,
   intentLabel,
@@ -182,7 +183,15 @@ export function ResultView({
         })}
       </div>
 
-      <p className="mt-6 text-xs text-muted-foreground">
+      <div className="mt-6 border-t pt-4 text-xs text-muted-foreground">
+        {resultDiagnosticsLines(context.run).map((line) => (
+          <p key={line} className="mt-1 first:mt-0">
+            {line}
+          </p>
+        ))}
+      </div>
+
+      <p className="mt-4 text-xs text-muted-foreground">
         과거 결과는 생성 당시 내용으로 보존됩니다.
       </p>
     </div>
