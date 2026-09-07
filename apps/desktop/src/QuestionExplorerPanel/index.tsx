@@ -824,7 +824,7 @@ export function QuestionExplorerPanel({
     try {
       const run = await getRun(runId);
       setRunContexts((current) => [
-        { run, draft: null, profile: null },
+        { run },
         ...current.filter((context) => context.run.runId !== runId),
       ]);
       setSelectedRunId(runId);
@@ -839,7 +839,7 @@ export function QuestionExplorerPanel({
   const recordRun = async (runId: string): Promise<void> => {
     const run = await getRun(runId);
     setRunContexts((current) => [
-      { run, draft, profile },
+      { run },
       ...current.filter((context) => context.run.runId !== runId),
     ]);
     setSelectedRunId(runId);
@@ -1018,7 +1018,6 @@ export function QuestionExplorerPanel({
           summaries={runSummaries}
           selectedRunId={selectedRunId}
           questions={questions}
-          groups={groups}
           exportBusy={exportBusy}
           onSelectRun={(runId) => void selectRun(runId)}
           onEditTarget={(questionId) => {

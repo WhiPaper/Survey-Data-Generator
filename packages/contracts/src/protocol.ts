@@ -381,28 +381,77 @@ export const TargetProfileResultSchema = z
   .strict();
 export type TargetProfileResult = z.infer<typeof TargetProfileResultSchema>;
 
+export const SynthesisTargetIntentSnapshotSchema = z
+  .object({
+    targetId: TargetIdSchema,
+    intent: TargetIntentSchema,
+  })
+  .strict();
+export type SynthesisTargetIntentSnapshot = z.infer<typeof SynthesisTargetIntentSnapshotSchema>;
+
 export const SynthesisStartParamsSchema = z
   .object({
     projectId: ProjectIdSchema,
     finalCount: z.number().int().positive(),
     targets: z.array(SynthesisTargetSchema).min(1),
+    targetIntents: z.array(SynthesisTargetIntentSnapshotSchema).optional(),
     sourceScope: SourceScopeSchema.optional(),
     seed: z.number().int(),
     operationId: z.string().min(1).max(200).optional(),
   })
   .strict()
   .superRefine((value, context) => {
-    const seen = new Set<string>();
+    const targetIds = new Set<string>();
     value.targets.forEach((target, index) => {
       const id = String(target.id);
-      if (seen.has(id)) {
+      if (targetIds.has(id)) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["targets", index, "id"],
           message: "TargetId must be unique within a Run",
         });
       }
-      seen.add(id);
+      targetIds.add(id);
+    });
+
+    const intentIds = new Set<string>();
+    value.targetIntents?.forEach((entry, index) => {
+      const id = String(entry.targetId);
+      if (intentIds.has(id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["targetIntents", index, "targetId"],
+          message: "Target intent metadata must be unique by TargetId",
+        });
+      }
+      intentIds.add(id);
+
+      const target = value.targets.find((candidate) => String(candidate.id) === id);
+      if (!target) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["targetIntents", index, "targetId"],
+          message: "Target intent metadata must reference a target in this Run",
+        });
+        return;
+      }
+
+      const intentKind = entry.intent.kind;
+      const supported =
+        target.kind === "count"
+          ? intentKind === "absolute" || intentKind === "count_delta"
+          : target.kind === "mean"
+            ? intentKind === "absolute"
+            : intentKind === "absolute" ||
+              intentKind === "percentage_point_delta" ||
+              intentKind === "relative_percent_delta";
+      if (!supported) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["targetIntents", index, "intent", "kind"],
+          message: "Target intent metadata is not valid for this target kind",
+        });
+      }
     });
   });
 export type SynthesisStartParams = z.infer<typeof SynthesisStartParamsSchema>;
@@ -562,6 +611,7 @@ export const FrozenRunTargetSchema = z.discriminatedUnion("kind", [
       id: TargetIdSchema,
       kind: z.literal("count"),
       subject: FrozenTargetSubjectSchema,
+      intent: TargetIntentSchema.optional(),
       value: z.number().int().nonnegative(),
     })
     .strict(),
@@ -570,15 +620,17 @@ export const FrozenRunTargetSchema = z.discriminatedUnion("kind", [
       id: TargetIdSchema,
       kind: z.literal("share"),
       subject: FrozenTargetSubjectSchema,
+      intent: TargetIntentSchema.optional(),
       value: z.number().min(0).max(1),
     })
     .strict(),
-  MeanTargetSchema,
+  MeanTargetSchema.extend({ intent: TargetIntentSchema.optional() }).strict(),
   z
     .object({
       id: TargetIdSchema,
       kind: z.literal("conditional_share"),
       value: z.number().min(0).max(1),
+      intent: TargetIntentSchema.optional(),
       population: z
         .object({ kind: z.literal("value_group"), valueGroup: FrozenValueGroupSchema })
         .strict(),

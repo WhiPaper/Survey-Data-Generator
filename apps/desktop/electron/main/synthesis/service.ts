@@ -433,6 +433,15 @@ export const createSynthesisService = ({
       const means = params.targets.filter((target) => target.kind === "mean");
       const shares = params.targets.filter((target) => target.kind === "share");
       const conditionals = params.targets.filter((target) => target.kind === "conditional_share");
+      const intentByTargetId = new Map(
+        (params.targetIntents ?? []).map(
+          ({ targetId, intent }) => [String(targetId), intent] as const,
+        ),
+      );
+      const frozenIntentFor = (targetId: unknown) => {
+        const intent = intentByTargetId.get(String(targetId));
+        return intent ? { intent } : {};
+      };
 
       const directOptionTargets = [...counts, ...shares].filter(
         (target) => target.subject.kind === "option",
@@ -513,7 +522,10 @@ export const createSynthesisService = ({
         schema_option_values: string[];
         value: number;
       }> = [];
-      const frozenTargets: FrozenRunTarget[] = [...means];
+      const frozenTargets: FrozenRunTarget[] = means.map((mean) => ({
+        ...mean,
+        ...frozenIntentFor(mean.id),
+      }));
 
       for (const share of [...counts, ...shares]) {
         let column: string | undefined;
@@ -671,6 +683,7 @@ export const createSynthesisService = ({
           kind: share.kind,
           subject: frozenSubject,
           value: share.value,
+          ...frozenIntentFor(share.id),
         });
       }
 
@@ -786,6 +799,7 @@ export const createSynthesisService = ({
           },
           questionId: checkbox.id,
           optionKey: target.optionKey,
+          ...frozenIntentFor(target.id),
         });
       }
 

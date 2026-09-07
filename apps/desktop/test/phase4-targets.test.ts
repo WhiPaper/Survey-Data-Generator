@@ -254,6 +254,11 @@ describe("Phase 4 target profile and draft lifecycle", () => {
         expect.objectContaining({ id: "t-mean", kind: "mean", value: 4.3 }),
       ]),
     );
+    expect(captured?.targetIntents).toEqual([
+      { targetId: "t-share", intent: { kind: "relative_percent_delta", value: 0.1 } },
+      { targetId: "t-count", intent: { kind: "count_delta", value: 1 } },
+      { targetId: "t-mean", intent: { kind: "absolute", value: 4.3 } },
+    ]);
   });
 
   it("changes delta resolution when the draft SourceScope changes", async () => {
@@ -282,6 +287,11 @@ describe("Phase 4 target profile and draft lifecycle", () => {
     await service.startDraft("project-1");
     expect(captured?.targets).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: "share", value: 0.9 })]),
+    );
+    expect(captured?.targetIntents).toEqual(
+      expect.arrayContaining([
+        { targetId: "t-share", intent: { kind: "percentage_point_delta", value: -0.1 } },
+      ]),
     );
   });
 });

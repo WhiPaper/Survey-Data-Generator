@@ -743,6 +743,9 @@ export const createTargetService = (
       projectId,
       finalCount: draft.finalCount!,
       targets: resolved,
+      targetIntents: draft.targets.flatMap((target) =>
+        target.intent ? [{ targetId: target.id, intent: target.intent }] : [],
+      ),
       sourceScope: context.sourceScope,
       seed: draft.seed,
       ...(operationId ? { operationId } : {}),
