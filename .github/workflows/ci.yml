@@ -28,94 +28,27 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
-      - name: Apply typed Run diagnostics
+      - name: Align existing RunsGetResult fixture
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          def replace(path: str, old: str, new: str) -> None:
-              file = Path(path)
-              text = file.read_text()
-              if old not in text:
-                  raise SystemExit(f"missing replacement in {path}: {old[:180]!r}")
-              file.write_text(text.replace(old, new, 1))
-
-          protocol = "packages/contracts/src/protocol.ts"
-          replace(
-              protocol,
-              '''export const RunsGetResultSchema = z\n  .object({\n    runId: z.string().min(1),\n    projectId: ProjectIdSchema,\n    sourceRevisionId: z.string().min(1),\n    targetSnapshot: RunTargetSnapshotSchema,\n    outcome: TargetSetOutcomeSchema,\n    validation: z.record(z.string(), z.unknown()),\n    finalResponseCount: z.number().int().nonnegative(),\n    appVersion: z.string().min(1),\n    engineVersion: z.number().int().nonnegative(),\n  })\n  .strict();''',
-              '''export const RunResultDiagnosticsSchema = z\n  .object({\n    sourceResponseCount: z.number().int().nonnegative(),\n    syntheticResponseCount: z.number().int().nonnegative(),\n    replacementCount: z.number().int().nonnegative(),\n    structuralValidation: z.enum(["passed", "unknown"]),\n  })\n  .strict();\nexport type RunResultDiagnostics = z.infer<typeof RunResultDiagnosticsSchema>;\n\nexport const RunsGetResultSchema = z\n  .object({\n    runId: z.string().min(1),\n    projectId: ProjectIdSchema,\n    sourceRevisionId: z.string().min(1),\n    targetSnapshot: RunTargetSnapshotSchema,\n    outcome: TargetSetOutcomeSchema,\n    diagnostics: RunResultDiagnosticsSchema,\n    validation: z.record(z.string(), z.unknown()),\n    finalResponseCount: z.number().int().nonnegative(),\n    appVersion: z.string().min(1),\n    engineVersion: z.number().int().nonnegative(),\n  })\n  .strict();''',
-          )
-
-          service = "apps/desktop/electron/main/synthesis/service.ts"
-          replace(
-              service,
-              '''  getRunRecord,\n  listRunRecords,\n  persistRun,''',
-              '''  getRunRecord,\n  listPersistedRunRows,\n  listRunRecords,\n  persistRun,''',
-          )
-          replace(
-              service,
-              '''      const targetSnapshot = JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"];\n      const validation = jsonRecord(JSON.parse(run.engineReportJson) as unknown);\n      const outcome = targetSetOutcome(validation.achieved, targetSnapshot.targets);\n      return {\n        runId: run.id,\n        projectId: run.projectId,\n        sourceRevisionId: run.sourceRevisionId,\n        targetSnapshot,\n        outcome,\n        validation,\n        finalResponseCount: run.finalResponseCount,''',
-              '''      const targetSnapshot = JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"];\n      const validation = jsonRecord(JSON.parse(run.engineReportJson) as unknown);\n      const outcome = targetSetOutcome(validation.achieved, targetSnapshot.targets);\n      const rows = listPersistedRunRows(db, runId);\n      if (rows.length !== run.finalResponseCount) {\n        throw backendFailure("INTERNAL", "Persisted Run row count does not match the Run summary");\n      }\n      const originalResponseCount = rows.filter((row) => row.origin === "original").length;\n      if (originalResponseCount > run.scopeResponseCount) {\n        throw backendFailure(\n          "INTERNAL",\n          "Persisted Run original row count exceeds its frozen SourceScope",\n        );\n      }\n      const rawValidation = jsonRecord(validation.validation);\n      const structuralValidation = [\n        "finalCount",\n        "targetDomain",\n        "categoricalSupport",\n        "shareTargets",\n        "conditionalShareTargets",\n      ].every((key) => rawValidation[key] === true)\n        ? "passed"\n        : "unknown";\n      return {\n        runId: run.id,\n        projectId: run.projectId,\n        sourceRevisionId: run.sourceRevisionId,\n        targetSnapshot,\n        outcome,\n        diagnostics: {\n          sourceResponseCount: run.scopeResponseCount,\n          syntheticResponseCount: rows.length - originalResponseCount,\n          replacementCount: run.scopeResponseCount - originalResponseCount,\n          structuralValidation,\n        },\n        validation,\n        finalResponseCount: run.finalResponseCount,''',
-          )
-
-          m7 = "apps/desktop/test/m7-synthesis-service.test.ts"
-          replace(
-              m7,
-              '''      validation: { replacementApplied: false },''',
-              '''      validation: {\n        finalCount: true,\n        targetDomain: true,\n        categoricalSupport: true,\n        shareTargets: true,\n        conditionalShareTargets: true,\n        replacementApplied: false,\n      },''',
-          )
-          replace(
-              m7,
-              '''    expect(run.validation.validation).toMatchObject({\n      replacementApplied: true,\n      approvedReplacementCount: 1,\n    });\n\n    const rows = listPersistedRunRows(database.db, resolved.runId);''',
-              '''    expect(run.validation.validation).toMatchObject({\n      replacementApplied: true,\n      approvedReplacementCount: 1,\n    });\n    expect(run.diagnostics).toEqual({\n      sourceResponseCount: 3,\n      syntheticResponseCount: 2,\n      replacementCount: 1,\n      structuralValidation: "passed",\n    });\n\n    const rows = listPersistedRunRows(database.db, resolved.runId);''',
-          )
-          replace(
-              m7,
-              '''    expect(run.validation.validation).toMatchObject({\n      replacementApplied: false,\n      approvedReplacementCount: 0,\n    });\n\n    const rows = listPersistedRunRows(database.db, resolved.runId);''',
-              '''    expect(run.validation.validation).toMatchObject({\n      replacementApplied: false,\n      approvedReplacementCount: 0,\n    });\n    expect(run.diagnostics).toEqual({\n      sourceResponseCount: 3,\n      syntheticResponseCount: 1,\n      replacementCount: 0,\n      structuralValidation: "passed",\n    });\n\n    const rows = listPersistedRunRows(database.db, resolved.runId);''',
-          )
-
-          result_view = "apps/desktop/src/QuestionExplorerPanel/ResultView.tsx"
-          replace(
-              result_view,
-              '''import {\n  currentValue,\n  intentLabel,\n  outcomeValue,''',
-              '''import { resultDiagnosticsLines } from "./resultDiagnostics";\nimport {\n  currentValue,\n  intentLabel,\n  outcomeValue,''',
-          )
-          replace(
-              result_view,
-              '''      </div>\n\n      <p className="mt-6 text-xs text-muted-foreground">\n        과거 결과는 생성 당시 내용으로 보존됩니다.\n      </p>''',
-              '''      </div>\n\n      <div className="mt-6 border-t pt-4 text-xs text-muted-foreground">\n        {resultDiagnosticsLines(context.run).map((line) => (\n          <p key={line} className="mt-1 first:mt-0">\n            {line}\n          </p>\n        ))}\n      </div>\n\n      <p className="mt-4 text-xs text-muted-foreground">\n        과거 결과는 생성 당시 내용으로 보존됩니다.\n      </p>''',
-          )
-
-          Path("apps/desktop/src/QuestionExplorerPanel/resultDiagnostics.ts").write_text('''import type { RunsGetResult, SourceScope } from "@survey-synth/contracts";\n\nconst datePart = (value: string): string => value.slice(0, 10);\n\nexport const resultSourceScopeLabel = (scope: SourceScope): string =>\n  scope.kind === "all"\n    ? "전체 응답"\n    : `${datePart(scope.start)} ~ ${datePart(scope.end)}`;\n\nexport const resultDiagnosticsLines = (run: RunsGetResult): string[] => {\n  const diagnostics = run.diagnostics;\n  const replacement =\n    diagnostics.replacementCount > 0 ? ` · 원본 대체 ${diagnostics.replacementCount}명` : "";\n  const structure = diagnostics.structuralValidation === "passed" ? "완료" : "정보 없음";\n  return [\n    `생성 당시 범위 ${resultSourceScopeLabel(run.targetSnapshot.sourceScope)} · 원본 ${diagnostics.sourceResponseCount}명`,\n    `새로 만든 응답 ${diagnostics.syntheticResponseCount}명${replacement} · 구조 확인 ${structure}`,\n  ];\n};\n''')
-
-          Path("apps/desktop/test/result-diagnostics.test.ts").write_text('''import { describe, expect, it } from "vitest";\n\nimport type { RunsGetResult } from "@survey-synth/contracts";\nimport { resultDiagnosticsLines } from "../src/QuestionExplorerPanel/resultDiagnostics";\n\nconst runWith = (\n  sourceScope: RunsGetResult["targetSnapshot"]["sourceScope"],\n  diagnostics: RunsGetResult["diagnostics"],\n): RunsGetResult =>\n  ({\n    targetSnapshot: { sourceScope },\n    diagnostics,\n  }) as RunsGetResult;\n\ndescribe("Result diagnostics copy", () => {\n  it("shows frozen all-response scope without dashboard terminology", () => {\n    expect(\n      resultDiagnosticsLines(\n        runWith(\n          { kind: "all" },\n          {\n            sourceResponseCount: 80,\n            syntheticResponseCount: 40,\n            replacementCount: 0,\n            structuralValidation: "passed",\n          },\n        ),\n      ),\n    ).toEqual([\n      "생성 당시 범위 전체 응답 · 원본 80명",\n      "새로 만든 응답 40명 · 구조 확인 완료",\n    ]);\n  });\n\n  it("shows historical date scope and explicit replacement count", () => {\n    expect(\n      resultDiagnosticsLines(\n        runWith(\n          {\n            kind: "submitted_between",\n            start: "2026-08-01T00:00:00.000Z",\n            end: "2026-08-02T23:59:59.999Z",\n          },\n          {\n            sourceResponseCount: 80,\n            syntheticResponseCount: 42,\n            replacementCount: 2,\n            structuralValidation: "unknown",\n          },\n        ),\n      ),\n    ).toEqual([\n      "생성 당시 범위 2026-08-01 ~ 2026-08-02 · 원본 80명",\n      "새로 만든 응답 42명 · 원본 대체 2명 · 구조 확인 정보 없음",\n    ]);\n  });\n});\n''')
-
-          Path("packages/contracts/test/run-result-diagnostics.test.ts").write_text('''import { describe, expect, it } from "vitest";\n\nimport { RunResultDiagnosticsSchema } from "../src/protocol";\n\ndescribe("Run result diagnostics contract", () => {\n  it("accepts narrow persisted diagnostics", () => {\n    expect(\n      RunResultDiagnosticsSchema.parse({\n        sourceResponseCount: 80,\n        syntheticResponseCount: 42,\n        replacementCount: 2,\n        structuralValidation: "passed",\n      }),\n    ).toEqual({\n      sourceResponseCount: 80,\n      syntheticResponseCount: 42,\n      replacementCount: 2,\n      structuralValidation: "passed",\n    });\n  });\n\n  it("rejects implementation-specific validation states", () => {\n    expect(\n      RunResultDiagnosticsSchema.safeParse({\n        sourceResponseCount: 80,\n        syntheticResponseCount: 40,\n        replacementCount: 0,\n        structuralValidation: "solver_ok",\n      }).success,\n    ).toBe(false);\n  });\n});\n''')
+          path = Path("packages/contracts/test/protocol.test.ts")
+          text = path.read_text()
+          old = '''        outcome,\n        validation: {},\n        finalResponseCount: 120,'''
+          new = '''        outcome,\n        diagnostics: {\n          sourceResponseCount: 80,\n          syntheticResponseCount: 40,\n          replacementCount: 0,\n          structuralValidation: "passed",\n        },\n        validation: {},\n        finalResponseCount: 120,'''
+          if old not in text:
+              raise SystemExit("RunsGetResult fixture anchor missing")
+          path.write_text(text.replace(old, new, 1))
           PY
-      - name: Format typed Run diagnostics
+      - name: Format and commit fixture
         run: |
-          pnpm exec prettier --write \
-            packages/contracts/src/protocol.ts \
-            packages/contracts/test/run-result-diagnostics.test.ts \
-            apps/desktop/electron/main/synthesis/service.ts \
-            apps/desktop/test/m7-synthesis-service.test.ts \
-            apps/desktop/src/QuestionExplorerPanel/ResultView.tsx \
-            apps/desktop/src/QuestionExplorerPanel/resultDiagnostics.ts \
-            apps/desktop/test/result-diagnostics.test.ts
+          pnpm exec prettier --write packages/contracts/test/protocol.test.ts
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if ! git diff --quiet; then
-            git add \
-              packages/contracts/src/protocol.ts \
-              packages/contracts/test/run-result-diagnostics.test.ts \
-              apps/desktop/electron/main/synthesis/service.ts \
-              apps/desktop/test/m7-synthesis-service.test.ts \
-              apps/desktop/src/QuestionExplorerPanel/ResultView.tsx \
-              apps/desktop/src/QuestionExplorerPanel/resultDiagnostics.ts \
-              apps/desktop/test/result-diagnostics.test.ts
-            git commit -m "feat(result): expose typed Run diagnostics"
+            git add packages/contracts/test/protocol.test.ts
+            git commit -m "test(contracts): align Run diagnostics fixture"
             git push origin HEAD:${{ github.event.pull_request.head.ref }}
           fi
       - run: pnpm run check
