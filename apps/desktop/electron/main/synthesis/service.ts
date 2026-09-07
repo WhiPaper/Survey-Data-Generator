@@ -544,6 +544,7 @@ export const createSynthesisService = ({
             scope.responses,
             row.questionId as QuestionId,
             members,
+            form,
           );
           frozenSubject = {
             kind: "value_group",
@@ -587,7 +588,7 @@ export const createSynthesisService = ({
             };
           }
           column = plan.questionColumns.get(question.id);
-          memberValues = valueGroupMemberCells(scope.responses, question.id, [subject.optionKey]);
+          memberValues = valueGroupMemberCells(scope.responses, question.id, [subject.optionKey], form);
           if (memberValues.length === 0) {
             memberValues = [
               JSON.stringify({
@@ -697,6 +698,7 @@ export const createSynthesisService = ({
           scope.responses,
           row.questionId as QuestionId,
           members,
+          form,
         );
         if (populationMemberValues.length === 0) {
           return {
