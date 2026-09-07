@@ -47,6 +47,20 @@ def _answered_slot(value: object) -> bool:
     return isinstance(parsed, dict) and parsed.get("state") == "answered"
 
 
+def _answered_column(data: pd.DataFrame, item: object) -> np.ndarray:
+    if not isinstance(item, dict):
+        raise ValueError("confirmed routing column is invalid")
+    column = item.get("column")
+    kind = item.get("kind")
+    if not isinstance(column, str) or column not in data.columns:
+        raise ValueError(f"confirmed routing column is missing: {column}")
+    if kind == "ordinal":
+        return pd.to_numeric(data[column], errors="coerce").notna().to_numpy(dtype=bool)
+    if kind == "answer_slot":
+        return data[column].map(_answered_slot).to_numpy(dtype=bool)
+    raise ValueError(f"confirmed routing column kind is invalid: {kind}")
+
+
 def _routing_filtered_candidates(
     source: pd.DataFrame,
     candidates: pd.DataFrame,
@@ -71,11 +85,14 @@ def _routing_filtered_candidates(
             raise ValueError("confirmed routing rule must be an object")
         source_column = rule.get("sourceColumn")
         option_key = rule.get("optionKey")
-        forbidden = rule.get("forbidden")
+        forbidden = rule.get("forbidden", [])
+        required = rule.get("required", [])
         if not isinstance(source_column, str) or not isinstance(option_key, str):
             raise ValueError("confirmed routing rule source is invalid")
         if not isinstance(forbidden, list):
             raise ValueError("confirmed routing rule forbidden columns are invalid")
+        if not isinstance(required, list):
+            raise ValueError("confirmed routing rule required columns are invalid")
         if source_column not in candidates.columns:
             raise ValueError(f"confirmed routing source column is missing: {source_column}")
 
@@ -84,20 +101,13 @@ def _routing_filtered_candidates(
         ).to_numpy(dtype=bool)
         forbidden_answered = np.zeros(len(candidates), dtype=bool)
         for item in forbidden:
-            if not isinstance(item, dict):
-                raise ValueError("confirmed routing forbidden column is invalid")
-            column = item.get("column")
-            kind = item.get("kind")
-            if not isinstance(column, str) or column not in candidates.columns:
-                raise ValueError(f"confirmed routing forbidden column is missing: {column}")
-            if kind == "ordinal":
-                answered = pd.to_numeric(candidates[column], errors="coerce").notna().to_numpy(dtype=bool)
-            elif kind == "answer_slot":
-                answered = candidates[column].map(_answered_slot).to_numpy(dtype=bool)
-            else:
-                raise ValueError(f"confirmed routing forbidden column kind is invalid: {kind}")
-            forbidden_answered |= answered
-        invalid |= branch_matches & forbidden_answered
+            forbidden_answered |= _answered_column(candidates, item)
+
+        required_missing = np.zeros(len(candidates), dtype=bool)
+        for item in required:
+            required_missing |= ~_answered_column(candidates, item)
+
+        invalid |= branch_matches & (forbidden_answered | required_missing)
 
     if not invalid.any():
         return candidates, original_indices
