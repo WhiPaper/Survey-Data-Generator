@@ -33,6 +33,8 @@ type QuestionView = {
   title: string;
   kind: string;
   options: Array<{ key: string; label: string }>;
+  min?: number;
+  max?: number;
 };
 
 type TargetMode =
@@ -42,11 +44,21 @@ type TargetMode =
   | "absolute_count"
   | "count_delta";
 
+type SubjectKind = "option" | "checkbox_option";
+
 type EditingOption = {
+  subjectKind: SubjectKind;
   questionId: string;
   questionTitle: string;
   optionKey: string;
   optionLabel: string;
+};
+
+type EditingMean = {
+  questionId: string;
+  questionTitle: string;
+  min: number;
+  max: number;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
@@ -73,6 +85,8 @@ const projectQuestions = (project: ProjectDetailView): QuestionView[] => {
         title: typeof question.title === "string" && question.title ? question.title : question.id,
         kind: typeof question.kind === "string" ? question.kind : "unknown",
         options,
+        ...(typeof question.min === "number" ? { min: question.min } : {}),
+        ...(typeof question.max === "number" ? { max: question.max } : {}),
       },
     ];
   });
@@ -91,30 +105,50 @@ const questionIdForTarget = (target: TargetDraftTarget): string | null => {
   return target.subject.kind === "value_group" ? null : target.subject.questionId;
 };
 
-const optionTarget = (
+const subjectTarget = (
   targets: readonly TargetDraftTarget[],
+  subjectKind: SubjectKind,
   questionId: string,
   optionKey: string,
 ): TargetDraftTarget | undefined =>
   targets.find(
     (target) =>
       (target.kind === "share" || target.kind === "count") &&
-      target.subject.kind === "option" &&
+      target.subject.kind === subjectKind &&
       target.subject.questionId === questionId &&
       target.subject.optionKey === optionKey,
   );
 
-const optionMetric = (
+const subjectMetric = (
   profile: TargetProfileResult | null,
+  subjectKind: SubjectKind,
   questionId: string,
   optionKey: string,
 ): Extract<TargetProfileMetric, { kind: "subject" }> | undefined =>
   profile?.metrics.find(
     (metric): metric is Extract<TargetProfileMetric, { kind: "subject" }> =>
       metric.kind === "subject" &&
-      metric.subject.kind === "option" &&
+      metric.subject.kind === subjectKind &&
       metric.subject.questionId === questionId &&
       metric.subject.optionKey === optionKey,
+  );
+
+const meanTarget = (
+  targets: readonly TargetDraftTarget[],
+  questionId: string,
+): Extract<TargetDraftTarget, { kind: "mean" }> | undefined =>
+  targets.find(
+    (target): target is Extract<TargetDraftTarget, { kind: "mean" }> =>
+      target.kind === "mean" && target.questionId === questionId,
+  );
+
+const meanMetric = (
+  profile: TargetProfileResult | null,
+  questionId: string,
+): Extract<TargetProfileMetric, { kind: "mean" }> | undefined =>
+  profile?.metrics.find(
+    (metric): metric is Extract<TargetProfileMetric, { kind: "mean" }> =>
+      metric.kind === "mean" && metric.questionId === questionId,
   );
 
 const formatShare = (value: number): string => `${(value * 100).toFixed(1)}%`;
@@ -157,8 +191,14 @@ const targetSummary = (
   return `→ ${formatShare(target.intent.value)}`;
 };
 
-const targetId = (kind: "share" | "count", questionId: string, optionKey: string): TargetId =>
-  `${kind}:option:${questionId}:${optionKey}` as TargetId;
+const subjectTargetId = (
+  kind: "share" | "count",
+  subjectKind: SubjectKind,
+  questionId: string,
+  optionKey: string,
+): TargetId => `${kind}:${subjectKind}:${questionId}:${optionKey}` as TargetId;
+
+const meanTargetId = (questionId: string): TargetId => `mean:${questionId}` as TargetId;
 
 export function QuestionExplorerPanel({ project }: { project: ProjectDetailView }) {
   const questions = useMemo(() => projectQuestions(project), [project]);
@@ -174,8 +214,10 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
   });
   const [profile, setProfile] = useState<TargetProfileResult | null>(null);
   const [editing, setEditing] = useState<EditingOption | null>(null);
+  const [editingMean, setEditingMean] = useState<EditingMean | null>(null);
   const [mode, setMode] = useState<TargetMode>("absolute_share");
   const [value, setValue] = useState("");
+  const [meanValue, setMeanValue] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -245,12 +287,15 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
   const finalCountInvalid = finalCount === null || finalCount < sourceCount;
   const additions = finalCountInvalid || finalCount === null ? null : finalCount - sourceCount;
   const currentMetric = editing
-    ? optionMetric(profile, editing.questionId, editing.optionKey)
+    ? subjectMetric(profile, editing.subjectKind, editing.questionId, editing.optionKey)
     : undefined;
   const existingEditingTarget = editing
-    ? optionTarget(draft.targets, editing.questionId, editing.optionKey)
+    ? subjectTarget(draft.targets, editing.subjectKind, editing.questionId, editing.optionKey)
     : undefined;
+  const currentMeanMetric = editingMean ? meanMetric(profile, editingMean.questionId) : undefined;
+  const existingMeanTarget = editingMean ? meanTarget(draft.targets, editingMean.questionId) : undefined;
   const parsed = Number(value);
+  const parsedMean = Number(meanValue);
   const isShareMode =
     mode === "absolute_share" ||
     mode === "percentage_point_delta" ||
@@ -277,10 +322,27 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
         (currentMetric !== undefined &&
           finalCount !== null &&
           currentMetric.count + parsed > finalCount)));
+  const meanValueInvalid =
+    !editingMean ||
+    meanValue === "" ||
+    !Number.isFinite(parsedMean) ||
+    parsedMean < editingMean.min ||
+    parsedMean > editingMean.max;
 
-  const openTarget = (question: QuestionView, optionKey: string, optionLabel: string) => {
-    const existing = optionTarget(draft.targets, question.id, optionKey);
-    setEditing({ questionId: question.id, questionTitle: question.title, optionKey, optionLabel });
+  const openTarget = (
+    question: QuestionView,
+    subjectKind: SubjectKind,
+    optionKey: string,
+    optionLabel: string,
+  ) => {
+    const existing = subjectTarget(draft.targets, subjectKind, question.id, optionKey);
+    setEditing({
+      subjectKind,
+      questionId: question.id,
+      questionTitle: question.title,
+      optionKey,
+      optionLabel,
+    });
     setMode(targetModeFor(existing));
     setValue(targetValueFor(existing));
   };
@@ -297,10 +359,18 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
           : mode === "count_delta"
             ? ({ kind: "count_delta", value: normalized } as const)
             : ({ kind: "absolute", value: normalized } as const);
+    const subject =
+      editing.subjectKind === "option"
+        ? ({ kind: "option", questionId: editing.questionId, optionKey: editing.optionKey } as const)
+        : ({
+            kind: "checkbox_option",
+            questionId: editing.questionId,
+            optionKey: editing.optionKey,
+          } as const);
     const next: TargetDraftTarget = {
-      id: targetId(kind, editing.questionId, editing.optionKey),
+      id: subjectTargetId(kind, editing.subjectKind, editing.questionId, editing.optionKey),
       kind,
-      subject: { kind: "option", questionId: editing.questionId, optionKey: editing.optionKey },
+      subject,
       intent,
     };
     setDraft((current) => ({
@@ -310,7 +380,8 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
           (target) =>
             !(
               (target.kind === "share" || target.kind === "count") &&
-              target.subject.kind === "option" &&
+              target.subject.kind === editing.subjectKind &&
+              target.subject.kind !== "value_group" &&
               target.subject.questionId === editing.questionId &&
               target.subject.optionKey === editing.optionKey
             ),
@@ -329,13 +400,57 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
         (target) =>
           !(
             (target.kind === "share" || target.kind === "count") &&
-            target.subject.kind === "option" &&
+            target.subject.kind === editing.subjectKind &&
+            target.subject.kind !== "value_group" &&
             target.subject.questionId === editing.questionId &&
             target.subject.optionKey === editing.optionKey
           ),
       ),
     }));
     setEditing(null);
+  };
+
+  const openMeanTarget = (question: QuestionView) => {
+    if (question.min === undefined || question.max === undefined) return;
+    const existing = meanTarget(draft.targets, question.id);
+    setEditingMean({
+      questionId: question.id,
+      questionTitle: question.title,
+      min: question.min,
+      max: question.max,
+    });
+    setMeanValue(existing?.intent ? String(existing.intent.value) : "");
+  };
+
+  const commitMeanTarget = () => {
+    if (!editingMean || meanValueInvalid) return;
+    const next: TargetDraftTarget = {
+      id: meanTargetId(editingMean.questionId),
+      kind: "mean",
+      questionId: editingMean.questionId,
+      intent: { kind: "absolute", value: parsedMean },
+    };
+    setDraft((current) => ({
+      ...current,
+      targets: [
+        ...current.targets.filter(
+          (target) => !(target.kind === "mean" && target.questionId === editingMean.questionId),
+        ),
+        next,
+      ],
+    }));
+    setEditingMean(null);
+  };
+
+  const removeMeanTarget = () => {
+    if (!editingMean) return;
+    setDraft((current) => ({
+      ...current,
+      targets: current.targets.filter(
+        (target) => !(target.kind === "mean" && target.questionId === editingMean.questionId),
+      ),
+    }));
+    setEditingMean(null);
   };
 
   const generate = async (): Promise<void> => {
@@ -362,6 +477,49 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
   if (!loaded && !error) {
     return <p className="mt-4 text-sm text-muted-foreground">분포를 불러오는 중…</p>;
   }
+
+  const renderChoiceRows = (question: QuestionView, subjectKind: SubjectKind) => (
+    <div className="mt-7 space-y-1">
+      {question.options.map((option) => {
+        const metric = subjectMetric(profile, subjectKind, question.id, option.key);
+        const currentShare = metric?.share ?? 0;
+        const target = subjectTarget(draft.targets, subjectKind, question.id, option.key);
+        const summary = targetSummary(target, currentShare);
+        return (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => openTarget(question, subjectKind, option.key, option.label)}
+            className="group grid w-full grid-cols-[minmax(140px,1fr)_72px_72px_minmax(120px,1.2fr)_120px] items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm hover:bg-muted/60"
+          >
+            <span className="truncate font-medium">{option.label}</span>
+            <span className="text-right tabular-nums text-muted-foreground">
+              {metric?.count ?? 0}명
+            </span>
+            <span className="text-right tabular-nums">{formatShare(currentShare)}</span>
+            <span className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <span
+                className="block h-full rounded-full bg-foreground/45"
+                style={{ width: `${Math.max(0, Math.min(100, currentShare * 100))}%` }}
+              />
+            </span>
+            <span
+              className={`text-right tabular-nums ${summary ? "font-medium" : "text-muted-foreground opacity-0 group-hover:opacity-100"}`}
+            >
+              {summary ?? "+ 목표"}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const selectedCheckboxDenominator =
+    selectedQuestion?.kind === "multi_choice"
+      ? selectedQuestion.options
+          .map((option) => subjectMetric(profile, "checkbox_option", selectedQuestion.id, option.key))
+          .find((metric) => metric !== undefined)?.denominatorCount
+      : undefined;
 
   return (
     <section className="mt-4 overflow-hidden rounded-lg border bg-background">
@@ -459,48 +617,57 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
               <header>
                 <h2 className="text-xl font-semibold tracking-tight">{selectedQuestion.title}</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {kindLabel(selectedQuestion.kind)} · 응답 {sourceCount}명
+                  {selectedQuestion.kind === "multi_choice"
+                    ? `복수 선택 · 응답 대상 ${selectedCheckboxDenominator ?? 0}명`
+                    : `${kindLabel(selectedQuestion.kind)} · 응답 ${sourceCount}명`}
                 </p>
               </header>
-              {selectedQuestion.kind === "single_choice" ? (
-                <div className="mt-7 space-y-1">
-                  {selectedQuestion.options.map((option) => {
-                    const metric = optionMetric(profile, selectedQuestion.id, option.key);
-                    const currentShare = metric?.share ?? 0;
-                    const target = optionTarget(draft.targets, selectedQuestion.id, option.key);
-                    const summary = targetSummary(target, currentShare);
-                    return (
-                      <button
-                        key={option.key}
-                        type="button"
-                        onClick={() => openTarget(selectedQuestion, option.key, option.label)}
-                        className="group grid w-full grid-cols-[minmax(140px,1fr)_72px_72px_minmax(120px,1.2fr)_120px] items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm hover:bg-muted/60"
-                      >
-                        <span className="truncate font-medium">{option.label}</span>
-                        <span className="text-right tabular-nums text-muted-foreground">
-                          {metric?.count ?? 0}명
+
+              {selectedQuestion.kind === "single_choice"
+                ? renderChoiceRows(selectedQuestion, "option")
+                : null}
+              {selectedQuestion.kind === "multi_choice"
+                ? renderChoiceRows(selectedQuestion, "checkbox_option")
+                : null}
+              {selectedQuestion.kind === "ordinal" ? (
+                <div className="mt-8 max-w-md">
+                  <p className="text-xs font-medium text-muted-foreground">평균</p>
+                  <div className="mt-2 flex items-end justify-between gap-4">
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-3xl font-medium tabular-nums">
+                        {meanMetric(profile, selectedQuestion.id)?.mean.toFixed(2) ?? "—"}
+                      </span>
+                      {meanTarget(draft.targets, selectedQuestion.id)?.intent ? (
+                        <span className="text-sm font-medium tabular-nums">
+                          → {meanTarget(draft.targets, selectedQuestion.id)?.intent?.value.toFixed(2)}
                         </span>
-                        <span className="text-right tabular-nums">{formatShare(currentShare)}</span>
-                        <span className="h-1.5 overflow-hidden rounded-full bg-muted">
-                          <span
-                            className="block h-full rounded-full bg-foreground/45"
-                            style={{ width: `${Math.max(0, Math.min(100, currentShare * 100))}%` }}
-                          />
-                        </span>
-                        <span
-                          className={`text-right tabular-nums ${summary ? "font-medium" : "text-muted-foreground opacity-0 group-hover:opacity-100"}`}
-                        >
-                          {summary ?? "+ 목표"}
-                        </span>
-                      </button>
-                    );
-                  })}
+                      ) : null}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={selectedQuestion.min === undefined || selectedQuestion.max === undefined}
+                      onClick={() => openMeanTarget(selectedQuestion)}
+                    >
+                      목표 설정
+                    </Button>
+                  </div>
+                  {selectedQuestion.min !== undefined && selectedQuestion.max !== undefined ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      가능한 범위 {selectedQuestion.min}–{selectedQuestion.max}
+                    </p>
+                  ) : null}
+                  <p className="mt-8 text-sm text-muted-foreground">
+                    점수별 분포는 현재 목표 프로필 계약에서 제공하지 않아 평균만 표시합니다.
+                  </p>
                 </div>
-              ) : (
+              ) : null}
+              {selectedQuestion.kind === "text" ? (
                 <p className="mt-10 text-sm text-muted-foreground">
-                  이 문항의 편집기는 다음 단계에서 같은 Question Explorer 안에 연결됩니다.
+                  단답형 응답은 다음 단계에서 사용자 정의 그룹으로 묶어 목표에 사용할 수 있습니다.
                 </p>
-              )}
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -533,7 +700,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
             <SheetDescription>
               {editing?.questionTitle ?? "문항"} · 현재{" "}
               {currentMetric
-                ? `${currentMetric.count}명 · ${formatShare(currentMetric.share)}`
+                ? editing?.subjectKind === "checkbox_option"
+                  ? `${currentMetric.count}/${currentMetric.denominatorCount}명 · ${formatShare(currentMetric.share)}`
+                  : `${currentMetric.count}명 · ${formatShare(currentMetric.share)}`
                 : "0명 · 0.0%"}
             </SheetDescription>
           </SheetHeader>
@@ -612,6 +781,63 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                 취소
               </Button>
               <Button type="button" disabled={valueInvalid} onClick={commitTarget}>
+                목표 설정
+              </Button>
+            </div>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={editingMean !== null} onOpenChange={(open) => !open && setEditingMean(null)}>
+        <SheetContent className="sm:max-w-[400px]">
+          <SheetHeader>
+            <SheetTitle>{editingMean?.questionTitle ?? "평균 목표"}</SheetTitle>
+            <SheetDescription>
+              현재 평균 {currentMeanMetric?.mean.toFixed(2) ?? "—"}
+            </SheetDescription>
+          </SheetHeader>
+          <div className="space-y-4 px-4 py-5">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">목표 평균</label>
+              <Input
+                autoFocus
+                inputMode="decimal"
+                value={meanValue}
+                onChange={(event) => setMeanValue(event.target.value)}
+                aria-invalid={meanValue !== "" && meanValueInvalid}
+                className="tabular-nums"
+                placeholder={editingMean ? `${editingMean.min}–${editingMean.max}` : ""}
+              />
+              {editingMean ? (
+                <p className="text-xs text-muted-foreground">
+                  가능한 범위 {editingMean.min}–{editingMean.max}
+                </p>
+              ) : null}
+              {meanValue !== "" && meanValueInvalid ? (
+                <p className="text-xs text-destructive">가능한 범위 안에서 평균을 입력해주세요.</p>
+              ) : null}
+            </div>
+            {currentMeanMetric && meanValue !== "" && !meanValueInvalid ? (
+              <p className="text-sm font-medium tabular-nums">
+                {currentMeanMetric.mean.toFixed(2)} → {parsedMean.toFixed(2)}
+              </p>
+            ) : null}
+          </div>
+          <SheetFooter className="flex-row items-center justify-between sm:justify-between">
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-destructive"
+              disabled={!existingMeanTarget}
+              onClick={removeMeanTarget}
+            >
+              목표 삭제
+            </Button>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={() => setEditingMean(null)}>
+                취소
+              </Button>
+              <Button type="button" disabled={meanValueInvalid} onClick={commitMeanTarget}>
                 목표 설정
               </Button>
             </div>
