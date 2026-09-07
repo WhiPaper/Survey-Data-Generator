@@ -20,8 +20,8 @@ import {
   logout,
   pingBackend,
 } from "./api/backend";
-import { QuestionExplorerPanel } from "./QuestionExplorerPanel";
 import { Button } from "@/components/ui/button";
+import { QuestionExplorerPanel } from "./QuestionExplorerPanel";
 
 type RuntimeState = "checking" | "ready" | "error";
 
@@ -45,6 +45,7 @@ export function AppShell() {
 
   useEffect(() => {
     let active = true;
+
     void pingBackend()
       .then(async () => {
         const restored = await getSession();
@@ -58,6 +59,7 @@ export function AppShell() {
         setRuntimeState("error");
         setMessage(errorMessage(cause));
       });
+
     return () => {
       active = false;
     };
@@ -70,10 +72,12 @@ export function AppShell() {
       setSelectedProject(null);
       return;
     }
+
     let active = true;
     setFormsBusy(true);
     setProjectsBusy(true);
     setError(null);
+
     void Promise.all([listForms(), listProjects()])
       .then(([formsResult, projectResult]) => {
         if (!active) return;
@@ -88,6 +92,7 @@ export function AppShell() {
         setFormsBusy(false);
         setProjectsBusy(false);
       });
+
     return () => {
       active = false;
     };
@@ -137,11 +142,11 @@ export function AppShell() {
     setImportingFormId(form.formId);
     setImportSummary(null);
     setError(null);
+
     try {
       const summary = await importForm(form.formId, operationId);
       setImportSummary(summary);
-      const nextProjects = await listProjects();
-      setProjects(nextProjects);
+      setProjects(await listProjects());
       await openProject(summary.projectId);
     } catch (cause: unknown) {
       setError(errorMessage(cause));
@@ -152,7 +157,14 @@ export function AppShell() {
   };
 
   const handleDeleteProject = async (project: ProjectSummaryView): Promise<void> => {
-    if (!window.confirm(`“${project.name}” 프로젝트를 삭제할까요? Google Form 원본은 변경되지 않습니다.`)) return;
+    if (
+      !window.confirm(
+        `“${project.name}” 프로젝트를 삭제할까요? Google Form 원본은 변경되지 않습니다.`,
+      )
+    ) {
+      return;
+    }
+
     setProjectsBusy(true);
     setError(null);
     try {
@@ -185,7 +197,9 @@ export function AppShell() {
           <Button className="mt-6" disabled={authBusy} onClick={() => void handleLogin()}>
             {authBusy ? "연결 중…" : "Google로 계속"}
           </Button>
-          <p className="mt-3 text-xs text-muted-foreground">프로젝트와 생성 결과는 이 기기에 저장됩니다.</p>
+          <p className="mt-3 text-xs text-muted-foreground">
+            프로젝트와 생성 결과는 이 기기에 저장됩니다.
+          </p>
           {error ? <p className="mt-4 text-sm text-destructive">{error}</p> : null}
         </section>
       </main>
@@ -197,11 +211,20 @@ export function AppShell() {
       <header className="flex h-12 items-center justify-between border-b px-4">
         <div className="flex min-w-0 items-center gap-3">
           <span className="shrink-0 text-sm font-semibold">Survey Data Generator</span>
-          {selectedProject ? <span className="truncate text-sm text-muted-foreground">{selectedProject.name}</span> : null}
+          {selectedProject ? (
+            <span className="truncate text-sm text-muted-foreground">{selectedProject.name}</span>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
-          <span className="hidden text-xs text-muted-foreground sm:inline">{session.account.email}</span>
-          <Button size="sm" variant="ghost" disabled={authBusy} onClick={() => void handleLogout()}>
+          <span className="hidden text-xs text-muted-foreground sm:inline">
+            {session.account.email}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={authBusy}
+            onClick={() => void handleLogout()}
+          >
             로그아웃
           </Button>
         </div>
@@ -225,62 +248,107 @@ export function AppShell() {
       ) : (
         <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-8 px-6 py-10 md:grid-cols-2">
           <section>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h1 className="text-lg font-semibold tracking-tight">프로젝트</h1>
-                <p className="mt-1 text-sm text-muted-foreground">최근 작업을 열거나 새 Google Form을 가져오세요.</p>
-              </div>
-            </div>
+            <h1 className="text-lg font-semibold tracking-tight">프로젝트</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              최근 작업을 열거나 새 Google Form을 가져오세요.
+            </p>
             <div className="mt-5 divide-y border-y">
               {projects.map((project) => (
-                <div key={project.id} className="flex items-center justify-between gap-4 py-3">
-                  <button type="button" className="min-w-0 text-left" disabled={projectsBusy} onClick={() => void openProject(project.id)}>
+                <div
+                  key={project.id}
+                  className="flex items-center justify-between gap-4 py-3"
+                >
+                  <button
+                    type="button"
+                    className="min-w-0 text-left"
+                    disabled={projectsBusy}
+                    onClick={() => void openProject(project.id)}
+                  >
                     <p className="truncate text-sm font-medium">{project.name}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">응답 {project.responseCount}개 · 문항 {project.questionCount}개</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      응답 {project.responseCount}개 · 문항 {project.questionCount}개
+                    </p>
                   </button>
-                  <Button size="sm" variant="ghost" disabled={projectsBusy} onClick={() => void handleDeleteProject(project)}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={projectsBusy}
+                    onClick={() => void handleDeleteProject(project)}
+                  >
                     삭제
                   </Button>
                 </div>
               ))}
               {!projectsBusy && projects.length === 0 ? (
-                <p className="py-5 text-sm text-muted-foreground">아직 만든 프로젝트가 없습니다.</p>
+                <p className="py-5 text-sm text-muted-foreground">
+                  아직 만든 프로젝트가 없습니다.
+                </p>
               ) : null}
             </div>
           </section>
 
           <section>
             <h2 className="text-lg font-semibold tracking-tight">Google Forms</h2>
-            <p className="mt-1 text-sm text-muted-foreground">사용할 Form을 선택해 프로젝트를 만듭니다.</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              사용할 Form을 선택해 프로젝트를 만듭니다.
+            </p>
             <div className="mt-5 divide-y border-y">
               {forms.map((form) => (
-                <div key={form.formId} className="flex items-center justify-between gap-4 py-3">
+                <div
+                  key={form.formId}
+                  className="flex items-center justify-between gap-4 py-3"
+                >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{form.title}</p>
-                    {form.modifiedAt ? <p className="mt-0.5 text-xs text-muted-foreground">수정 {form.modifiedAt}</p> : null}
+                    {form.modifiedAt ? (
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        수정 {form.modifiedAt}
+                      </p>
+                    ) : null}
                   </div>
-                  <Button size="sm" variant="outline" disabled={formsBusy || importingFormId !== null} onClick={() => void handleImport(form)}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={formsBusy || importingFormId !== null}
+                    onClick={() => void handleImport(form)}
+                  >
                     {importingFormId === form.formId ? "가져오는 중…" : "가져오기"}
                   </Button>
                 </div>
               ))}
               {!formsBusy && forms.length === 0 ? (
-                <p className="py-5 text-sm text-muted-foreground">접근 가능한 Google Form이 없습니다.</p>
+                <p className="py-5 text-sm text-muted-foreground">
+                  접근 가능한 Google Form이 없습니다.
+                </p>
               ) : null}
             </div>
             {importOperationId ? (
-              <Button className="mt-3" size="sm" variant="ghost" onClick={() => void cancelFormImport(importOperationId)}>
+              <Button
+                className="mt-3"
+                size="sm"
+                variant="ghost"
+                onClick={() => void cancelFormImport(importOperationId)}
+              >
                 가져오기 취소
               </Button>
             ) : null}
             {importSummary ? (
-              <p className="mt-3 text-sm text-muted-foreground">{importSummary.title} 프로젝트를 만들었습니다.</p>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {importSummary.title} 프로젝트를 만들었습니다.
+              </p>
             ) : null}
           </section>
         </div>
       )}
 
-      {error ? <p role="alert" className="fixed bottom-4 left-1/2 -translate-x-1/2 rounded-md border bg-background px-3 py-2 text-sm text-destructive shadow-sm">{error}</p> : null}
+      {error ? (
+        <p
+          role="alert"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 rounded-md border bg-background px-3 py-2 text-sm text-destructive shadow-sm"
+        >
+          {error}
+        </p>
+      ) : null}
     </main>
   );
 }
