@@ -520,19 +520,8 @@ def generate_candidates(
     )
     synthesizer.fit(model_data)
 
-    if target_column == "__no_mean_score" and target_min == target_max == 0:
-        sampled = synthesizer.sample(num_rows=pool_size)
-        valid = _valid_timestamp_rows(sampled, timestamp_column, timestamp_start, timestamp_end)
-        valid &= _valid_categorical_rows(sampled, allowed_values)
-        sampled = sampled.loc[valid].copy()
-        if sampled.empty:
-            raise RuntimeError("SDV did not produce valid candidates for a target-free run")
-        sampled[target_column] = 0
-        sampled = _normalize_mean_columns(sampled, mean_supports)
-        if timestamp_column is not None:
-            sampled[timestamp_column] = pd.to_datetime(sampled[timestamp_column], utc=True)
-        return CandidatePool(data=sampled, metadata=quality_metadata)
-
+    # __no_mean_score is an internal zero-valued solver sentinel, not a signal that
+    # categorical targets are absent. It must use the normal directed support path.
     candidate_score_counts = _expanded_score_support(
         model_data,
         target_column=target_column,
