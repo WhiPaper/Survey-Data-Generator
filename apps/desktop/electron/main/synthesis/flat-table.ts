@@ -8,6 +8,8 @@ import {
   type MultiChoiceQuestion,
   type NormalizedResponse,
   type QuestionId,
+  type SingleChoiceQuestion,
+  type TextQuestion,
 } from "@survey-synth/domain";
 
 import { backendFailure } from "../errors";
@@ -103,6 +105,30 @@ export const valueGroupMemberCells = (
     const slot = asNormalizedResponse(stored.response).answers[questionId];
     const key = valueGroupMemberKey(slot);
     if (key !== null && memberSet.has(key) && slot) cells.add(JSON.stringify(slot));
+  }
+  return [...cells];
+};
+
+export const valueGroupMemberSupport = (
+  responses: readonly StoredSourceResponse[],
+  question: SingleChoiceQuestion | TextQuestion,
+  members: readonly string[],
+): string[] => {
+  const cells = new Set(valueGroupMemberCells(responses, question.id, members));
+  if (question.kind === "text") return [...cells];
+
+  const memberSet = new Set(members);
+  for (const option of question.options) {
+    if (!memberSet.has(String(option.key))) continue;
+    const canonical: AnswerSlot = {
+      state: "answered",
+      value: {
+        kind: "single_choice",
+        optionKey: option.key,
+        label: option.label,
+      },
+    };
+    cells.add(JSON.stringify(canonical));
   }
   return [...cells];
 };
@@ -233,6 +259,70 @@ const stringValue = (value: unknown, field: string): string => {
   throw backendFailure("INTERNAL", `Synthetic result has invalid ${field}`);
 };
 
+const confirmedNotReachedQuestions = (
+  form: FormSnapshot,
+  answers: Readonly<Record<QuestionId, AnswerSlot>>,
+): ReadonlySet<QuestionId> => {
+  const sectionByQuestion = new Map(
+    form.logic.sections.flatMap((section) =>
+      section.questionIds.map((questionId) => [questionId, section] as const),
+    ),
+  );
+  const transitions = new Map(
+    form.logic.transitions.map(
+      (transition) => [`${String(transition.sourceQuestionId)}\0${String(transition.optionKey)}`, transition] as const,
+    ),
+  );
+  const notReachedSections = new Set<string>();
+
+  for (const [questionId, slot] of Object.entries(answers)) {
+    if (slot.state !== "answered" || slot.value.kind !== "single_choice") continue;
+    const transition = transitions.get(`${questionId}\0${String(slot.value.optionKey)}`);
+    if (!transition) continue;
+    const sourceSection = sectionByQuestion.get(questionId as QuestionId);
+    if (!sourceSection) continue;
+
+    if (transition.destination.type === "submit") {
+      for (const section of form.logic.sections) {
+        if (section.order > sourceSection.order) notReachedSections.add(String(section.id));
+      }
+      continue;
+    }
+    if (transition.destination.type !== "section") continue;
+    const destination = form.logic.sections.find(
+      (section) => section.id === transition.destination.sectionId,
+    );
+    if (!destination || destination.order <= sourceSection.order) continue;
+    for (const section of form.logic.sections) {
+      if (section.order > sourceSection.order && section.order < destination.order) {
+        notReachedSections.add(String(section.id));
+      }
+    }
+  }
+
+  return new Set(
+    form.questions
+      .filter((question) => notReachedSections.has(String(question.sectionId)))
+      .map((question) => question.id),
+  );
+};
+
+const validateConfirmedRouting = (
+  form: FormSnapshot,
+  provisional: Readonly<Record<QuestionId, AnswerSlot>>,
+): void => {
+  const notReached = confirmedNotReachedQuestions(form, provisional);
+  for (const questionId of notReached) {
+    if (provisional[questionId]?.state === "answered") {
+      const question = form.questions.find((candidate) => candidate.id === questionId);
+      throw backendFailure(
+        "TARGET_CONFLICT",
+        `Generated candidate answered a confirmed not-reached question: ${question?.title || questionId}`,
+      );
+    }
+  }
+};
+
 const syntheticResponse = (
   form: FormSnapshot,
   plan: FlatTablePlan,
@@ -261,6 +351,7 @@ const syntheticResponse = (
     provisional[questionId] = parseGeneratedSlot(row[column], questionId);
   }
 
+  validateConfirmedRouting(form, provisional);
   const path = resolveResponsePath(form, provisional);
   const answers = {} as Record<QuestionId, AnswerSlot>;
   for (const question of form.questions) {
