@@ -33,6 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { QuestionExplorerPanel } from "./QuestionExplorerPanel";
+import { recoverAppliedSourceRefresh } from "./sourceRefreshRecovery";
 
 type RuntimeState = "checking" | "ready" | "error";
 
@@ -183,6 +184,7 @@ export function AppShell() {
 
   const handleRefreshProject = async (): Promise<void> => {
     if (!selectedProject) return;
+    const previousSourceRevisionId = selectedProject.currentSourceRevisionId;
     setRefreshBusy(true);
     setError(null);
     try {
@@ -194,10 +196,39 @@ export function AppShell() {
         invalidValueGroupIds: result.invalidValueGroupIds,
         targetIssues: result.targetIssues,
       });
-      setProjects(await listProjects());
       setRefreshDialogOpen(false);
+      try {
+        setProjects(await listProjects());
+      } catch {
+        setError("원본은 업데이트됐지만 프로젝트 목록을 새로고치지 못했습니다.");
+      }
     } catch (cause: unknown) {
-      setError(errorMessage(cause));
+      const recovery = await recoverAppliedSourceRefresh({
+        projectId: selectedProject.id,
+        previousSourceRevisionId,
+        getProject,
+        getSourceReview: getProjectSourceReview,
+      });
+      if (recovery.status === "applied") {
+        setSelectedProject(recovery.project);
+        setSourceReview(recovery.review);
+        setRefreshDialogOpen(false);
+        let listReloadFailed = false;
+        try {
+          setProjects(await listProjects());
+        } catch {
+          listReloadFailed = true;
+        }
+        setError(
+          recovery.review === null
+            ? "원본은 업데이트됐지만 확인할 설정 상태를 불러오지 못했습니다."
+            : listReloadFailed
+              ? "원본은 업데이트됐지만 프로젝트 목록을 새로고치지 못했습니다."
+              : null,
+        );
+      } else {
+        setError(errorMessage(cause));
+      }
     } finally {
       setRefreshBusy(false);
     }
