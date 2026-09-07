@@ -79,6 +79,14 @@ The renderer may call this local review operation whenever a Project is opened a
 
 The local review result uses the same ValueGroup and target-review semantics as the explicit refresh result.
 
+### Single review authority
+
+Explicit refresh and local reopen must not implement separate ValueGroup or target-review calculations.
+
+The Google capture/apply layer is responsible only for obtaining, normalizing, and persisting the new immutable SourceRevision. Once that revision is current, the refresh RPC derives its `invalidValueGroupIds` and `targetIssues` by invoking the same local review computation used by `projects.sourceReview`.
+
+This keeps immediate post-refresh `확인 필요` state identical to the state reconstructed later from the same current SourceRevision and editable setup.
+
 ### Review availability must not block Project open
 
 Project detail is the primary local workspace state. A failure while computing review diagnostics must not prevent the renderer from opening an otherwise readable Project.
