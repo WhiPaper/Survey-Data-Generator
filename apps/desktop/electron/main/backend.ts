@@ -4,6 +4,7 @@ import {
   type FormsImportParams,
   type FormsListParams,
   type GoogleAccountId,
+  type ProjectSourceRefreshParams,
   type RunsExportParams,
   type SourceScope,
   type SynthesisResolveEditPlanParams,
@@ -116,6 +117,29 @@ export const handleBackendCall = async (
       return requireProjects(services).list();
     case "projects.get":
       return requireProjects(services).get((request.params as { projectId: string }).projectId);
+    case "projects.refreshSource": {
+      const params = request.params as ProjectSourceRefreshParams;
+      const refreshed = await requireForms(services).refreshProjectSource(params);
+      const project = await requireProjects(services).get(params.projectId);
+      if (!project) throw backendFailure("INTERNAL", "Refreshed project could not be reloaded");
+
+      const targetService = requireTargets(services);
+      const draft = await targetService.getDraft(params.projectId);
+      const targetIssues = draft
+        ? [
+            ...semanticDuplicateTargetIssues(draft.targets),
+            ...(await targetService.validate(draft)).issues,
+          ]
+        : [];
+
+      return {
+        project,
+        previousSourceRevisionId: refreshed.previousSourceRevisionId,
+        sourceRevisionId: refreshed.sourceRevisionId,
+        invalidValueGroupIds: refreshed.invalidValueGroupIds,
+        targetIssues,
+      };
+    }
     case "projects.delete":
       await requireProjects(services).delete((request.params as { projectId: string }).projectId);
       return { ok: true };

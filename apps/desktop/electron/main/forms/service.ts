@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import type {
+  FormId,
   FormImportResult,
   FormsImportParams,
   FormsListParams,
   FormsListResult,
+  ProjectSourceRefreshParams,
 } from "@survey-synth/contracts";
 import type { FormSnapshot, NormalizedResponse } from "@survey-synth/domain";
 
@@ -12,13 +14,20 @@ import type { GoogleAuthService } from "../auth/service";
 import { backendFailure } from "../errors";
 import type { JobRegistry } from "../jobs";
 import type { SurveyDatabase } from "../persistence/database";
-import { createImportedProject } from "../persistence/store";
+import { createImportedProject, createSourceRevision, getProject } from "../persistence/store";
 import type { GoogleFormsClient } from "./google-client";
+import { invalidValueGroupIdsForForm } from "../value-groups/service";
 import { GoogleFormNormalizer, GoogleResponseNormalizer } from "./normalizer";
 
 export interface FormsService {
   listForms(params: FormsListParams): Promise<FormsListResult>;
   importForm(params: FormsImportParams): Promise<FormImportResult>;
+  refreshProjectSource(params: ProjectSourceRefreshParams): Promise<{
+    projectId: string;
+    previousSourceRevisionId: string;
+    sourceRevisionId: string;
+    invalidValueGroupIds: string[];
+  }>;
   cancelImport(operationId: string): void;
 }
 
@@ -121,6 +130,91 @@ export const createFormsService = ({
           responseCount: responses.length,
           questionCount: form.questions.length,
           ...(unsupportedQuestionCount > 0 ? { unsupportedQuestionCount } : {}),
+        };
+      } finally {
+        jobs.finish(operationId);
+      }
+    },
+
+    refreshProjectSource: async (params) => {
+      const project = getProject(db, params.projectId);
+      if (!project) throw backendFailure("NOT_FOUND", "Project was not found");
+      if (!project.googleAccountId) {
+        throw backendFailure(
+          "REAUTH_REQUIRED",
+          "The Google account for this project is disconnected",
+        );
+      }
+      if (!project.currentSourceRevisionId) {
+        throw backendFailure("VALIDATION_FAILED", "Project has no imported source revision");
+      }
+
+      const account = await activeAccount();
+      if (String(account.id) !== project.googleAccountId) {
+        throw backendFailure(
+          "REAUTH_REQUIRED",
+          "Switch to the Google account connected to this project before refreshing",
+        );
+      }
+
+      const operationId = params.operationId ?? randomUUID();
+      let signal: AbortSignal;
+      try {
+        signal = jobs.start(operationId);
+      } catch {
+        throw backendFailure(
+          "VALIDATION_FAILED",
+          "A source refresh with this operation ID is already running",
+        );
+      }
+
+      try {
+        const capturedAtMs = now();
+        const formId = project.googleFormId as FormId;
+        const rawForm = await google.getForm(account.id, formId, signal);
+        const form = formNormalizer.normalize(rawForm, new Date(capturedAtMs).toISOString());
+        if (String(form.formId) !== project.googleFormId) {
+          throw backendFailure(
+            "GOOGLE_API_ERROR",
+            "Google Form identity did not match the project",
+          );
+        }
+
+        const rawResponses = await google.getAllResponses(account.id, formId, signal);
+        if (rawResponses.length === 0) {
+          throw backendFailure("VALIDATION_FAILED", "Google Form has no responses to refresh");
+        }
+        const responses = responseNormalizer.normalizeAll(form, rawResponses);
+        if (signal.aborted)
+          throw backendFailure("JOB_CANCELLED", "Google Form refresh was cancelled");
+
+        const latestSession = await auth.getSession();
+        if (!latestSession || String(latestSession.account.id) !== project.googleAccountId) {
+          throw backendFailure("JOB_CANCELLED", "Google account changed during source refresh");
+        }
+
+        const invalidValueGroupIds = invalidValueGroupIdsForForm(db, project.id, form);
+        const revision = createSourceRevision(db, {
+          projectId: project.id,
+          formSnapshot: {
+            title: form.title,
+            schema: form,
+            schemaHash: form.schemaHash,
+          },
+          responseSetHash: responseSetHash(form, responses),
+          responses: responses.map((response) => ({
+            responseId: response.responseId,
+            submittedAtMs: responseTimestamp(response),
+            response,
+          })),
+          importedAtMs: now(),
+        });
+
+        return {
+          projectId: project.id,
+          previousSourceRevisionId: project.currentSourceRevisionId,
+          sourceRevisionId: revision.id,
+          invalidValueGroupIds,
         };
       } finally {
         jobs.finish(operationId);
