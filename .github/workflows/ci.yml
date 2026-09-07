@@ -28,6 +28,41 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
+      - name: Apply question explorer type fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          model = Path("apps/desktop/src/QuestionExplorerPanel/model.ts")
+          text = model.read_text()
+          text = text.replace(
+              '  if (target.subject.kind !== "value_group") return target.subject.questionId;\n  return groups.find((group) => group.id === target.subject.valueGroupId)?.questionId ?? null;',
+              '  if ("valueGroupId" in target.subject) {\n    return groups.find((group) => group.id === target.subject.valueGroupId)?.questionId ?? null;\n  }\n  return target.subject.questionId;',
+          )
+          text = text.replace(
+              '  if (target.subject.kind === "value_group") {\n    return groups.find((group) => group.id === target.subject.valueGroupId)?.name ?? "그룹";\n  }',
+              '  if ("valueGroupId" in target.subject) {\n    return groups.find((group) => group.id === target.subject.valueGroupId)?.name ?? "그룹";\n  }',
+          )
+          text = text.replace(
+              '    target.subject.kind === "value_group"\n      ? valueGroupMetric(profile, target.subject.valueGroupId)',
+              '    "valueGroupId" in target.subject\n      ? valueGroupMetric(profile, target.subject.valueGroupId)',
+          )
+          model.write_text(text)
+
+          result = Path("apps/desktop/src/QuestionExplorerPanel/ResultView.tsx")
+          text = result.read_text().replace(
+              '<Select value={context.run.runId} onValueChange={onSelectRun}>',
+              '<Select\n            value={context.run.runId}\n            onValueChange={(value) => value && onSelectRun(value)}\n          >',
+          )
+          result.write_text(text)
+
+          index = Path("apps/desktop/src/QuestionExplorerPanel/index.tsx")
+          text = index.read_text().replace(
+              '<Select value={populationGroupId} onValueChange={changePopulation}>',
+              '<Select\n                  value={populationGroupId}\n                  onValueChange={(value) => value && changePopulation(value)}\n                >',
+          )
+          index.write_text(text)
+          PY
       - name: Format question explorer
         run: |
           pnpm exec prettier --write "apps/desktop/src/QuestionExplorerPanel/*.{ts,tsx}"
@@ -35,7 +70,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add apps/desktop/src/QuestionExplorerPanel
-            git commit -m "chore(ui): format question explorer"
+            git commit -m "fix(ui): align question explorer types"
             git push origin HEAD:${{ github.event.pull_request.head.ref }}
           fi
       - run: pnpm run check
