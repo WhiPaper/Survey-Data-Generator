@@ -36,32 +36,18 @@ jobs:
           model = Path("apps/desktop/src/QuestionExplorerPanel/model.ts")
           text = model.read_text()
           text = text.replace(
-              '  if (target.subject.kind !== "value_group") return target.subject.questionId;\n  return groups.find((group) => group.id === target.subject.valueGroupId)?.questionId ?? null;',
               '  if ("valueGroupId" in target.subject) {\n    return groups.find((group) => group.id === target.subject.valueGroupId)?.questionId ?? null;\n  }\n  return target.subject.questionId;',
+              '  const subject = target.subject;\n  if (subject.kind === "value_group") {\n    return groups.find((group) => group.id === subject.valueGroupId)?.questionId ?? null;\n  }\n  return subject.questionId;',
           )
           text = text.replace(
-              '  if (target.subject.kind === "value_group") {\n    return groups.find((group) => group.id === target.subject.valueGroupId)?.name ?? "그룹";\n  }',
-              '  if ("valueGroupId" in target.subject) {\n    return groups.find((group) => group.id === target.subject.valueGroupId)?.name ?? "그룹";\n  }',
+              '  if ("valueGroupId" in target.subject) {\n    return groups.find((group) => group.id === target.subject.valueGroupId)?.name ?? "그룹";\n  }\n  const question = questions.find((candidate) => candidate.id === target.subject.questionId);\n  return (\n    question?.options.find((option) => option.key === target.subject.optionKey)?.label ?? "선택지"\n  );',
+              '  const subject = target.subject;\n  if (subject.kind === "value_group") {\n    return groups.find((group) => group.id === subject.valueGroupId)?.name ?? "그룹";\n  }\n  const question = questions.find((candidate) => candidate.id === subject.questionId);\n  return question?.options.find((option) => option.key === subject.optionKey)?.label ?? "선택지";',
           )
           text = text.replace(
-              '    target.subject.kind === "value_group"\n      ? valueGroupMetric(profile, target.subject.valueGroupId)',
-              '    "valueGroupId" in target.subject\n      ? valueGroupMetric(profile, target.subject.valueGroupId)',
+              '  const metric =\n    "valueGroupId" in target.subject\n      ? valueGroupMetric(profile, target.subject.valueGroupId)\n      : subjectMetricFor(\n          profile,\n          target.subject.kind,\n          target.subject.questionId,\n          target.subject.optionKey,\n        );',
+              '  const subject = target.subject;\n  const metric =\n    subject.kind === "value_group"\n      ? valueGroupMetric(profile, subject.valueGroupId)\n      : subjectMetricFor(profile, subject.kind, subject.questionId, subject.optionKey);',
           )
           model.write_text(text)
-
-          result = Path("apps/desktop/src/QuestionExplorerPanel/ResultView.tsx")
-          text = result.read_text().replace(
-              '<Select value={context.run.runId} onValueChange={onSelectRun}>',
-              '<Select\n            value={context.run.runId}\n            onValueChange={(value) => value && onSelectRun(value)}\n          >',
-          )
-          result.write_text(text)
-
-          index = Path("apps/desktop/src/QuestionExplorerPanel/index.tsx")
-          text = index.read_text().replace(
-              '<Select value={populationGroupId} onValueChange={changePopulation}>',
-              '<Select\n                  value={populationGroupId}\n                  onValueChange={(value) => value && changePopulation(value)}\n                >',
-          )
-          index.write_text(text)
           PY
       - name: Format question explorer
         run: |
@@ -70,7 +56,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add apps/desktop/src/QuestionExplorerPanel
-            git commit -m "fix(ui): align question explorer types"
+            git commit -m "fix(ui): narrow target subjects safely"
             git push origin HEAD:${{ github.event.pull_request.head.ref }}
           fi
       - run: pnpm run check
