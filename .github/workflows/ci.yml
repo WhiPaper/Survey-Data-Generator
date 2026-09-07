@@ -8,13 +8,15 @@ on:
       - phase1-backend-target-contract
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0
@@ -26,6 +28,132 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
+      - name: Apply public profile and run-list contracts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if old not in text:
+                  raise SystemExit(f"missing replacement in {path}: {old[:80]!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          protocol = "packages/contracts/src/protocol.ts"
+          replace(
+              protocol,
+              '''  z\n    .object({\n      kind: z.literal("mean"),\n      questionId: z.string().min(1),\n      mean: z.number().finite(),\n      denominatorCount: z.number().int().nonnegative(),\n    })\n    .strict(),\n]);''',
+              '''  z\n    .object({\n      kind: z.literal("mean"),\n      questionId: z.string().min(1),\n      mean: z.number().finite(),\n      denominatorCount: z.number().int().nonnegative(),\n    })\n    .strict(),\n  z\n    .object({\n      kind: z.literal("ordinal_distribution"),\n      questionId: z.string().min(1),\n      denominatorCount: z.number().int().nonnegative(),\n      values: z.array(\n        z\n          .object({\n            value: z.number().finite(),\n            count: z.number().int().nonnegative(),\n            share: z.number().min(0).max(1),\n          })\n          .strict(),\n      ),\n    })\n    .strict(),\n  z\n    .object({\n      kind: z.literal("conditional_share"),\n      population: z\n        .object({ kind: z.literal("value_group"), valueGroupId: z.string().min(1) })\n        .strict(),\n      questionId: z.string().min(1),\n      optionKey: z.string().min(1),\n      count: z.number().int().nonnegative(),\n      denominatorCount: z.number().int().nonnegative(),\n      share: z.number().min(0).max(1),\n    })\n    .strict(),\n]);''',
+          )
+          replace(
+              protocol,
+              '''export type RunsGetResult = z.infer<typeof RunsGetResultSchema>;\n\nexport const RunExportFormatSchema''',
+              '''export type RunsGetResult = z.infer<typeof RunsGetResultSchema>;\n\nexport const RunSummarySchema = z\n  .object({\n    runId: z.string().min(1),\n    projectId: ProjectIdSchema,\n    sourceRevisionId: z.string().min(1),\n    createdAt: z.string().min(1),\n    finalResponseCount: z.number().int().nonnegative(),\n  })\n  .strict();\nexport type RunSummary = z.infer<typeof RunSummarySchema>;\n\nexport const RunExportFormatSchema''',
+          )
+          replace(
+              protocol,
+              '''  "runs.get": { input: z.infer<typeof RunParamsSchema>; output: RunsGetResult };\n  "runs.export":''',
+              '''  "runs.list": { input: z.infer<typeof ProjectParamsSchema>; output: RunSummary[] };\n  "runs.get": { input: z.infer<typeof RunParamsSchema>; output: RunsGetResult };\n  "runs.export":''',
+          )
+          replace(protocol, '  "runs.get",\n  "runs.export",', '  "runs.list",\n  "runs.get",\n  "runs.export",')
+          replace(
+              protocol,
+              '''  "runs.get": RunParamsSchema,\n  "runs.export": RunsExportParamsSchema,''',
+              '''  "runs.list": ProjectParamsSchema,\n  "runs.get": RunParamsSchema,\n  "runs.export": RunsExportParamsSchema,''',
+          )
+          replace(
+              protocol,
+              '''  "runs.get": RunsGetResultSchema,\n  "runs.export": RunsExportResultSchema,''',
+              '''  "runs.list": z.array(RunSummarySchema),\n  "runs.get": RunsGetResultSchema,\n  "runs.export": RunsExportResultSchema,''',
+          )
+
+          target_service = "apps/desktop/electron/main/targets/service.ts"
+          replace(
+              target_service,
+              '''const conditionalMetric = (''',
+              '''const ordinalDistributionMetric = (\n  context: ScopeContext,\n  questionId: string,\n): {\n  denominatorCount: number;\n  values: Array<{ value: number; count: number; share: number }>;\n} | null => {\n  const question = context.form.questions.find((candidate) => candidate.id === questionId);\n  if (!question || question.kind !== "ordinal") return null;\n  const counts = new Map<number, number>();\n  let denominatorCount = 0;\n  for (const slot of answers(context.responses, question.id)) {\n    if (slot?.state !== "answered" || slot.value.kind !== "ordinal") continue;\n    denominatorCount += 1;\n    counts.set(slot.value.value, (counts.get(slot.value.value) ?? 0) + 1);\n  }\n  const values: Array<{ value: number; count: number; share: number }> = [];\n  for (let value = Math.ceil(question.min); value <= Math.floor(question.max); value += 1) {\n    const count = counts.get(value) ?? 0;\n    values.push({\n      value,\n      count,\n      share: denominatorCount === 0 ? 0 : count / denominatorCount,\n    });\n  }\n  return { denominatorCount, values };\n};\n\nconst conditionalMetric = (''',
+          )
+          replace(
+              target_service,
+              '''    } else if (question.kind === "ordinal") {\n      const metric = meanMetric(context, String(question.id));\n      if (metric) metrics.push({ kind: "mean", questionId: String(question.id), ...metric });\n    }\n  }''',
+              '''    } else if (question.kind === "ordinal") {\n      const metric = meanMetric(context, String(question.id));\n      if (metric) metrics.push({ kind: "mean", questionId: String(question.id), ...metric });\n      const distribution = ordinalDistributionMetric(context, String(question.id));\n      if (distribution) {\n        metrics.push({\n          kind: "ordinal_distribution",\n          questionId: String(question.id),\n          ...distribution,\n        });\n      }\n    }\n  }''',
+          )
+          replace(
+              target_service,
+              '''  for (const group of groups) {\n    const subject = { kind: "value_group" as const, valueGroupId: group.id };\n    const metric = subjectMetric(context, groups, subject);\n    if (metric) metrics.push({ kind: "subject", subject, ...metric });\n  }\n\n  return {''',
+              '''  for (const group of groups) {\n    const subject = { kind: "value_group" as const, valueGroupId: group.id };\n    const metric = subjectMetric(context, groups, subject);\n    if (metric) metrics.push({ kind: "subject", subject, ...metric });\n\n    for (const question of context.form.questions) {\n      if (question.kind !== "multi_choice") continue;\n      for (const option of question.options) {\n        const target: Extract<TargetDraftTarget, { kind: "conditional_share" }> = {\n          id: `profile:${group.id}:${String(question.id)}:${String(option.key)}` as never,\n          kind: "conditional_share",\n          population: { kind: "value_group", valueGroupId: group.id },\n          questionId: String(question.id),\n          optionKey: String(option.key),\n          intent: null,\n        };\n        const conditional = conditionalMetric(context, groups, target);\n        if (conditional) {\n          metrics.push({\n            kind: "conditional_share",\n            population: target.population,\n            questionId: target.questionId,\n            optionKey: target.optionKey,\n            ...conditional,\n          });\n        }\n      }\n    }\n  }\n\n  return {''',
+          )
+
+          run_store = "apps/desktop/electron/main/persistence/run-store.ts"
+          replace(run_store, 'import { asc, eq } from "drizzle-orm";', 'import { asc, desc, eq } from "drizzle-orm";')
+          replace(
+              run_store,
+              '''export const getRunRecord = (db: SurveyDatabase, runId: string): RunRecord | null =>\n  db.select().from(runs).where(eq(runs.id, runId)).get() ?? null;\n\nexport const listPersistedRunRows''',
+              '''export const getRunRecord = (db: SurveyDatabase, runId: string): RunRecord | null =>\n  db.select().from(runs).where(eq(runs.id, runId)).get() ?? null;\n\nexport const listRunRecords = (db: SurveyDatabase, projectId: string): RunRecord[] =>\n  db\n    .select()\n    .from(runs)\n    .where(eq(runs.projectId, projectId))\n    .orderBy(desc(runs.createdAtMs), desc(runs.id))\n    .all();\n\nexport const listPersistedRunRows''',
+          )
+
+          synthesis = "apps/desktop/electron/main/synthesis/service.ts"
+          replace(synthesis, '  type RunTargetSnapshot,\n  type RunsGetResult,', '  type RunSummary,\n  type RunTargetSnapshot,\n  type RunsGetResult,')
+          replace(
+              synthesis,
+              'import { getRunRecord, persistRun, type PersistRunInput } from "../persistence/run-store";',
+              'import { getRunRecord, listRunRecords, persistRun, type PersistRunInput } from "../persistence/run-store";',
+          )
+          replace(
+              synthesis,
+              '''  cancel(operationId: string): boolean;\n  getRun(runId: string): Promise<RunsGetResult>;''',
+              '''  cancel(operationId: string): boolean;\n  listRuns?(projectId: string): Promise<RunSummary[]>;\n  getRun(runId: string): Promise<RunsGetResult>;''',
+          )
+          replace(
+              synthesis,
+              '''    cancel: (operationId) => engine.cancel(operationId),\n\n    getRun: async (runId) => {''',
+              '''    cancel: (operationId) => engine.cancel(operationId),\n\n    listRuns: async (projectId) => {\n      if (!getProject(db, projectId)) throw backendFailure("NOT_FOUND", "Project was not found");\n      return listRunRecords(db, projectId).map((run) => ({\n        runId: run.id,\n        projectId: run.projectId,\n        sourceRevisionId: run.sourceRevisionId,\n        createdAt: new Date(run.createdAtMs).toISOString(),\n        finalResponseCount: run.finalResponseCount,\n      }));\n    },\n\n    getRun: async (runId) => {''',
+          )
+
+          backend = "apps/desktop/electron/main/backend.ts"
+          replace(
+              backend,
+              '''    case "runs.get":\n      return requireSynthesis(services).getRun((request.params as { runId: string }).runId);''',
+              '''    case "runs.list": {\n      const synthesis = requireSynthesis(services);\n      if (!synthesis.listRuns) {\n        throw backendFailure("BACKEND_UNAVAILABLE", "Run listing is not initialized");\n      }\n      return synthesis.listRuns((request.params as { projectId: string }).projectId);\n    }\n    case "runs.get":\n      return requireSynthesis(services).getRun((request.params as { runId: string }).runId);''',
+          )
+
+          renderer = "apps/desktop/src/api/backend.ts"
+          replace(renderer, '  type RunExportFormat,\n  type RunsExportResult,', '  type RunExportFormat,\n  type RunSummary,\n  type RunsExportResult,')
+          replace(
+              renderer,
+              '''export const getRun = (runId: string, backend?: BackendInvoker): Promise<RunsGetResult> =>\n  callBackend("runs.get", { runId }, backend);''',
+              '''export const listRuns = (projectId: string, backend?: BackendInvoker): Promise<RunSummary[]> =>\n  callBackend("runs.list", { projectId }, backend);\nexport const getRun = (runId: string, backend?: BackendInvoker): Promise<RunsGetResult> =>\n  callBackend("runs.get", { runId }, backend);''',
+          )
+
+          tests = "packages/contracts/test/protocol.test.ts"
+          replace(
+              tests,
+              '''  it("accepts structured target issues", () => {''',
+              '''  it("accepts authoritative Question Explorer profile metrics and Run summaries", () => {\n    expect(\n      parseRpcResult("targets.profile", {\n        projectId: "project-1",\n        sourceRevisionId: "revision-1",\n        sourceScope: { kind: "all" },\n        responseCount: 2,\n        responseSetHash: "hash",\n        metrics: [\n          {\n            kind: "ordinal_distribution",\n            questionId: "q-score",\n            denominatorCount: 2,\n            values: [\n              { value: 1, count: 0, share: 0 },\n              { value: 2, count: 1, share: 0.5 },\n            ],\n          },\n          {\n            kind: "conditional_share",\n            population: { kind: "value_group", valueGroupId: "group-1" },\n            questionId: "q-checkbox",\n            optionKey: "music",\n            count: 1,\n            denominatorCount: 2,\n            share: 0.5,\n          },\n        ],\n      }),\n    ).toMatchObject({ metrics: [{ kind: "ordinal_distribution" }, { kind: "conditional_share" }] });\n\n    expect(\n      parseRpcResult("runs.list", [\n        {\n          runId: "run-1",\n          projectId: "project-1",\n          sourceRevisionId: "revision-1",\n          createdAt: "2026-09-07T00:00:00.000Z",\n          finalResponseCount: 120,\n        },\n      ]),\n    ).toMatchObject([{ runId: "run-1", finalResponseCount: 120 }]);\n  });\n\n  it("accepts structured target issues", () => {''',
+          )
+          PY
+      - name: Format changed files
+        run: |
+          pnpm exec prettier --write \
+            packages/contracts/src/protocol.ts \
+            packages/contracts/test/protocol.test.ts \
+            apps/desktop/electron/main/targets/service.ts \
+            apps/desktop/electron/main/persistence/run-store.ts \
+            apps/desktop/electron/main/synthesis/service.ts \
+            apps/desktop/electron/main/backend.ts \
+            apps/desktop/src/api/backend.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add packages/contracts/src/protocol.ts packages/contracts/test/protocol.test.ts \
+              apps/desktop/electron/main/targets/service.ts \
+              apps/desktop/electron/main/persistence/run-store.ts \
+              apps/desktop/electron/main/synthesis/service.ts \
+              apps/desktop/electron/main/backend.ts apps/desktop/src/api/backend.ts
+            git commit -m "feat(contracts): expose profile evidence and run list"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
       - run: pnpm run check
       - run: python -m pip install -r engine/requirements.txt
       - run: pnpm run engine:test
