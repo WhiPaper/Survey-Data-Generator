@@ -8,13 +8,15 @@ on:
       - phase1-backend-target-contract
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0
@@ -25,6 +27,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - run: pnpm install --lockfile-only
+      - name: Commit regenerated lockfile
+        run: |
+          git add pnpm-lock.yaml
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(deps): regenerate lockfile"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
       - run: python -m pip install -r engine/requirements.txt
