@@ -8,8 +8,6 @@ import {
   type MultiChoiceQuestion,
   type NormalizedResponse,
   type QuestionId,
-  type SingleChoiceQuestion,
-  type TextQuestion,
 } from "@survey-synth/domain";
 
 import { backendFailure } from "../errors";
@@ -18,6 +16,7 @@ import type { StoredSourceResponse } from "../persistence/store";
 export const RESPONSE_ID_COLUMN = "response_id";
 export const TIMESTAMP_COLUMN = "submitted_at";
 export const TARGET_SCORE_COLUMN_PREFIX = "target_score_";
+export const ROUTING_RULES_COLUMN = "__confirmed_routing_rules";
 const ORIGIN_COLUMN = "__origin";
 
 export type FlatTablePlan = {
@@ -38,9 +37,15 @@ export type MultiChoiceOptionSupport = {
 };
 
 type ParquetRecord = Record<string, unknown>;
-type GroupableQuestion = SingleChoiceQuestion | TextQuestion;
-
-let activeGroupableQuestions = new Map<QuestionId, GroupableQuestion>();
+type CandidateRoutingColumn = {
+  column: string;
+  kind: "answer_slot" | "ordinal";
+};
+type CandidateRoutingRule = {
+  sourceColumn: string;
+  optionKey: string;
+  forbidden: CandidateRoutingColumn[];
+};
 
 const asNormalizedResponse = (value: unknown): NormalizedResponse => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -73,14 +78,6 @@ export const createFlatTablePlan = (
   form: FormSnapshot,
   targetQuestionIds: readonly QuestionId[],
 ): FlatTablePlan => {
-  activeGroupableQuestions = new Map(
-    form.questions.flatMap((question) =>
-      question.kind === "single_choice" || question.kind === "text"
-        ? [[question.id, question] as const]
-        : [],
-    ),
-  );
-
   const targetIds = new Set(targetQuestionIds);
   const targetScoreColumns = new Map<QuestionId, string>();
   const questionColumns = new Map<QuestionId, string>();
@@ -109,6 +106,7 @@ export const valueGroupMemberCells = (
   responses: readonly StoredSourceResponse[],
   questionId: QuestionId,
   members: readonly string[],
+  form: FormSnapshot,
 ): string[] => {
   const memberSet = new Set(members);
   const cells = new Set<string>();
@@ -118,7 +116,7 @@ export const valueGroupMemberCells = (
     if (key !== null && memberSet.has(key) && slot) cells.add(JSON.stringify(slot));
   }
 
-  const question = activeGroupableQuestions.get(questionId);
+  const question = form.questions.find((candidate) => candidate.id === questionId);
   if (question?.kind === "single_choice") {
     for (const option of question.options) {
       if (!memberSet.has(String(option.key))) continue;
@@ -132,30 +130,6 @@ export const valueGroupMemberCells = (
       };
       cells.add(JSON.stringify(canonical));
     }
-  }
-  return [...cells];
-};
-
-export const valueGroupMemberSupport = (
-  responses: readonly StoredSourceResponse[],
-  question: GroupableQuestion,
-  members: readonly string[],
-): string[] => {
-  const cells = new Set(valueGroupMemberCells(responses, question.id, members));
-  if (question.kind === "text") return [...cells];
-
-  const memberSet = new Set(members);
-  for (const option of question.options) {
-    if (!memberSet.has(String(option.key))) continue;
-    const canonical: AnswerSlot = {
-      state: "answered",
-      value: {
-        kind: "single_choice",
-        optionKey: option.key,
-        label: option.label,
-      },
-    };
-    cells.add(JSON.stringify(canonical));
   }
   return [...cells];
 };
@@ -204,6 +178,67 @@ export const multiChoiceOptionSupport = (
   return { optionValues: [cell], schemaOptionValues: [cell] };
 };
 
+const candidateColumn = (
+  plan: FlatTablePlan,
+  questionId: QuestionId,
+): CandidateRoutingColumn | null => {
+  const scoreColumn = plan.targetScoreColumns.get(questionId);
+  if (scoreColumn) return { column: scoreColumn, kind: "ordinal" };
+  const answerColumn = plan.questionColumns.get(questionId);
+  return answerColumn ? { column: answerColumn, kind: "answer_slot" } : null;
+};
+
+const confirmedRoutingRules = (form: FormSnapshot, plan: FlatTablePlan): CandidateRoutingRule[] => {
+  const sectionByQuestion = new Map(
+    form.logic.sections.flatMap((section) =>
+      section.questionIds.map((questionId) => [questionId, section] as const),
+    ),
+  );
+  const sectionById = new Map(form.logic.sections.map((section) => [section.id, section] as const));
+  const rules: CandidateRoutingRule[] = [];
+
+  for (const transition of form.logic.transitions) {
+    const sourceSection = sectionByQuestion.get(transition.sourceQuestionId);
+    const sourceColumn = plan.questionColumns.get(transition.sourceQuestionId);
+    if (!sourceSection || !sourceColumn) continue;
+
+    let notReachedSectionIds = new Set<string>();
+    if (transition.destination.type === "submit") {
+      notReachedSectionIds = new Set(
+        form.logic.sections
+          .filter((section) => section.order > sourceSection.order)
+          .map((section) => String(section.id)),
+      );
+    } else if (transition.destination.type === "section") {
+      const destination = sectionById.get(transition.destination.sectionId);
+      if (!destination || destination.order <= sourceSection.order) continue;
+      notReachedSectionIds = new Set(
+        form.logic.sections
+          .filter(
+            (section) => section.order > sourceSection.order && section.order < destination.order,
+          )
+          .map((section) => String(section.id)),
+      );
+    } else {
+      continue;
+    }
+
+    const forbidden = form.questions.flatMap((question) => {
+      if (!notReachedSectionIds.has(String(question.sectionId))) return [];
+      const column = candidateColumn(plan, question.id);
+      return column ? [column] : [];
+    });
+    if (forbidden.length === 0) continue;
+    rules.push({
+      sourceColumn,
+      optionKey: String(transition.optionKey),
+      forbidden,
+    });
+  }
+
+  return rules;
+};
+
 export const writeSourceParquet = async (
   path: string,
   form: FormSnapshot,
@@ -227,6 +262,7 @@ export const writeSourceParquet = async (
     type: "STRING" as const,
     nullable: false,
   }));
+  const routingRules = JSON.stringify(confirmedRoutingRules(form, plan));
 
   parquetWriteFile({
     filename: path,
@@ -243,6 +279,12 @@ export const writeSourceParquet = async (
         type: "STRING" as const,
         nullable: false,
       },
+      {
+        name: ROUTING_RULES_COLUMN,
+        data: normalized.map(() => routingRules),
+        type: "STRING" as const,
+        nullable: false,
+      },
       ...[...plan.targetScoreColumns].map(([questionId, column]) => ({
         name: column,
         data: normalized.map(({ response }) => targetScore(response, questionId)),
@@ -252,8 +294,6 @@ export const writeSourceParquet = async (
       ...questionColumns,
     ],
   });
-
-  void form;
 };
 
 const parseGeneratedSlot = (value: unknown, questionId: QuestionId): AnswerSlot => {
