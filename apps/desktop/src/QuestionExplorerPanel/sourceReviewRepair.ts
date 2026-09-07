@@ -31,3 +31,22 @@ export const planValueGroupRepair = (
     removedTargetIds: [...removedIds],
   };
 };
+
+export const executeValueGroupRepair = async ({
+  draft,
+  valueGroupId,
+  persistDraft,
+  deleteGroup,
+}: {
+  draft: TargetDraft;
+  valueGroupId: string;
+  persistDraft: (nextDraft: TargetDraft) => Promise<void>;
+  deleteGroup: (valueGroupId: string) => Promise<void>;
+}): Promise<ValueGroupRepairPlan> => {
+  const plan = planValueGroupRepair(draft, valueGroupId);
+  if (plan.removedTargetIds.length > 0) {
+    await persistDraft(plan.draft);
+  }
+  await deleteGroup(valueGroupId);
+  return plan;
+};
