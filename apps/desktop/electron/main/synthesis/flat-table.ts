@@ -38,6 +38,9 @@ export type MultiChoiceOptionSupport = {
 };
 
 type ParquetRecord = Record<string, unknown>;
+type GroupableQuestion = SingleChoiceQuestion | TextQuestion;
+
+let activeGroupableQuestions = new Map<QuestionId, GroupableQuestion>();
 
 const asNormalizedResponse = (value: unknown): NormalizedResponse => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -70,6 +73,14 @@ export const createFlatTablePlan = (
   form: FormSnapshot,
   targetQuestionIds: readonly QuestionId[],
 ): FlatTablePlan => {
+  activeGroupableQuestions = new Map(
+    form.questions.flatMap((question) =>
+      question.kind === "single_choice" || question.kind === "text"
+        ? [[question.id, question] as const]
+        : [],
+    ),
+  );
+
   const targetIds = new Set(targetQuestionIds);
   const targetScoreColumns = new Map<QuestionId, string>();
   const questionColumns = new Map<QuestionId, string>();
@@ -106,12 +117,28 @@ export const valueGroupMemberCells = (
     const key = valueGroupMemberKey(slot);
     if (key !== null && memberSet.has(key) && slot) cells.add(JSON.stringify(slot));
   }
+
+  const question = activeGroupableQuestions.get(questionId);
+  if (question?.kind === "single_choice") {
+    for (const option of question.options) {
+      if (!memberSet.has(String(option.key))) continue;
+      const canonical: AnswerSlot = {
+        state: "answered",
+        value: {
+          kind: "single_choice",
+          optionKey: option.key,
+          label: option.label,
+        },
+      };
+      cells.add(JSON.stringify(canonical));
+    }
+  }
   return [...cells];
 };
 
 export const valueGroupMemberSupport = (
   responses: readonly StoredSourceResponse[],
-  question: SingleChoiceQuestion | TextQuestion,
+  question: GroupableQuestion,
   members: readonly string[],
 ): string[] => {
   const cells = new Set(valueGroupMemberCells(responses, question.id, members));
