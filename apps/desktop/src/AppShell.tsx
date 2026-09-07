@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   FormImportResult,
@@ -57,6 +57,32 @@ export function AppShell() {
   const [importingFormId, setImportingFormId] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<FormImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const activeDraftFlushRef = useRef<(() => Promise<void>) | null>(null);
+
+  const registerDraftFlush = useCallback((flush: (() => Promise<void>) | null): void => {
+    activeDraftFlushRef.current = flush;
+  }, []);
+
+  const flushActiveDraft = useCallback(async (): Promise<boolean> => {
+    const flush = activeDraftFlushRef.current;
+    if (!flush) return true;
+    try {
+      await flush();
+      return true;
+    } catch {
+      setError("변경사항을 저장하지 못했습니다. 다시 시도해주세요.");
+      return false;
+    }
+  }, []);
+
+  useEffect(
+    () =>
+      window.surveySynth.onBeforeClose(async () => {
+        const saved = await flushActiveDraft();
+        return saved;
+      }),
+    [flushActiveDraft],
+  );
 
   useEffect(() => {
     let active = true;
@@ -152,6 +178,7 @@ export function AppShell() {
     setAuthBusy(true);
     setError(null);
     try {
+      if (!(await flushActiveDraft())) return;
       await logout();
       setSession(null);
       setSelectedProject(null);
@@ -188,6 +215,7 @@ export function AppShell() {
     setRefreshBusy(true);
     setError(null);
     try {
+      if (!(await flushActiveDraft())) return;
       const result = await refreshProjectSource(selectedProject.id, `source-refresh-${Date.now()}`);
       setSelectedProject(result.project);
       setSourceReview({
@@ -231,6 +259,18 @@ export function AppShell() {
       }
     } finally {
       setRefreshBusy(false);
+    }
+  };
+
+  const handleProjectChange = async (): Promise<void> => {
+    setProjectsBusy(true);
+    setError(null);
+    try {
+      if (!(await flushActiveDraft())) return;
+      setSelectedProject(null);
+      setSourceReview(null);
+    } finally {
+      setProjectsBusy(false);
     }
   };
 
@@ -321,12 +361,21 @@ export function AppShell() {
               >
                 원본 업데이트
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setSelectedProject(null)}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={projectsBusy || refreshBusy}
+                onClick={() => void handleProjectChange()}
+              >
                 프로젝트 변경
               </Button>
             </div>
           </div>
-          <QuestionExplorerPanel project={selectedProject} sourceReview={sourceReview} />
+          <QuestionExplorerPanel
+            project={selectedProject}
+            sourceReview={sourceReview}
+            onDraftFlushReady={registerDraftFlush}
+          />
         </div>
       ) : (
         <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-8 px-6 py-10 md:grid-cols-2">
