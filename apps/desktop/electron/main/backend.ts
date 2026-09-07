@@ -18,6 +18,7 @@ import type { FormsService } from "./forms/service";
 import type { ProjectService } from "./projects/service";
 import type { SynthesisService } from "./synthesis/service";
 import type { TargetService } from "./targets/service";
+import { semanticDuplicateTargetIssues } from "./targets/semantic-key";
 import type { ValueGroupService } from "./value-groups/service";
 
 export type RunExportDestinationPicker = (params: RunsExportParams) => Promise<string | null>;
@@ -142,8 +143,13 @@ export const handleBackendCall = async (
       const params = request.params as { projectId: string; sourceScope?: SourceScope };
       return requireTargets(services).profile(params.projectId, params.sourceScope);
     }
-    case "targets.validate":
-      return requireTargets(services).validate(request.params as TargetDraft);
+    case "targets.validate": {
+      const params = request.params as TargetDraft;
+      const result = await requireTargets(services).validate(params);
+      return {
+        issues: [...semanticDuplicateTargetIssues(params.targets), ...result.issues],
+      };
+    }
     case "targets.draft.get":
       return requireTargets(services).getDraft((request.params as { projectId: string }).projectId);
     case "targets.draft.save":
