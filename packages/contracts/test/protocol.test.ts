@@ -476,6 +476,23 @@ describe("v2 RPC contracts", () => {
           },
         },
         outcome,
+        baselines: [
+          { targetId: "t-mean", kind: "mean", mean: 4.1, denominatorCount: 80 },
+          {
+            targetId: "t-share",
+            kind: "share",
+            count: 28,
+            denominatorCount: 80,
+            share: 0.35,
+          },
+          {
+            targetId: "t-conditional",
+            kind: "conditional_share",
+            count: 12,
+            denominatorCount: 20,
+            share: 0.6,
+          },
+        ],
         diagnostics: {
           sourceResponseCount: 80,
           syntheticResponseCount: 40,
@@ -491,6 +508,7 @@ describe("v2 RPC contracts", () => {
       runId: "run-1",
       finalResponseCount: 120,
       outcome: { targets: [{ targetId: "t-mean" }] },
+      baselines: [{ targetId: "t-mean", kind: "mean", mean: 4.1, denominatorCount: 80 }],
       targetSnapshot: { editPlan: { replacementCount: 1 } },
     });
   });

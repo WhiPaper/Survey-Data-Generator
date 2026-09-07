@@ -49,7 +49,11 @@ const frozenSubjectMetric = (
         count += 1;
       }
     }
-    return { count, denominatorCount, share: denominatorCount === 0 ? 0 : count / denominatorCount };
+    return {
+      count,
+      denominatorCount,
+      share: denominatorCount === 0 ? 0 : count / denominatorCount,
+    };
   }
 
   if (subject.kind === "checkbox_option") {
@@ -70,7 +74,11 @@ const frozenSubjectMetric = (
         count += 1;
       }
     }
-    return { count, denominatorCount, share: denominatorCount === 0 ? 0 : count / denominatorCount };
+    return {
+      count,
+      denominatorCount,
+      share: denominatorCount === 0 ? 0 : count / denominatorCount,
+    };
   }
 
   const group = subject.valueGroup;

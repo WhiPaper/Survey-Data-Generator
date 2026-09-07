@@ -51,6 +51,7 @@ import {
   writeSourceParquet,
   type DecodedRunRow,
 } from "./flat-table";
+import { buildRunTargetBaselines } from "./run-baseline";
 
 export type CreateSynthesisServiceOptions = {
   db: SurveyDatabase;
@@ -1038,6 +1039,27 @@ export const createSynthesisService = ({
       const targetSnapshot = JSON.parse(run.targetJson) as RunsGetResult["targetSnapshot"];
       const validation = jsonRecord(JSON.parse(run.engineReportJson) as unknown);
       const outcome = targetSetOutcome(validation.achieved, targetSnapshot.targets);
+      const revision = getSourceRevision(db, run.sourceRevisionId);
+      if (!revision || revision.projectId !== run.projectId) {
+        throw backendFailure("INTERNAL", "Historical Run source revision is invalid");
+      }
+      const baselineScope = freezeScope(
+        revision.id,
+        revision.responseSetHash,
+        listSourceResponses(db, revision.id),
+        targetSnapshot.sourceScope,
+      );
+      if (
+        baselineScope.responseCount !== run.scopeResponseCount ||
+        baselineScope.responseSetHash !== run.scopeResponseSetHash
+      ) {
+        throw backendFailure("INTERNAL", "Historical Run SourceScope evidence does not match");
+      }
+      const baselines = buildRunTargetBaselines(
+        loadForm(db, revision.formSnapshotId),
+        baselineScope.responses,
+        targetSnapshot.targets,
+      );
       const rows = listPersistedRunRows(db, runId);
       if (rows.length !== run.finalResponseCount) {
         throw backendFailure("INTERNAL", "Persisted Run row count does not match the Run summary");
@@ -1065,6 +1087,7 @@ export const createSynthesisService = ({
         sourceRevisionId: run.sourceRevisionId,
         targetSnapshot,
         outcome,
+        baselines,
         diagnostics: {
           sourceResponseCount: run.scopeResponseCount,
           syntheticResponseCount: rows.length - originalResponseCount,

@@ -344,6 +344,9 @@ describe("M7 synthesis approval gate", () => {
       replacementCount: 1,
       structuralValidation: "passed",
     });
+    expect(run.baselines).toEqual([
+      { targetId: "t-mean", kind: "mean", mean: 5, denominatorCount: 3 },
+    ]);
 
     const rows = listPersistedRunRows(database.db, resolved.runId);
     expect(rows).toHaveLength(4);
@@ -380,6 +383,9 @@ describe("M7 synthesis approval gate", () => {
       replacementCount: 0,
       structuralValidation: "passed",
     });
+    expect(run.baselines).toEqual([
+      { targetId: "t-mean", kind: "mean", mean: 5, denominatorCount: 3 },
+    ]);
 
     const rows = listPersistedRunRows(database.db, resolved.runId);
     expect(rows).toHaveLength(4);
