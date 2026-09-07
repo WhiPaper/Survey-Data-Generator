@@ -8,15 +8,13 @@ on:
       - phase1-backend-target-contract
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   check:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: backend/source-refresh-review-boundary
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0
@@ -28,42 +26,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
-      - name: Harden source review repair UI
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          def replace(path: str, old: str, new: str) -> None:
-              file = Path(path)
-              text = file.read_text()
-              if old not in text:
-                  raise SystemExit(f"missing replacement in {path}: {old[:180]!r}")
-              file.write_text(text.replace(old, new, 1))
-
-          shell = "apps/desktop/src/AppShell.tsx"
-          replace(
-              shell,
-              '''    try {\n      setSourceReview(null);\n      const [project, review] = await Promise.all([\n        getProject(projectId),\n        getProjectSourceReview(projectId),\n      ]);\n      setSelectedProject(project);\n      setSourceReview(review);\n    } catch (cause: unknown) {\n      setError(errorMessage(cause));\n    } finally {''',
-              '''    try {\n      setSourceReview(null);\n      const project = await getProject(projectId);\n      setSelectedProject(project);\n      if (project) {\n        try {\n          setSourceReview(await getProjectSourceReview(projectId));\n        } catch {\n          setError("프로젝트는 열었지만 확인할 설정 상태를 불러오지 못했습니다.");\n        }\n      }\n    } catch (cause: unknown) {\n      setError(errorMessage(cause));\n    } finally {''',
-          )
-
-          explorer = "apps/desktop/src/QuestionExplorerPanel/index.tsx"
-          replace(
-              explorer,
-              '''                  {question ? (\n                    <Button\n                      type="button"\n                      size="sm"\n                      variant="ghost"\n                      onClick={() => {\n                        setSelectedQuestionId(question.id);\n                        setWorkspaceView("setup");\n                        setSourceReviewOpen(false);\n                      }}\n                    >\n                      문항으로 이동\n                    </Button>\n                  ) : (\n                    <Button\n                      type="button"\n                      size="sm"\n                      variant="ghost"\n                      className="text-destructive"\n                      onClick={() => {\n                        setSourceReviewOpen(false);\n                        requestDeleteGroup(group);\n                      }}\n                    >\n                      그룹 삭제\n                    </Button>\n                  )}''',
-              '''                  <div className="flex shrink-0 items-center gap-1">\n                    {question ? (\n                      <Button\n                        type="button"\n                        size="sm"\n                        variant="ghost"\n                        onClick={() => {\n                          setSelectedQuestionId(question.id);\n                          setWorkspaceView("setup");\n                          setSourceReviewOpen(false);\n                        }}\n                      >\n                        문항으로 이동\n                      </Button>\n                    ) : null}\n                    <Button\n                      type="button"\n                      size="sm"\n                      variant="ghost"\n                      className="text-destructive"\n                      onClick={() => {\n                        setSourceReviewOpen(false);\n                        requestDeleteGroup(group);\n                      }}\n                    >\n                      그룹 삭제\n                    </Button>\n                  </div>''',
-          )
-          PY
-      - name: Format source review repair UI
-        run: |
-          pnpm exec prettier --write apps/desktop/src/AppShell.tsx apps/desktop/src/QuestionExplorerPanel/index.tsx
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet; then
-            git add apps/desktop/src/AppShell.tsx apps/desktop/src/QuestionExplorerPanel/index.tsx
-            git commit -m "fix(ui): harden source review repair"
-            git push origin HEAD:backend/source-refresh-review-boundary
-          fi
       - run: pnpm run check
       - run: python -m pip install -r engine/requirements.txt
       - run: pnpm run engine:test
