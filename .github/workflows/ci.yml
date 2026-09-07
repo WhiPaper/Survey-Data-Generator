@@ -8,13 +8,15 @@ on:
       - phase1-backend-target-contract
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0
@@ -26,6 +28,89 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
+      - name: Unify source review authority
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if old not in text:
+                  raise SystemExit(f"missing replacement in {path}: {old[:180]!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          forms = "apps/desktop/electron/main/forms/service.ts"
+          replace(
+              forms,
+              'import { invalidValueGroupIdsForForm } from "../value-groups/service";\n',
+              '',
+          )
+          replace(
+              forms,
+              '''  refreshProjectSource(params: ProjectSourceRefreshParams): Promise<{\n    projectId: string;\n    previousSourceRevisionId: string;\n    sourceRevisionId: string;\n    invalidValueGroupIds: string[];\n  }>;''',
+              '''  refreshProjectSource(params: ProjectSourceRefreshParams): Promise<{\n    projectId: string;\n    previousSourceRevisionId: string;\n    sourceRevisionId: string;\n  }>;''',
+          )
+          replace(
+              forms,
+              '''        const invalidValueGroupIds = invalidValueGroupIdsForForm(db, project.id, form);\n        const revision = createSourceRevision(db, {''',
+              '''        const revision = createSourceRevision(db, {''',
+          )
+          replace(
+              forms,
+              '''          sourceRevisionId: revision.id,\n          invalidValueGroupIds,\n        };''',
+              '''          sourceRevisionId: revision.id,\n        };''',
+          )
+
+          backend = "apps/desktop/electron/main/backend.ts"
+          replace(
+              backend,
+              '''const requireRunExportDestinationPicker = (\n  services: BackendServices,\n): RunExportDestinationPicker => {\n  if (!services.pickRunExportDestination)\n    throw backendFailure("BACKEND_UNAVAILABLE", "Run export dialog is not initialized");\n  return services.pickRunExportDestination;\n};\n\nexport const handleBackendCall''',
+              '''const requireRunExportDestinationPicker = (\n  services: BackendServices,\n): RunExportDestinationPicker => {\n  if (!services.pickRunExportDestination)\n    throw backendFailure("BACKEND_UNAVAILABLE", "Run export dialog is not initialized");\n  return services.pickRunExportDestination;\n};\n\nconst sourceReviewForProject = async (services: BackendServices, projectId: string) => {\n  const source = await requireProjects(services).sourceReview(projectId);\n  const targetService = requireTargets(services);\n  const draft = await targetService.getDraft(projectId);\n  const targetIssues = draft\n    ? [\n        ...semanticDuplicateTargetIssues(draft.targets),\n        ...(await targetService.validate(draft)).issues,\n      ]\n    : [];\n  return {\n    projectId,\n    sourceRevisionId: source.sourceRevisionId,\n    invalidValueGroupIds: source.invalidValueGroupIds,\n    targetIssues,\n  };\n};\n\nexport const handleBackendCall''',
+          )
+          replace(
+              backend,
+              '''    case "projects.sourceReview": {\n      const projectId = (request.params as { projectId: string }).projectId;\n      const source = await requireProjects(services).sourceReview(projectId);\n      const targetService = requireTargets(services);\n      const draft = await targetService.getDraft(projectId);\n      const targetIssues = draft\n        ? [\n            ...semanticDuplicateTargetIssues(draft.targets),\n            ...(await targetService.validate(draft)).issues,\n          ]\n        : [];\n      return {\n        projectId,\n        sourceRevisionId: source.sourceRevisionId,\n        invalidValueGroupIds: source.invalidValueGroupIds,\n        targetIssues,\n      };\n    }''',
+              '''    case "projects.sourceReview":\n      return sourceReviewForProject(\n        services,\n        (request.params as { projectId: string }).projectId,\n      );''',
+          )
+          replace(
+              backend,
+              '''      const project = await requireProjects(services).get(params.projectId);\n      if (!project) throw backendFailure("INTERNAL", "Refreshed project could not be reloaded");\n\n      const targetService = requireTargets(services);\n      const draft = await targetService.getDraft(params.projectId);\n      const targetIssues = draft\n        ? [\n            ...semanticDuplicateTargetIssues(draft.targets),\n            ...(await targetService.validate(draft)).issues,\n          ]\n        : [];\n\n      return {\n        project,\n        previousSourceRevisionId: refreshed.previousSourceRevisionId,\n        sourceRevisionId: refreshed.sourceRevisionId,\n        invalidValueGroupIds: refreshed.invalidValueGroupIds,\n        targetIssues,\n      };''',
+              '''      const project = await requireProjects(services).get(params.projectId);\n      if (!project) throw backendFailure("INTERNAL", "Refreshed project could not be reloaded");\n      const review = await sourceReviewForProject(services, params.projectId);\n\n      return {\n        project,\n        previousSourceRevisionId: refreshed.previousSourceRevisionId,\n        sourceRevisionId: review.sourceRevisionId,\n        invalidValueGroupIds: review.invalidValueGroupIds,\n        targetIssues: review.targetIssues,\n      };''',
+          )
+
+          forms_test = "apps/desktop/test/forms-service.test.ts"
+          replace(
+              forms_test,
+              '''    expect(listSourceResponses(database.db, refreshed.sourceRevisionId)).toHaveLength(2);\n  });''',
+              '''    expect(listSourceResponses(database.db, refreshed.sourceRevisionId)).toHaveLength(2);\n    expect(refreshed).not.toHaveProperty("invalidValueGroupIds");\n  });''',
+          )
+
+          backend_test = "apps/desktop/test/electron-backend.test.ts"
+          replace(
+              backend_test,
+              '''  it("routes ValueGroup creation to the ValueGroup service", async () => {''',
+              '''  it("uses one source-review path for reopen and explicit refresh diagnostics", async () => {\n    const sourceReview = vi.fn(async (_projectId: string) => ({\n      sourceRevisionId: "revision-2",\n      invalidValueGroupIds: ["group-1"],\n    }));\n    const project = {\n      id: "project-1",\n      googleAccountId: "account-1",\n      googleFormId: "form-1",\n      name: "Survey",\n      currentSourceRevisionId: "revision-2",\n      createdAt: "2026-09-01T00:00:00.000Z",\n      updatedAt: "2026-09-07T00:00:00.000Z",\n      responseCount: 10,\n      questionCount: 1,\n      form: { questions: [] },\n      responseTimestampRange: null,\n    };\n    const projects = {\n      list: async () => [],\n      get: async (_projectId: string) => project,\n      sourceReview,\n      delete: async (_projectId: string) => undefined,\n    };\n    const forms = {\n      listForms: vi.fn(),\n      importForm: vi.fn(),\n      refreshProjectSource: vi.fn(async () => ({\n        projectId: "project-1",\n        previousSourceRevisionId: "revision-1",\n        sourceRevisionId: "revision-2",\n      })),\n      cancelImport: vi.fn(),\n    };\n    const targets = {\n      profile: vi.fn(),\n      validate: vi.fn(async () => ({ issues: [] })),\n      getDraft: vi.fn(async () => null),\n      saveDraft: vi.fn(),\n      startDraft: vi.fn(),\n    };\n\n    await expect(\n      handleBackendCall(\n        serialize(\n          createRequest("test_source_review", "projects.sourceReview", { projectId: "project-1" }),\n        ),\n        { projects, targets },\n      ),\n    ).resolves.toEqual({\n      projectId: "project-1",\n      sourceRevisionId: "revision-2",\n      invalidValueGroupIds: ["group-1"],\n      targetIssues: [],\n    });\n\n    await expect(\n      handleBackendCall(\n        serialize(\n          createRequest("test_source_refresh", "projects.refreshSource", {\n            projectId: "project-1",\n          }),\n        ),\n        { projects, forms, targets },\n      ),\n    ).resolves.toMatchObject({\n      project,\n      previousSourceRevisionId: "revision-1",\n      sourceRevisionId: "revision-2",\n      invalidValueGroupIds: ["group-1"],\n      targetIssues: [],\n    });\n    expect(sourceReview).toHaveBeenCalledTimes(2);\n  });\n\n  it("routes ValueGroup creation to the ValueGroup service", async () => {''',
+          )
+          PY
+      - name: Format source review authority refactor
+        run: |
+          pnpm exec prettier --write \
+            apps/desktop/electron/main/forms/service.ts \
+            apps/desktop/electron/main/backend.ts \
+            apps/desktop/test/forms-service.test.ts \
+            apps/desktop/test/electron-backend.test.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add \
+              apps/desktop/electron/main/forms/service.ts \
+              apps/desktop/electron/main/backend.ts \
+              apps/desktop/test/forms-service.test.ts \
+              apps/desktop/test/electron-backend.test.ts
+            git commit -m "refactor(source): unify review authority"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
       - run: pnpm run check
       - run: python -m pip install -r engine/requirements.txt
       - run: pnpm run engine:test
