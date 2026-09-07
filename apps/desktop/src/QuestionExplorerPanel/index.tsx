@@ -57,7 +57,7 @@ import {
 import { ResultView, type RunContext } from "./ResultView";
 import { TextInspector } from "./TextInspector";
 import { createDraftSaveCoordinator } from "./draftSaveCoordinator";
-import { targetKindForMode, targetModeAllowed } from "./targetModePolicy";
+import { resolvedCountForMode, targetKindForMode, targetModeAllowed } from "./targetModePolicy";
 import { questionPopulationText } from "./questionPopulation";
 import { questionExplorerErrorMessage } from "./userFacingError";
 import { executeValueGroupRepair } from "./sourceReviewRepair";
@@ -402,6 +402,10 @@ export function QuestionExplorerPanel({
           : mode === "relative_percent_delta"
             ? activeMetric.share * (1 + parsedValue / 100)
             : null
+      : null;
+  const resolvedCount =
+    activeMetric && Number.isFinite(parsedValue)
+      ? resolvedCountForMode(mode, activeMetric.count, parsedValue)
       : null;
   const valueInvalid =
     value === "" ||
@@ -1370,12 +1374,25 @@ export function QuestionExplorerPanel({
             </div>
             {activeMetric && value !== "" && !valueInvalid ? (
               <div className="space-y-1 text-sm">
-                <p className="font-medium tabular-nums">현재 {formatShare(activeMetric.share)}</p>
-                {resolvedShare !== null ? (
-                  <p className="tabular-nums text-muted-foreground">
-                    → 목표 {formatShare(resolvedShare)}
-                  </p>
-                ) : null}
+                {shareMode ? (
+                  <>
+                    <p className="font-medium tabular-nums">
+                      현재 {formatShare(activeMetric.share)}
+                    </p>
+                    {resolvedShare !== null ? (
+                      <p className="tabular-nums text-muted-foreground">
+                        → 목표 {formatShare(resolvedShare)}
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <p className="font-medium tabular-nums">현재 {activeMetric.count}명</p>
+                    {resolvedCount !== null ? (
+                      <p className="tabular-nums text-muted-foreground">→ 목표 {resolvedCount}명</p>
+                    ) : null}
+                  </>
+                )}
               </div>
             ) : null}
           </div>
