@@ -67,7 +67,6 @@ import {
   editingMetric,
   formatShare,
   issueMessage,
-  kindLabel,
   meanMetric,
   meanTarget,
   meanTargetId,
