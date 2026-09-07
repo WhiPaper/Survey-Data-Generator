@@ -247,7 +247,7 @@ export function TextInspector({
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              저장된 그룹의 현재 인원수와 비율은 backend profile 값을 사용합니다.
+              저장 후 현재 선택 범위 기준 인원수와 비율이 표시됩니다.
             </p>
           </div>
           <SheetFooter>

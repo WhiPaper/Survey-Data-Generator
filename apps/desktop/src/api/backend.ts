@@ -14,6 +14,7 @@ import {
   type ProjectSummaryView,
   type RpcMethod,
   type RunExportFormat,
+  type RunSummary,
   type RunsExportResult,
   type RunsGetResult,
   type SessionView,
@@ -224,6 +225,8 @@ export const cancelSynthesis = (
   operationId: string,
   backend?: BackendInvoker,
 ): Promise<{ ok: true }> => callBackend("synthesis.cancel", { operationId }, backend);
+export const listRuns = (projectId: string, backend?: BackendInvoker): Promise<RunSummary[]> =>
+  callBackend("runs.list", { projectId }, backend);
 export const getRun = (runId: string, backend?: BackendInvoker): Promise<RunsGetResult> =>
   callBackend("runs.get", { runId }, backend);
 export const exportRun = (

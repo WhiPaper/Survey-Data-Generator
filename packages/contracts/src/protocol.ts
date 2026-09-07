@@ -330,6 +330,35 @@ export const TargetProfileMetricSchema = z.discriminatedUnion("kind", [
       denominatorCount: z.number().int().nonnegative(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("ordinal_distribution"),
+      questionId: z.string().min(1),
+      denominatorCount: z.number().int().nonnegative(),
+      values: z.array(
+        z
+          .object({
+            value: z.number().finite(),
+            count: z.number().int().nonnegative(),
+            share: z.number().min(0).max(1),
+          })
+          .strict(),
+      ),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("conditional_share"),
+      population: z
+        .object({ kind: z.literal("value_group"), valueGroupId: z.string().min(1) })
+        .strict(),
+      questionId: z.string().min(1),
+      optionKey: z.string().min(1),
+      count: z.number().int().nonnegative(),
+      denominatorCount: z.number().int().nonnegative(),
+      share: z.number().min(0).max(1),
+    })
+    .strict(),
 ]);
 export type TargetProfileMetric = z.infer<typeof TargetProfileMetricSchema>;
 export const TargetProfileResultSchema = z
@@ -556,6 +585,17 @@ export const RunsGetResultSchema = z
   .strict();
 export type RunsGetResult = z.infer<typeof RunsGetResultSchema>;
 
+export const RunSummarySchema = z
+  .object({
+    runId: z.string().min(1),
+    projectId: ProjectIdSchema,
+    sourceRevisionId: z.string().min(1),
+    createdAt: z.string().min(1),
+    finalResponseCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type RunSummary = z.infer<typeof RunSummarySchema>;
+
 export const RunExportFormatSchema = z.enum(["csv", "xlsx"]);
 export type RunExportFormat = z.infer<typeof RunExportFormatSchema>;
 
@@ -647,6 +687,7 @@ export interface BackendRpc {
     output: SynthesisSuccessResult;
   };
   "synthesis.cancel": { input: z.infer<typeof SynthesisCancelParamsSchema>; output: ActionResult };
+  "runs.list": { input: z.infer<typeof ProjectParamsSchema>; output: RunSummary[] };
   "runs.get": { input: z.infer<typeof RunParamsSchema>; output: RunsGetResult };
   "runs.export": { input: RunsExportParams; output: RunsExportResult };
 }
@@ -681,6 +722,7 @@ const rpcMethods = [
   "synthesis.start",
   "synthesis.resolveEditPlan",
   "synthesis.cancel",
+  "runs.list",
   "runs.get",
   "runs.export",
 ] as const satisfies readonly RpcMethod[];
@@ -726,6 +768,7 @@ const rpcParamSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "synthesis.start": SynthesisStartParamsSchema,
   "synthesis.resolveEditPlan": SynthesisResolveEditPlanParamsSchema,
   "synthesis.cancel": SynthesisCancelParamsSchema,
+  "runs.list": ProjectParamsSchema,
   "runs.get": RunParamsSchema,
   "runs.export": RunsExportParamsSchema,
 };
@@ -758,6 +801,7 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "synthesis.start": SynthesisStartResultSchema,
   "synthesis.resolveEditPlan": SynthesisSuccessResultSchema,
   "synthesis.cancel": ActionResultSchema,
+  "runs.list": z.array(RunSummarySchema),
   "runs.get": RunsGetResultSchema,
   "runs.export": RunsExportResultSchema,
 };

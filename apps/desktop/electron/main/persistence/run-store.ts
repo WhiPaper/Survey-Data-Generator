@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 
 import { VERSIONS } from "@survey-synth/contracts";
 import type { NormalizedResponse } from "@survey-synth/domain";
@@ -77,6 +77,14 @@ export const persistRun = (db: SurveyDatabase, input: PersistRunInput): RunRecor
 
 export const getRunRecord = (db: SurveyDatabase, runId: string): RunRecord | null =>
   db.select().from(runs).where(eq(runs.id, runId)).get() ?? null;
+
+export const listRunRecords = (db: SurveyDatabase, projectId: string): RunRecord[] =>
+  db
+    .select()
+    .from(runs)
+    .where(eq(runs.projectId, projectId))
+    .orderBy(desc(runs.createdAtMs), desc(runs.id))
+    .all();
 
 export const listPersistedRunRows = (
   db: SurveyDatabase,
