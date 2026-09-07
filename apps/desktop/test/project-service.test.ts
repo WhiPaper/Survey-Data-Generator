@@ -103,6 +103,17 @@ describe("project service", () => {
     expect(detail).not.toHaveProperty("targets");
   });
 
+  it("recomputes source review status from the current local revision", async () => {
+    const database = createDatabase();
+    seedImportedProject(database);
+    const service = createProjectService({ db: database.db });
+
+    await expect(service.sourceReview("project-1")).resolves.toEqual({
+      sourceRevisionId: "revision-1",
+      invalidValueGroupIds: [],
+    });
+  });
+
   it("deletes a project and its persisted source graph", async () => {
     const database = createDatabase();
     seedImportedProject(database);

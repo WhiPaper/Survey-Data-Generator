@@ -18,10 +18,15 @@ import {
   type ProjectRecord,
   type SourceRevisionRecord,
 } from "../persistence/store";
+import { invalidValueGroupIdsForCurrentSource } from "../value-groups/service";
 
 export interface ProjectService {
   list(): Promise<ProjectSummaryView[]>;
   get(projectId: string): Promise<ProjectDetailView | null>;
+  sourceReview(projectId: string): Promise<{
+    sourceRevisionId: string;
+    invalidValueGroupIds: string[];
+  }>;
   delete(projectId: string): Promise<void>;
 }
 
@@ -107,6 +112,8 @@ export const createProjectService = ({ db }: CreateProjectServiceOptions): Proje
       responseTimestampRange: responseTimestampRange(db, loaded.revision.id),
     };
   },
+
+  sourceReview: async (projectId) => invalidValueGroupIdsForCurrentSource(db, projectId),
 
   delete: async (projectId) => {
     const project = getProject(db, projectId);

@@ -69,6 +69,16 @@ After the new revision becomes current, validate the saved target draft against 
 
 The UI translates those issues into user-facing copy and marks affected setup state as `확인 필요`. Raw implementation/solver vocabulary is not shown.
 
+## Local review status
+
+Review diagnostics are derived state, not a one-time refresh notification.
+
+`projects.sourceReview` recomputes the current review status from the Project's current local SourceRevision plus its saved ValueGroups and target draft. It must not contact Google, refresh OAuth, mutate source evidence, or change the current revision.
+
+The renderer may call this local review operation whenever a Project is opened and after the user repairs a group or target. This makes `확인 필요` recoverable after app restart without persisting a separate stale review flag.
+
+The local review result uses the same ValueGroup and target-review semantics as the explicit refresh result.
+
 ## Public result
 
 The refresh result should include:
@@ -76,6 +86,13 @@ The refresh result should include:
 - the updated `ProjectDetailView`,
 - the previous SourceRevision id,
 - the new current SourceRevision id,
+- ValueGroup ids that need review,
+- target validation issues for the saved draft.
+
+The local review result should include:
+
+- the Project id,
+- the current SourceRevision id,
 - ValueGroup ids that need review,
 - target validation issues for the saved draft.
 
@@ -93,3 +110,5 @@ The refresh action must make two consequences clear before execution:
 After success, update the visible source response/question counts and reload the Question Explorer from the new current revision.
 
 If diagnostics exist, show a compact `확인 필요` notice and retain the existing targets/groups so the user can inspect and repair them manually.
+
+When a Project is reopened, restore the same review state from the local review operation without contacting Google.

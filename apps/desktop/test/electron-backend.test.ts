@@ -29,6 +29,10 @@ describe("Electron v2 backend shell", () => {
     const projects = {
       list: async () => [],
       get: async (_projectId: string) => null,
+      sourceReview: async (_projectId: string) => ({
+        sourceRevisionId: "revision-1",
+        invalidValueGroupIds: [],
+      }),
       delete: remove,
     };
 

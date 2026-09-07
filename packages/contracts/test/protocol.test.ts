@@ -276,6 +276,36 @@ describe("v2 RPC contracts", () => {
     ).toMatchObject({ method: "projects.refreshSource" });
 
     expect(
+      parseRpcRequest({
+        v: VERSIONS.protocolVersion,
+        type: "request",
+        id: "review-source",
+        method: "projects.sourceReview",
+        params: { projectId: "project-1" },
+      }),
+    ).toMatchObject({ method: "projects.sourceReview" });
+
+    expect(
+      parseRpcResult("projects.sourceReview", {
+        projectId: "project-1",
+        sourceRevisionId: "revision-2",
+        invalidValueGroupIds: ["group-1"],
+        targetIssues: [
+          {
+            targetIds: ["target-1"],
+            code: "invalid_subject",
+            message: "Target subject is not valid for this Form",
+          },
+        ],
+      }),
+    ).toMatchObject({
+      projectId: "project-1",
+      sourceRevisionId: "revision-2",
+      invalidValueGroupIds: ["group-1"],
+      targetIssues: [{ code: "invalid_subject" }],
+    });
+
+    expect(
       parseRpcResult("projects.refreshSource", {
         project: {
           id: "project-1",
