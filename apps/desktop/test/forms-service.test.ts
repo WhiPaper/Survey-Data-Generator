@@ -186,6 +186,7 @@ describe("Google Forms service", () => {
     expect(getSourceRevision(database.db, previousRevisionId)?.responseCount).toBe(1);
     expect(listSourceResponses(database.db, previousRevisionId)).toHaveLength(1);
     expect(listSourceResponses(database.db, refreshed.sourceRevisionId)).toHaveLength(2);
+    expect(refreshed).not.toHaveProperty("invalidValueGroupIds");
   });
 
   it("keeps the previous current revision when refresh capture has no responses", async () => {

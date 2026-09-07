@@ -16,7 +16,6 @@ import type { JobRegistry } from "../jobs";
 import type { SurveyDatabase } from "../persistence/database";
 import { createImportedProject, createSourceRevision, getProject } from "../persistence/store";
 import type { GoogleFormsClient } from "./google-client";
-import { invalidValueGroupIdsForForm } from "../value-groups/service";
 import { GoogleFormNormalizer, GoogleResponseNormalizer } from "./normalizer";
 
 export interface FormsService {
@@ -26,7 +25,6 @@ export interface FormsService {
     projectId: string;
     previousSourceRevisionId: string;
     sourceRevisionId: string;
-    invalidValueGroupIds: string[];
   }>;
   cancelImport(operationId: string): void;
 }
@@ -193,7 +191,6 @@ export const createFormsService = ({
           throw backendFailure("JOB_CANCELLED", "Google account changed during source refresh");
         }
 
-        const invalidValueGroupIds = invalidValueGroupIdsForForm(db, project.id, form);
         const revision = createSourceRevision(db, {
           projectId: project.id,
           formSnapshot: {
@@ -214,7 +211,6 @@ export const createFormsService = ({
           projectId: project.id,
           previousSourceRevisionId: project.currentSourceRevisionId,
           sourceRevisionId: revision.id,
-          invalidValueGroupIds,
         };
       } finally {
         jobs.finish(operationId);
