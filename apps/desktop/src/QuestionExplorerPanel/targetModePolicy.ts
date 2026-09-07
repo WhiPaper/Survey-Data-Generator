@@ -8,3 +8,13 @@ export const targetModeAllowed = (mode: TargetMode, conditionalMode: boolean): b
 
 export const targetKindForMode = (mode: TargetMode): "count" | "share" =>
   countMode(mode) ? "count" : "share";
+
+export const resolvedCountForMode = (
+  mode: TargetMode,
+  currentCount: number,
+  value: number,
+): number | null => {
+  if (mode === "absolute_count") return value;
+  if (mode === "count_delta") return currentCount + value;
+  return null;
+};
