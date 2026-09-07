@@ -6,7 +6,11 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openAppDatabase, type AppDatabase } from "../electron/main/persistence/database";
-import { createImportedProject, upsertGoogleAccount } from "../electron/main/persistence/store";
+import {
+  createImportedProject,
+  createSourceRevision,
+  upsertGoogleAccount,
+} from "../electron/main/persistence/store";
 import { createProjectService } from "../electron/main/projects/service";
 
 const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
@@ -44,7 +48,18 @@ const seedImportedProject = (database: AppDatabase): void => {
       title: "Event survey",
       schemaHash: "schema-1",
       capturedAtMs: 2000,
-      schema: { title: "Event survey", questions: [{ id: "q1" }, { id: "q2" }] },
+      schema: {
+        title: "Event survey",
+        questions: [
+          {
+            id: "q1",
+            title: "Original choice",
+            kind: "single_choice",
+            options: [{ key: "a", label: "Original A" }],
+          },
+          { id: "q2", title: "Other", kind: "text" },
+        ],
+      },
     },
     responses: [
       { responseId: "r2", submittedAtMs: 4000, response: { answers: {} } },
@@ -112,6 +127,56 @@ describe("project service", () => {
       sourceRevisionId: "revision-1",
       invalidValueGroupIds: [],
     });
+  });
+
+  it("resolves historical target labels from the requested source revision after refresh", async () => {
+    const database = createDatabase();
+    seedImportedProject(database);
+    createSourceRevision(database.db, {
+      projectId: "project-1",
+      revisionId: "revision-2",
+      importedAtMs: 5000,
+      responseSetHash: "response-set-2",
+      formSnapshot: {
+        id: "snapshot-2",
+        title: "Event survey",
+        schemaHash: "schema-2",
+        schema: {
+          title: "Event survey",
+          questions: [
+            {
+              id: "q1",
+              title: "Updated choice",
+              kind: "single_choice",
+              options: [{ key: "a", label: "Updated A" }],
+            },
+          ],
+        },
+      },
+      responses: [],
+    });
+    const service = createProjectService({ db: database.db });
+
+    await expect(service.get("project-1")).resolves.toMatchObject({
+      currentSourceRevisionId: "revision-2",
+    });
+    await expect(
+      service.runTargetPresentations("project-1", "revision-1", [
+        {
+          id: "t-share" as never,
+          kind: "share",
+          value: 0.5,
+          subject: { kind: "option", questionId: "q1", optionKey: "a" },
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        targetId: "t-share",
+        questionId: "q1",
+        questionTitle: "Original choice",
+        subjectLabel: "Original A",
+      },
+    ]);
   });
 
   it("deletes a project and its persisted source graph", async () => {
