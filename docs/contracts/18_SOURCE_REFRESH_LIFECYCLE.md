@@ -89,6 +89,8 @@ After a successful apply, `projects.refreshSource` obtains ValueGroup and target
 
 Changing review semantics should require changing one authoritative review path and its tests, not coordinating a Forms-specific copy with the reopen path.
 
+Regression coverage should assert that explicit refresh diagnostics and a local source review over the applied revision return the same review state.
+
 ### Review availability must not block Project open
 
 Project detail is the primary local workspace state. A failure while computing review diagnostics must not prevent the renderer from opening an otherwise readable Project.
