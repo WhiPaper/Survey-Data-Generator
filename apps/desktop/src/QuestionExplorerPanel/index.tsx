@@ -57,6 +57,7 @@ import {
 import { ResultView, type RunContext } from "./ResultView";
 import { TextInspector } from "./TextInspector";
 import { createDraftSaveCoordinator } from "./draftSaveCoordinator";
+import { targetKindForMode, targetModeAllowed } from "./targetModePolicy";
 import { questionPopulationText } from "./questionPopulation";
 import { questionExplorerErrorMessage } from "./userFacingError";
 import { executeValueGroupRepair } from "./sourceReviewRepair";
@@ -387,7 +388,6 @@ export function QuestionExplorerPanel({
       ? conditionalProfileMetric(profile, populationGroupId, editing.questionId, editing.optionKey)
       : undefined;
   const activeMetric = conditionalMode ? currentConditionalMetric : currentMetric;
-  const valueGroupMode = editing?.subjectKind === "value_group";
   const parsedValue = Number(value);
   const shareMode =
     mode === "absolute_share" ||
@@ -406,7 +406,7 @@ export function QuestionExplorerPanel({
   const valueInvalid =
     value === "" ||
     !Number.isFinite(parsedValue) ||
-    ((conditionalMode || valueGroupMode) && !shareMode) ||
+    !targetModeAllowed(mode, conditionalMode) ||
     (mode === "absolute_share" && (parsedValue < 0 || parsedValue > 100)) ||
     (shareMode &&
       mode !== "absolute_share" &&
@@ -487,9 +487,7 @@ export function QuestionExplorerPanel({
 
   const commitTarget = () => {
     if (!editing || valueInvalid) return;
-    const shareOnly = valueGroupMode || conditionalMode;
-    const kind =
-      !shareOnly && (mode === "absolute_count" || mode === "count_delta") ? "count" : "share";
+    const kind = targetKindForMode(mode);
     const normalized = kind === "share" ? parsedValue / 100 : Math.trunc(parsedValue);
     const intent =
       mode === "percentage_point_delta"
@@ -1344,7 +1342,7 @@ export function QuestionExplorerPanel({
                   <SelectItem value="absolute_share">최종 비율</SelectItem>
                   <SelectItem value="percentage_point_delta">현재보다 %p 변경</SelectItem>
                   <SelectItem value="relative_percent_delta">현재 비율에서 % 변경</SelectItem>
-                  {!conditionalMode && !valueGroupMode ? (
+                  {!conditionalMode ? (
                     <>
                       <SelectItem value="absolute_count">최종 인원수</SelectItem>
                       <SelectItem value="count_delta">현재보다 인원수 변경</SelectItem>
