@@ -588,7 +588,12 @@ export const createSynthesisService = ({
             };
           }
           column = plan.questionColumns.get(question.id);
-          memberValues = valueGroupMemberCells(scope.responses, question.id, [subject.optionKey], form);
+          memberValues = valueGroupMemberCells(
+            scope.responses,
+            question.id,
+            [subject.optionKey],
+            form,
+          );
           if (memberValues.length === 0) {
             memberValues = [
               JSON.stringify({
