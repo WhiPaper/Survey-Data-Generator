@@ -81,11 +81,13 @@ The local review result uses the same ValueGroup and target-review semantics as 
 
 ### Single review authority
 
-Explicit refresh and local reopen must not implement separate ValueGroup or target-review calculations.
+Google capture/apply and local review have separate responsibilities.
 
-The Google capture/apply layer is responsible only for obtaining, normalizing, and persisting the new immutable SourceRevision. Once that revision is current, the refresh RPC derives its `invalidValueGroupIds` and `targetIssues` by invoking the same local review computation used by `projects.sourceReview`.
+The Forms service owns only Google identity checks, capture, normalization, and creation/application of the new immutable SourceRevision. It does not decide whether saved ValueGroups or targets need review.
 
-This keeps immediate post-refresh `확인 필요` state identical to the state reconstructed later from the same current SourceRevision and editable setup.
+After a successful apply, `projects.refreshSource` obtains ValueGroup and target-draft diagnostics through the same local review calculation used by `projects.sourceReview`. Project reopen and explicit refresh must therefore not have separate copies of review rules.
+
+Changing review semantics should require changing one authoritative review path and its tests, not coordinating a Forms-specific copy with the reopen path.
 
 ### Review availability must not block Project open
 
