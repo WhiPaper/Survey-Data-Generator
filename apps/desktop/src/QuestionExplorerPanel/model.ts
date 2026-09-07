@@ -50,11 +50,7 @@ export const projectQuestions = (project: ProjectDetailView): QuestionView[] => 
     const options = Array.isArray(question.options)
       ? question.options.flatMap((candidate) => {
           const option = asRecord(candidate);
-          if (
-            !option ||
-            typeof option.key !== "string" ||
-            typeof option.label !== "string"
-          ) {
+          if (!option || typeof option.key !== "string" || typeof option.label !== "string") {
             return [];
           }
           return [{ key: option.key, label: option.label }];
@@ -92,10 +88,7 @@ export const formatSigned = (value: number, suffix: string): string =>
 
 export const targetId = (value: string): TargetId => value as TargetId;
 
-export const subjectTargetId = (
-  kind: "share" | "count",
-  editing: EditingTarget,
-): TargetId => {
+export const subjectTargetId = (kind: "share" | "count", editing: EditingTarget): TargetId => {
   if (editing.subjectKind === "value_group") {
     return targetId(`${kind}:value_group:${editing.valueGroupId ?? ""}`);
   }
@@ -108,8 +101,7 @@ export const conditionalTargetId = (
   valueGroupId: string,
   questionId: string,
   optionKey: string,
-): TargetId =>
-  targetId(`conditional_share:value_group:${valueGroupId}:${questionId}:${optionKey}`);
+): TargetId => targetId(`conditional_share:value_group:${valueGroupId}:${questionId}:${optionKey}`);
 
 export const meanTargetId = (questionId: string): TargetId => targetId(`mean:${questionId}`);
 
@@ -117,22 +109,20 @@ export const subjectTarget = (
   targets: readonly TargetDraftTarget[],
   editing: EditingTarget,
 ): Extract<TargetDraftTarget, { kind: "share" | "count" }> | undefined =>
-  targets.find(
-    (target): target is Extract<TargetDraftTarget, { kind: "share" | "count" }> => {
-      if (target.kind !== "share" && target.kind !== "count") return false;
-      if (editing.subjectKind === "value_group") {
-        return (
-          target.subject.kind === "value_group" &&
-          target.subject.valueGroupId === editing.valueGroupId
-        );
-      }
+  targets.find((target): target is Extract<TargetDraftTarget, { kind: "share" | "count" }> => {
+    if (target.kind !== "share" && target.kind !== "count") return false;
+    if (editing.subjectKind === "value_group") {
       return (
-        target.subject.kind === editing.subjectKind &&
-        target.subject.questionId === editing.questionId &&
-        target.subject.optionKey === editing.optionKey
+        target.subject.kind === "value_group" &&
+        target.subject.valueGroupId === editing.valueGroupId
       );
-    },
-  );
+    }
+    return (
+      target.subject.kind === editing.subjectKind &&
+      target.subject.questionId === editing.questionId &&
+      target.subject.optionKey === editing.optionKey
+    );
+  });
 
 export const conditionalTarget = (
   targets: readonly TargetDraftTarget[],

@@ -39,11 +39,7 @@ type TextInspectorProps = {
   profile: TargetProfileResult | null;
   busy: boolean;
   onOpenTarget: (editing: EditingTarget) => void;
-  onSaveGroup: (
-    previous: ValueGroupView | null,
-    name: string,
-    members: string[],
-  ) => Promise<void>;
+  onSaveGroup: (previous: ValueGroupView | null, name: string, members: string[]) => Promise<void>;
   onDeleteGroup: (group: ValueGroupView) => void;
 };
 
@@ -97,8 +93,7 @@ export function TextInspector({
             <div>
               <h3 className="text-sm font-medium">응답 그룹</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                실제 응답 값을 직접 선택해 그룹을 만듭니다. 같은 값이 여러 그룹에 포함되어도
-                됩니다.
+                실제 응답 값을 직접 선택해 그룹을 만듭니다. 같은 값이 여러 그룹에 포함되어도 됩니다.
               </p>
             </div>
             <Button type="button" size="sm" variant="outline" onClick={() => openGroup(null)}>
@@ -183,9 +178,7 @@ export function TextInspector({
                 className="flex items-center justify-between gap-3 py-2 text-sm"
               >
                 <span className="min-w-0 truncate">{value.label}</span>
-                <span className="shrink-0 tabular-nums text-muted-foreground">
-                  {value.count}명
-                </span>
+                <span className="shrink-0 tabular-nums text-muted-foreground">{value.count}명</span>
               </div>
             ))}
             {filteredValues.length === 0 ? (

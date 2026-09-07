@@ -146,8 +146,8 @@ export function ResultView({
       </div>
 
       <p className="mt-6 text-xs text-muted-foreground">
-        현재 backend에는 Run 목록 조회가 없어 이 선택기는 이번 앱 세션에서 생성한 결과만
-        표시합니다. 저장된 과거 Run 자체는 변경하지 않습니다.
+        현재 backend에는 Run 목록 조회가 없어 이 선택기는 이번 앱 세션에서 생성한 결과만 표시합니다.
+        저장된 과거 Run 자체는 변경하지 않습니다.
       </p>
     </div>
   );

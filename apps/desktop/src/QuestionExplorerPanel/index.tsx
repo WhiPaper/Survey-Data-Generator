@@ -291,20 +291,12 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
 
   const directTarget = editing ? subjectTarget(draft.targets, editing) : undefined;
   const conditional =
-    editing?.subjectKind === "checkbox_option" &&
-    editing.optionKey &&
-    populationGroupId !== "all"
-      ? conditionalTarget(
-          draft.targets,
-          populationGroupId,
-          editing.questionId,
-          editing.optionKey,
-        )
+    editing?.subjectKind === "checkbox_option" && editing.optionKey && populationGroupId !== "all"
+      ? conditionalTarget(draft.targets, populationGroupId, editing.questionId, editing.optionKey)
       : undefined;
   const currentTarget = populationGroupId === "all" ? directTarget : conditional;
   const currentMetric = editingMetric(profile, editing);
-  const conditionalMode =
-    editing?.subjectKind === "checkbox_option" && populationGroupId !== "all";
+  const conditionalMode = editing?.subjectKind === "checkbox_option" && populationGroupId !== "all";
   const valueGroupMode = editing?.subjectKind === "value_group";
   const parsedValue = Number(value);
   const shareMode =
@@ -332,7 +324,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
       currentMetric !== undefined &&
       (resolvedShare === null || resolvedShare < 0 || resolvedShare > 1)) ||
     (mode === "absolute_count" &&
-      (!Number.isInteger(parsedValue) || parsedValue < 0 || (finalCount !== null && parsedValue > finalCount))) ||
+      (!Number.isInteger(parsedValue) ||
+        parsedValue < 0 ||
+        (finalCount !== null && parsedValue > finalCount))) ||
     (mode === "count_delta" &&
       (!Number.isInteger(parsedValue) ||
         (currentMetric !== undefined && currentMetric.count + parsedValue < 0) ||
@@ -347,7 +341,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     !Number.isFinite(parsedMean) ||
     parsedMean < editingMean.min ||
     parsedMean > editingMean.max;
-  const currentMeanTarget = editingMean ? meanTarget(draft.targets, editingMean.questionId) : undefined;
+  const currentMeanTarget = editingMean
+    ? meanTarget(draft.targets, editingMean.questionId)
+    : undefined;
   const currentMeanMetric = editingMean ? meanMetric(profile, editingMean.questionId) : undefined;
 
   const selectedCheckboxDenominator =
@@ -370,9 +366,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
               target.optionKey === editingTarget.optionKey,
           )
         : undefined;
-    const nextPopulation = direct
-      ? "all"
-      : (firstConditional?.population.valueGroupId ?? "all");
+    const nextPopulation = direct ? "all" : (firstConditional?.population.valueGroupId ?? "all");
     const existing = direct ?? firstConditional;
     setEditing(editingTarget);
     setPopulationGroupId(nextPopulation);
@@ -400,12 +394,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     const existing =
       nextPopulation === "all"
         ? subjectTarget(draft.targets, editing)
-        : conditionalTarget(
-            draft.targets,
-            nextPopulation,
-            editing.questionId,
-            editing.optionKey,
-          );
+        : conditionalTarget(draft.targets, nextPopulation, editing.questionId, editing.optionKey);
     setPopulationGroupId(nextPopulation);
     setMode(targetModeFor(existing));
     setValue(targetValueFor(existing));
@@ -752,10 +741,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     }
   };
 
-  const renderChoiceRows = (
-    question: QuestionView,
-    subjectKind: "option" | "checkbox_option",
-  ) => (
+  const renderChoiceRows = (question: QuestionView, subjectKind: "option" | "checkbox_option") => (
     <div className="mt-7 space-y-1">
       {question.options.map((option) => {
         const metric = subjectMetricFor(profile, subjectKind, question.id, option.key);
@@ -861,9 +847,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
               <span className="text-muted-foreground">원본</span>
               <Select
                 value={draft.sourceScope.kind}
-                onValueChange={(next) =>
-                  setSourceScopeKind(next as "all" | "submitted_between")
-                }
+                onValueChange={(next) => setSourceScopeKind(next as "all" | "submitted_between")}
               >
                 <SelectTrigger className="h-8 w-[190px]">
                   <SelectValue />
@@ -1114,8 +1098,8 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                 </Select>
                 {conditionalMode ? (
                   <p className="text-xs text-muted-foreground">
-                    이 그룹의 조건부 현재 비율은 공개 profile에 없으므로 UI에서 그룹 크기로
-                    대신 계산하지 않습니다. 생성 검증 시 backend가 기준값을 계산합니다.
+                    이 그룹의 조건부 현재 비율은 공개 profile에 없으므로 UI에서 그룹 크기로 대신
+                    계산하지 않습니다. 생성 검증 시 backend가 기준값을 계산합니다.
                   </p>
                 ) : null}
               </div>
@@ -1277,7 +1261,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
         <DialogContent className="sm:max-w-[620px]">
           <DialogHeader>
             <DialogTitle>생성 전에 확인할 설정이 있습니다</DialogTitle>
-            <DialogDescription>문제가 있는 목표를 수정한 뒤 다시 생성하면 됩니다.</DialogDescription>
+            <DialogDescription>
+              문제가 있는 목표를 수정한 뒤 다시 생성하면 됩니다.
+            </DialogDescription>
           </DialogHeader>
           <div className="divide-y">
             {issues.map((issue, index) => (
@@ -1312,8 +1298,8 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
           <DialogHeader>
             <DialogTitle>원본 응답을 유지할지 선택하세요</DialogTitle>
             <DialogDescription>
-              원본을 그대로 유지하면 목표와 차이가 남을 수 있습니다. 대체를 선택해도 Google
-              Forms의 원본 응답은 변경되지 않습니다.
+              원본을 그대로 유지하면 목표와 차이가 남을 수 있습니다. 대체를 선택해도 Google Forms의
+              원본 응답은 변경되지 않습니다.
             </DialogDescription>
           </DialogHeader>
           {editPlan ? (
