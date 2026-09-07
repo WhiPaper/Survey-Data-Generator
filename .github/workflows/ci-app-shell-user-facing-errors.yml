@@ -1,0 +1,101 @@
+name: ci-app-shell-user-facing-errors
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  wire-and-check:
+    if: github.head_ref == 'ui/app-shell-user-facing-errors'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pnpm install --frozen-lockfile
+      - name: Wire app shell user-facing errors
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/desktop/src/AppShell.tsx')
+          text = path.read_text()
+
+          def replace_once(old: str, new: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one match, found {count}: {old[:100]!r}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '} from "./api/backend";\n',
+              '} from "./api/backend";\nimport { appShellErrorMessage } from "./appShellError";\n',
+          )
+          replace_once(
+              'const errorMessage = (error: unknown): string =>\n  error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";\n\n',
+              '',
+          )
+          replace_once(
+              '        setMessage(errorMessage(cause));',
+              '        setMessage(appShellErrorMessage(cause, "startup"));',
+          )
+
+          generic = 'setError(errorMessage(cause));'
+          operations = [
+              'load_home',
+              'open_project',
+              'login',
+              'logout',
+              'import_form',
+              'refresh_source',
+              'delete_project',
+          ]
+          if text.count(generic) != len(operations):
+              raise SystemExit(f'expected {len(operations)} generic error calls, found {text.count(generic)}')
+          for operation in operations:
+              text = text.replace(
+                  generic,
+                  f'setError(appShellErrorMessage(cause, "{operation}"));',
+                  1,
+              )
+
+          replace_once(
+              '  const handleRefreshProject = async (): Promise<void> => {\n',
+              '''  const handleCancelImport = async (): Promise<void> => {\n    if (!importOperationId) return;\n    setError(null);\n    try {\n      await cancelFormImport(importOperationId);\n    } catch (cause: unknown) {\n      setError(appShellErrorMessage(cause, "cancel_import"));\n    }\n  };\n\n  const handleRefreshProject = async (): Promise<void> => {\n''',
+          )
+          replace_once(
+              '                onClick={() => void cancelFormImport(importOperationId)}',
+              '                onClick={() => void handleCancelImport()}',
+          )
+
+          if 'errorMessage(' in text:
+              raise SystemExit('raw AppShell errorMessage call remains')
+          if 'error instanceof Error ? error.message' in text:
+              raise SystemExit('raw Error.message renderer remains')
+
+          path.write_text(text)
+          PY
+          pnpm exec prettier --write apps/desktop/src/AppShell.tsx apps/desktop/src/appShellError.ts apps/desktop/src/userFacingError.ts apps/desktop/src/QuestionExplorerPanel/userFacingError.ts apps/desktop/test/app-shell-user-facing-error.test.ts apps/desktop/test/question-explorer-user-facing-error.test.ts
+          if ! git diff --quiet; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add apps/desktop/src/AppShell.tsx apps/desktop/src/appShellError.ts apps/desktop/src/userFacingError.ts apps/desktop/src/QuestionExplorerPanel/userFacingError.ts apps/desktop/test/app-shell-user-facing-error.test.ts apps/desktop/test/question-explorer-user-facing-error.test.ts
+            git commit -m "fix(ui): hide technical app shell errors"
+            git push origin HEAD:ui/app-shell-user-facing-errors
+          fi
+      - run: pnpm run check
+      - run: python -m pip install -r engine/requirements.txt
+      - run: pnpm run engine:test
