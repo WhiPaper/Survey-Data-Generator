@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 jobs:
-  wire-and-check:
+  fix-and-check:
     if: github.head_ref == 'ui/question-denominator-copy'
     runs-on: ubuntu-22.04
     steps:
@@ -25,41 +25,23 @@ jobs:
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
-      - name: Wire question population copy
+      - name: Remove obsolete import
         run: |
           python - <<'PY'
           from pathlib import Path
-
           path = Path('apps/desktop/src/QuestionExplorerPanel/index.tsx')
           text = path.read_text()
-
-          def replace_once(old: str, new: str) -> None:
-              global text
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'expected exactly one match, found {count}: {old[:120]!r}')
-              text = text.replace(old, new, 1)
-
-          replace_once(
-              'import { executeValueGroupRepair } from "./sourceReviewRepair";\n',
-              'import { questionPopulationText } from "./questionPopulation";\nimport { executeValueGroupRepair } from "./sourceReviewRepair";\n',
-          )
-          replace_once(
-              '''  const selectedCheckboxDenominator =\n    selectedQuestion?.kind === "multi_choice"\n      ? selectedQuestion.options\n          .map((option) =>\n            subjectMetricFor(profile, "checkbox_option", selectedQuestion.id, option.key),\n          )\n          .find((metric) => metric !== undefined)?.denominatorCount\n      : undefined;\n\n''',
-              '',
-          )
-          replace_once(
-              '''                    <p className="mt-1 text-xs text-muted-foreground">\n                      {selectedQuestion.kind === "multi_choice"\n                        ? `복수 선택 · 응답 대상 ${selectedCheckboxDenominator ?? 0}명`\n                        : `${kindLabel(selectedQuestion.kind)} · 응답 ${sourceCount}명`}\n                    </p>\n''',
-              '''                    <p className="mt-1 text-xs text-muted-foreground">\n                      {questionPopulationText(selectedQuestion, profile, sourceCount)}\n                    </p>\n''',
-          )
-          path.write_text(text)
+          old = '  kindLabel,\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one kindLabel import, found {text.count(old)}')
+          path.write_text(text.replace(old, '', 1))
           PY
-          pnpm exec prettier --write apps/desktop/src/QuestionExplorerPanel/index.tsx apps/desktop/src/QuestionExplorerPanel/questionPopulation.ts apps/desktop/test/question-population-copy.test.ts
+          pnpm exec prettier --write apps/desktop/src/QuestionExplorerPanel/index.tsx
           if ! git diff --quiet; then
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add apps/desktop/src/QuestionExplorerPanel/index.tsx apps/desktop/src/QuestionExplorerPanel/questionPopulation.ts apps/desktop/test/question-population-copy.test.ts
-            git commit -m "fix(ui): use question-specific denominators"
+            git add apps/desktop/src/QuestionExplorerPanel/index.tsx
+            git commit -m "fix(ui): remove obsolete question label import"
             git push origin HEAD:ui/question-denominator-copy
           fi
       - run: pnpm run check
