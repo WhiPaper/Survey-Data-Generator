@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 
 import type {
   ProjectDetailView,
-  SourceScope,
   TargetDraft,
   TargetDraftTarget,
   TargetId,
@@ -10,7 +9,12 @@ import type {
   TargetProfileResult,
 } from "@survey-synth/contracts";
 
-import { getTargetDraft, getTargetProfile, saveTargetDraft, startTargetDraft } from "./api/backend";
+import {
+  getTargetDraft,
+  getTargetProfile,
+  saveTargetDraft,
+  startTargetDraft,
+} from "./api/backend";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -59,6 +63,7 @@ const questionsFromProject = (project: ProjectDetailView): QuestionView[] => {
   return raw.flatMap((value) => {
     const question = asRecord(value);
     if (!question || typeof question.id !== "string") return [];
+
     const options = Array.isArray(question.options)
       ? question.options.flatMap((item) => {
           const option = asRecord(item);
@@ -67,10 +72,12 @@ const questionsFromProject = (project: ProjectDetailView): QuestionView[] => {
             : [];
         })
       : [];
+
     return [
       {
         id: question.id,
-        title: typeof question.title === "string" && question.title ? question.title : question.id,
+        title:
+          typeof question.title === "string" && question.title ? question.title : question.id,
         kind: typeof question.kind === "string" ? question.kind : "unknown",
         options,
       },
@@ -120,42 +127,60 @@ const metricForOption = (
 const percent = (value: number): string => `${(value * 100).toFixed(1)}%`;
 
 const modeForTarget = (target: TargetDraftTarget | undefined): TargetMode => {
-  if (!target || (target.kind !== "share" && target.kind !== "count")) return "absolute_share";
-  if (target.kind === "count") return target.intent?.kind === "count_delta" ? "count_delta" : "absolute_count";
+  if (!target || (target.kind !== "share" && target.kind !== "count")) {
+    return "absolute_share";
+  }
+  if (target.kind === "count") {
+    return target.intent?.kind === "count_delta" ? "count_delta" : "absolute_count";
+  }
   if (target.intent?.kind === "percentage_point_delta") return "percentage_point_delta";
   if (target.intent?.kind === "relative_percent_delta") return "relative_percent_delta";
   return "absolute_share";
 };
 
 const displayValueForTarget = (target: TargetDraftTarget | undefined): string => {
-  if (!target || (target.kind !== "share" && target.kind !== "count") || !target.intent) return "";
+  if (!target || (target.kind !== "share" && target.kind !== "count") || !target.intent) {
+    return "";
+  }
   if (target.kind === "count") return String(target.intent.value);
   return String(target.intent.value * 100);
 };
 
-const targetSummary = (target: TargetDraftTarget | undefined, currentShare: number): string | null => {
-  if (!target || (target.kind !== "share" && target.kind !== "count") || !target.intent) return null;
+const targetSummary = (
+  target: TargetDraftTarget | undefined,
+  currentShare: number,
+): string | null => {
+  if (!target || (target.kind !== "share" && target.kind !== "count") || !target.intent) {
+    return null;
+  }
+
   if (target.kind === "count") {
     const prefix = target.intent.kind === "count_delta" && target.intent.value > 0 ? "+" : "";
     return target.intent.kind === "count_delta"
       ? `${prefix}${target.intent.value}명`
       : `최종 ${target.intent.value}명`;
   }
+
   if (target.intent.kind === "percentage_point_delta") {
     const delta = target.intent.value * 100;
     const resolved = currentShare + target.intent.value;
     return `${delta > 0 ? "+" : ""}${delta.toFixed(1)}%p → ${percent(resolved)}`;
   }
+
   if (target.intent.kind === "relative_percent_delta") {
     const delta = target.intent.value * 100;
     const resolved = currentShare * (1 + target.intent.value);
     return `${delta > 0 ? "+" : ""}${delta.toFixed(1)}% → ${percent(resolved)}`;
   }
+
   return `→ ${percent(target.intent.value)}`;
 };
 
-const targetId = (kind: "share" | "count", questionId: string, optionKey: string): TargetId =>
-  `${kind}:option:${questionId}:${optionKey}` as TargetId;
+const targetId = (
+  kind: "share" | "count",
+  questionId: string,
+  optionKey: string,
+): TargetId => `${kind}:option:${questionId}:${optionKey}` as TargetId;
 
 export function QuestionExplorerPanel({ project }: { project: ProjectDetailView }) {
   const questions = useMemo(() => questionsFromProject(project), [project]);
@@ -185,9 +210,11 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     let active = true;
     setBusy(true);
     setError(null);
+
     void getTargetDraft(project.id)
       .then(async (saved) => {
         if (!active) return;
+
         const nextDraft: TargetDraft = saved
           ? {
               projectId: saved.projectId,
@@ -203,27 +230,35 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
               seed: 42,
               targets: [],
             };
+
         setDraft(nextDraft);
         const nextProfile = await getTargetProfile(project.id, nextDraft.sourceScope);
         if (active) setProfile(nextProfile);
       })
       .catch((cause: unknown) => {
-        if (active) setError(cause instanceof Error ? cause.message : "설정을 불러오지 못했습니다.");
+        if (active) {
+          setError(cause instanceof Error ? cause.message : "설정을 불러오지 못했습니다.");
+        }
       })
       .finally(() => {
         if (active) setBusy(false);
       });
+
     return () => {
       active = false;
     };
   }, [project.id, project.currentSourceRevisionId, project.responseCount]);
 
-  const selectedQuestion = questions.find((question) => question.id === selectedQuestionId) ?? questions[0];
+  const selectedQuestion =
+    questions.find((question) => question.id === selectedQuestionId) ?? questions[0];
+
   const targetCountForQuestion = (questionId: string): number =>
     draft.targets.filter((target) => questionIdForTarget(target) === questionId).length;
+
   const totalTargetCount = draft.targets.length;
   const filteredQuestions = questions.filter((question) => {
-    const matchesQuery = question.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const matchesQuery = question.title.toLocaleLowerCase().includes(normalizedQuery);
     const matchesTarget = !targetOnly || targetCountForQuestion(question.id) > 0;
     return matchesQuery && matchesTarget;
   });
@@ -237,8 +272,10 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
 
   const commitTarget = async (): Promise<void> => {
     if (!editingTarget) return;
+
     const numeric = Number(targetValue);
     if (!Number.isFinite(numeric)) return;
+
     const nextKind: "share" | "count" =
       targetMode === "absolute_count" || targetMode === "count_delta" ? "count" : "share";
     const normalized = nextKind === "share" ? numeric / 100 : numeric;
@@ -249,7 +286,11 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
           ? ({ kind: "relative_percent_delta", value: normalized } as const)
           : targetMode === "count_delta"
             ? ({ kind: "count_delta", value: Math.trunc(normalized) } as const)
-            : ({ kind: "absolute", value: nextKind === "count" ? Math.trunc(normalized) : normalized } as const);
+            : ({
+                kind: "absolute",
+                value: nextKind === "count" ? Math.trunc(normalized) : normalized,
+              } as const);
+
     const nextTarget: TargetDraftTarget = {
       id: targetId(nextKind, editingTarget.questionId, editingTarget.optionKey),
       kind: nextKind,
@@ -260,6 +301,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
       },
       intent,
     };
+
     const nextDraft: TargetDraft = {
       ...draft,
       targets: [
@@ -275,6 +317,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
         nextTarget,
       ],
     };
+
     setBusy(true);
     setError(null);
     try {
@@ -290,6 +333,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
 
   const removeEditingTarget = async (): Promise<void> => {
     if (!editingTarget) return;
+
     const nextDraft: TargetDraft = {
       ...draft,
       targets: draft.targets.filter(
@@ -302,6 +346,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
           ),
       ),
     };
+
     setBusy(true);
     try {
       await saveTargetDraft(nextDraft);
@@ -324,13 +369,17 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     setBusy(true);
     setError(null);
     setMessage(null);
+
     try {
       await saveTargetDraft(draft);
       const result = await startTargetDraft(project.id, `ui-generate-${Date.now()}`);
+
       if (result.status === "success") {
         setMessage(`최종 응답 ${result.finalResponseCount}개를 생성했습니다.`);
       } else if (result.status === "approval_required") {
-        setMessage(`원본 응답 ${result.editPlan.replacementCount}개 대체 여부를 확인해야 합니다.`);
+        setMessage(
+          `원본 응답 ${result.editPlan.replacementCount}개 대체 여부를 확인해야 합니다.`,
+        );
       } else {
         setMessage(`확인할 목표가 ${result.issues.length}개 있습니다.`);
       }
@@ -356,8 +405,11 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
     targetMode === "relative_percent_delta";
   const targetValueInvalid =
     !Number.isFinite(parsedTargetValue) ||
-    (targetMode === "absolute_share" && (parsedTargetValue < 0 || parsedTargetValue > 100)) ||
-    ((targetMode === "absolute_count" || targetMode === "count_delta") && !Number.isInteger(parsedTargetValue));
+    (targetMode === "absolute_share" &&
+      (parsedTargetValue < 0 || parsedTargetValue > 100)) ||
+    (targetMode === "absolute_count" &&
+      (!Number.isInteger(parsedTargetValue) || parsedTargetValue < 0)) ||
+    (targetMode === "count_delta" && !Number.isInteger(parsedTargetValue));
 
   return (
     <section className="mt-4 overflow-hidden rounded-lg border bg-background">
@@ -381,7 +433,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
           ) : null}
         </div>
         {finalCountInvalid ? (
-          <span className="text-xs text-destructive">최종 응답 수는 원본 응답 수보다 작을 수 없습니다.</span>
+          <span className="text-xs text-destructive">
+            최종 응답 수는 원본 응답 수보다 작을 수 없습니다.
+          </span>
         ) : null}
       </div>
 
@@ -416,10 +470,12 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
               </Button>
             </div>
           </div>
+
           <div className="max-h-[560px] overflow-y-auto p-2">
             {filteredQuestions.map((question) => {
               const count = targetCountForQuestion(question.id);
               const selected = question.id === selectedQuestion?.id;
+
               return (
                 <button
                   key={question.id}
@@ -429,7 +485,9 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                 >
                   <span className="line-clamp-2 min-w-0">{question.title}</span>
                   {count > 0 ? (
-                    <span className="shrink-0 text-xs font-normal text-muted-foreground">목표 {count}</span>
+                    <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                      목표 {count}
+                    </span>
                   ) : null}
                 </button>
               );
@@ -438,7 +496,10 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
         </aside>
 
         <div className="min-w-0 overflow-y-auto px-8 py-7">
-          {busy && !profile ? <p className="text-sm text-muted-foreground">분포를 불러오는 중…</p> : null}
+          {busy && !profile ? (
+            <p className="text-sm text-muted-foreground">분포를 불러오는 중…</p>
+          ) : null}
+
           {selectedQuestion ? (
             <div className="max-w-[880px]">
               <header>
@@ -453,25 +514,38 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                   {selectedQuestion.options.map((option) => {
                     const metric = metricForOption(profile, selectedQuestion.id, option.key);
                     const currentShare = metric?.share ?? 0;
-                    const existing = targetForOption(draft.targets, selectedQuestion.id, option.key);
+                    const existing = targetForOption(
+                      draft.targets,
+                      selectedQuestion.id,
+                      option.key,
+                    );
                     const summary = targetSummary(existing, currentShare);
+
                     return (
                       <button
                         type="button"
                         key={option.key}
-                        onClick={() => openTarget(selectedQuestion.id, option.key, option.label)}
+                        onClick={() =>
+                          openTarget(selectedQuestion.id, option.key, option.label)
+                        }
                         className="group grid w-full grid-cols-[minmax(140px,1fr)_72px_72px_minmax(120px,1.2fr)_120px] items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm hover:bg-muted/60"
                       >
                         <span className="truncate font-medium">{option.label}</span>
-                        <span className="text-right tabular-nums text-muted-foreground">{metric?.count ?? 0}명</span>
+                        <span className="text-right tabular-nums text-muted-foreground">
+                          {metric?.count ?? 0}명
+                        </span>
                         <span className="text-right tabular-nums">{percent(currentShare)}</span>
                         <span className="h-1.5 overflow-hidden rounded-full bg-muted">
                           <span
                             className="block h-full rounded-full bg-foreground/45"
-                            style={{ width: `${Math.max(0, Math.min(100, currentShare * 100))}%` }}
+                            style={{
+                              width: `${Math.max(0, Math.min(100, currentShare * 100))}%`,
+                            }}
                           />
                         </span>
-                        <span className={`text-right tabular-nums ${summary ? "font-medium" : "text-muted-foreground opacity-0 group-hover:opacity-100"}`}>
+                        <span
+                          className={`text-right tabular-nums ${summary ? "font-medium" : "text-muted-foreground opacity-0 group-hover:opacity-100"}`}
+                        >
                           {summary ?? "+ 목표"}
                         </span>
                       </button>
@@ -481,7 +555,8 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
               ) : (
                 <div className="mt-10 max-w-lg">
                   <p className="text-sm text-muted-foreground">
-                    이 문항의 분포 편집기는 다음 구현 단계에서 같은 Question Explorer 안에 연결됩니다.
+                    이 문항의 분포 편집기는 다음 구현 단계에서 같은 Question Explorer 안에
+                    연결됩니다.
                   </p>
                 </div>
               )}
@@ -493,30 +568,54 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
       <footer className="flex min-h-14 items-center justify-between gap-4 border-t px-4 py-2">
         <p className="text-sm text-muted-foreground">
           원본 <span className="tabular-nums">{sourceCount}명</span>
-          {additions !== null && !finalCountInvalid ? ` · +${additions}명 · 최종 ${finalCount}명` : ""}
+          {additions !== null && !finalCountInvalid
+            ? ` · +${additions}명 · 최종 ${finalCount}명`
+            : ""}
           {` · ${totalTargetCount > 0 ? `목표 ${totalTargetCount}개` : "목표 없음"}`}
         </p>
-        <Button type="button" disabled={busy || finalCountInvalid} onClick={() => void saveAndGenerate()}>
+        <Button
+          type="button"
+          disabled={busy || finalCountInvalid}
+          onClick={() => void saveAndGenerate()}
+        >
           {busy ? "설정 확인 중…" : "생성"}
         </Button>
       </footer>
 
-      {message ? <p className="border-t px-4 py-2 text-sm text-muted-foreground">{message}</p> : null}
-      {error ? <p role="alert" className="border-t px-4 py-2 text-sm text-destructive">{error}</p> : null}
+      {message ? (
+        <p className="border-t px-4 py-2 text-sm text-muted-foreground">{message}</p>
+      ) : null}
+      {error ? (
+        <p role="alert" className="border-t px-4 py-2 text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
 
-      <Sheet open={editingTarget !== null} onOpenChange={(open) => !open && setEditingTarget(null)}>
+      <Sheet
+        open={editingTarget !== null}
+        onOpenChange={(open) => !open && setEditingTarget(null)}
+      >
         <SheetContent className="sm:max-w-[420px]">
           <SheetHeader>
             <SheetTitle>{editingTarget?.optionLabel ?? "목표"}</SheetTitle>
             <SheetDescription>
-              {selectedQuestion?.title ?? "문항"} · 현재 {selectedMetric ? `${selectedMetric.count}명 · ${percent(selectedMetric.share)}` : "0명 · 0.0%"}
+              {selectedQuestion?.title ?? "문항"} · 현재{" "}
+              {selectedMetric
+                ? `${selectedMetric.count}명 · ${percent(selectedMetric.share)}`
+                : "0명 · 0.0%"}
             </SheetDescription>
           </SheetHeader>
 
           <div className="space-y-6 px-4 py-5">
             <div className="space-y-2">
               <label className="text-sm font-medium">목표</label>
-              <Select value={targetMode} onValueChange={(value) => { setTargetMode(value as TargetMode); setTargetValue(""); }}>
+              <Select
+                value={targetMode}
+                onValueChange={(value) => {
+                  setTargetMode(value as TargetMode);
+                  setTargetValue("");
+                }}
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -528,6 +627,7 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                   <SelectItem value="count_delta">현재보다 인원수 변경</SelectItem>
                 </SelectContent>
               </Select>
+
               <div className="flex items-center gap-2">
                 <Input
                   autoFocus
@@ -538,8 +638,11 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                   className="tabular-nums"
                   placeholder={shareMode ? "예: 50" : "예: 125"}
                 />
-                <span className="w-8 text-sm">{shareMode ? (targetMode === "percentage_point_delta" ? "%p" : "%") : "명"}</span>
+                <span className="w-8 text-sm">
+                  {shareMode ? (targetMode === "percentage_point_delta" ? "%p" : "%") : "명"}
+                </span>
               </div>
+
               {targetValue !== "" && targetValueInvalid ? (
                 <p className="text-xs text-destructive">유효한 목표 값을 입력해주세요.</p>
               ) : null}
@@ -551,26 +654,45 @@ export function QuestionExplorerPanel({ project }: { project: ProjectDetailView 
                   현재 {percent(selectedMetric.share)}
                 </p>
                 <p className="text-muted-foreground">
-                  {targetMode === "absolute_share" && `→ 목표 ${parsedTargetValue.toFixed(1)}%`}
-                  {targetMode === "percentage_point_delta" && `→ ${parsedTargetValue >= 0 ? "+" : ""}${parsedTargetValue}%p`}
-                  {targetMode === "relative_percent_delta" && `→ ${parsedTargetValue >= 0 ? "+" : ""}${parsedTargetValue}%`}
+                  {targetMode === "absolute_share" &&
+                    `→ 목표 ${parsedTargetValue.toFixed(1)}%`}
+                  {targetMode === "percentage_point_delta" &&
+                    `→ ${parsedTargetValue >= 0 ? "+" : ""}${parsedTargetValue}%p`}
+                  {targetMode === "relative_percent_delta" &&
+                    `→ ${parsedTargetValue >= 0 ? "+" : ""}${parsedTargetValue}%`}
                   {targetMode === "absolute_count" && `→ 최종 ${parsedTargetValue}명`}
-                  {targetMode === "count_delta" && `→ ${parsedTargetValue >= 0 ? "+" : ""}${parsedTargetValue}명`}
+                  {targetMode === "count_delta" &&
+                    `→ ${parsedTargetValue >= 0 ? "+" : ""}${parsedTargetValue}명`}
                 </p>
                 {finalCount !== null && targetMode === "absolute_share" ? (
-                  <p className="text-muted-foreground">최종 {finalCount}명 기준 약 {Math.round((parsedTargetValue / 100) * finalCount)}명</p>
+                  <p className="text-muted-foreground">
+                    최종 {finalCount}명 기준 약{" "}
+                    {Math.round((parsedTargetValue / 100) * finalCount)}명
+                  </p>
                 ) : null}
               </div>
             ) : null}
           </div>
 
           <SheetFooter className="flex-row items-center justify-between sm:justify-between">
-            <Button type="button" variant="ghost" className="text-destructive" disabled={!editingTarget || busy} onClick={() => void removeEditingTarget()}>
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-destructive"
+              disabled={!editingTarget || busy}
+              onClick={() => void removeEditingTarget()}
+            >
               목표 삭제
             </Button>
             <div className="flex gap-2">
-              <Button type="button" variant="outline" onClick={() => setEditingTarget(null)}>취소</Button>
-              <Button type="button" disabled={busy || targetValue === "" || targetValueInvalid} onClick={() => void commitTarget()}>
+              <Button type="button" variant="outline" onClick={() => setEditingTarget(null)}>
+                취소
+              </Button>
+              <Button
+                type="button"
+                disabled={busy || targetValue === "" || targetValueInvalid}
+                onClick={() => void commitTarget()}
+              >
                 목표 설정
               </Button>
             </div>
