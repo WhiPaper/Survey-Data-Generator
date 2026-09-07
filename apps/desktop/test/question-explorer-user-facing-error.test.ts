@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { questionExplorerErrorMessage } from "../src/QuestionExplorerPanel/userFacingError";
 
-const backendFailure = (code: string, message = "Backend SourceScope candidate_support failure") => ({
+const backendFailure = (
+  code: string,
+  message = "Backend SourceScope candidate_support failure",
+) => ({
   backendError: { code, message, recoverable: true },
 });
 
@@ -33,14 +36,14 @@ describe("Question Explorer user-facing errors", () => {
     expect(questionExplorerErrorMessage(backendFailure("REAUTH_REQUIRED"), "load_workspace")).toBe(
       "Google 계정 연결이 만료되었습니다. 다시 연결해주세요.",
     );
-    expect(questionExplorerErrorMessage(backendFailure("PERMISSION_DENIED"), "load_workspace")).toBe(
-      "이 작업에 필요한 권한이 없습니다.",
-    );
+    expect(
+      questionExplorerErrorMessage(backendFailure("PERMISSION_DENIED"), "load_workspace"),
+    ).toBe("이 작업에 필요한 권한이 없습니다.");
     expect(questionExplorerErrorMessage(backendFailure("RATE_LIMITED"), "generate")).toBe(
       "요청이 많습니다. 잠시 후 다시 시도해주세요.",
     );
-    expect(questionExplorerErrorMessage(backendFailure("GOOGLE_API_ERROR"), "reload_distribution")).toBe(
-      "Google Forms 정보를 가져오지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해주세요.",
-    );
+    expect(
+      questionExplorerErrorMessage(backendFailure("GOOGLE_API_ERROR"), "reload_distribution"),
+    ).toBe("Google Forms 정보를 가져오지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해주세요.");
   });
 });

@@ -58,6 +58,7 @@ import { ResultView, type RunContext } from "./ResultView";
 import { TextInspector } from "./TextInspector";
 import { createDraftSaveCoordinator } from "./draftSaveCoordinator";
 import { questionPopulationText } from "./questionPopulation";
+import { questionExplorerErrorMessage } from "./userFacingError";
 import { executeValueGroupRepair } from "./sourceReviewRepair";
 import {
   conditionalProfileMetric,
@@ -274,7 +275,7 @@ export function QuestionExplorerPanel({
       })
       .catch((cause: unknown) => {
         if (!active) return;
-        setError(cause instanceof Error ? cause.message : "설정을 불러오지 못했습니다.");
+        setError(questionExplorerErrorMessage(cause, "load_workspace"));
       });
 
     return () => {
@@ -302,7 +303,7 @@ export function QuestionExplorerPanel({
     draftSaveCoordinator.setLatest(draft);
     const timer = window.setTimeout(() => {
       void draftSaveCoordinator.flush().catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : "변경사항을 저장하지 못했습니다.");
+        setError(questionExplorerErrorMessage(cause, "save_draft"));
       });
     }, 450);
     return () => window.clearTimeout(timer);
@@ -329,7 +330,7 @@ export function QuestionExplorerPanel({
       })
       .catch((cause: unknown) => {
         if (!active) return;
-        setError(cause instanceof Error ? cause.message : "분포를 다시 불러오지 못했습니다.");
+        setError(questionExplorerErrorMessage(cause, "reload_distribution"));
       })
       .finally(() => {
         if (active) setProfileBusy(false);
@@ -351,7 +352,7 @@ export function QuestionExplorerPanel({
       })
       .catch((cause: unknown) => {
         if (!active) return;
-        setError(cause instanceof Error ? cause.message : "응답 값을 불러오지 못했습니다.");
+        setError(questionExplorerErrorMessage(cause, "load_text_values"));
       });
     return () => {
       active = false;
@@ -689,7 +690,7 @@ export function QuestionExplorerPanel({
         void deleteValueGroup(created.id).catch(() => undefined);
       }
       if (migrated) void reloadGroups().catch(() => undefined);
-      setError(cause instanceof Error ? cause.message : "그룹을 저장하지 못했습니다.");
+      setError(questionExplorerErrorMessage(cause, "save_group"));
       throw cause;
     } finally {
       setGroupBusy(false);
@@ -709,7 +710,7 @@ export function QuestionExplorerPanel({
         await reloadProfile(draft.sourceScope);
       })
       .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : "그룹을 삭제하지 못했습니다.");
+        setError(questionExplorerErrorMessage(cause, "delete_group"));
       })
       .finally(() => setGroupBusy(false));
   };
@@ -821,7 +822,7 @@ export function QuestionExplorerPanel({
       setSelectedRunId(runId);
       setWorkspaceView("result");
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : "결과를 불러오지 못했습니다.");
+      setError(questionExplorerErrorMessage(cause, "load_result"));
     } finally {
       setBusy(false);
     }
@@ -857,7 +858,7 @@ export function QuestionExplorerPanel({
         setIssues(result.issues);
       }
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : "응답을 생성하지 못했습니다.");
+      setError(questionExplorerErrorMessage(cause, "generate"));
     } finally {
       setBusy(false);
     }
@@ -872,7 +873,7 @@ export function QuestionExplorerPanel({
       setEditPlan(null);
       await recordRun(result.runId);
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : "생성을 완료하지 못했습니다.");
+      setError(questionExplorerErrorMessage(cause, "complete_generation"));
     } finally {
       setBusy(false);
     }
@@ -909,7 +910,7 @@ export function QuestionExplorerPanel({
       const result = await exportRun(context.run.runId, format);
       if (result.status === "saved") setMessage(`${format.toUpperCase()} 파일을 저장했습니다.`);
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : "결과를 내보내지 못했습니다.");
+      setError(questionExplorerErrorMessage(cause, "export_result"));
     } finally {
       setExportBusy(false);
     }
