@@ -570,6 +570,7 @@ describe("v2 RPC contracts", () => {
             intent: { kind: "relative_percent_delta", value: 0.2 },
           }),
         ]),
+        editPlan: { replacementCount: 1 },
       },
       outcome: { targets: [{ targetId: "t-mean" }] },
       baselines: [
@@ -610,7 +611,6 @@ describe("v2 RPC contracts", () => {
           populationLabel: "행사 관심",
         },
       ],
-      targetSnapshot: { editPlan: { replacementCount: 1 } },
     });
   });
 });
