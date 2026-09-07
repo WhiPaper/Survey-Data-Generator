@@ -119,12 +119,15 @@ export function AppShell() {
     setError(null);
     try {
       setSourceReview(null);
-      const [project, review] = await Promise.all([
-        getProject(projectId),
-        getProjectSourceReview(projectId),
-      ]);
+      const project = await getProject(projectId);
       setSelectedProject(project);
-      setSourceReview(review);
+      if (project) {
+        try {
+          setSourceReview(await getProjectSourceReview(projectId));
+        } catch {
+          setError("프로젝트는 열었지만 확인할 설정 상태를 불러오지 못했습니다.");
+        }
+      }
     } catch (cause: unknown) {
       setError(errorMessage(cause));
     } finally {

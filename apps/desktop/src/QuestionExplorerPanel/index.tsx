@@ -1407,20 +1407,21 @@ export function QuestionExplorerPanel({
                       {question?.title ?? "원본에서 사라진 문항"}
                     </p>
                   </div>
-                  {question ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setSelectedQuestionId(question.id);
-                        setWorkspaceView("setup");
-                        setSourceReviewOpen(false);
-                      }}
-                    >
-                      문항으로 이동
-                    </Button>
-                  ) : (
+                  <div className="flex shrink-0 items-center gap-1">
+                    {question ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setSelectedQuestionId(question.id);
+                          setWorkspaceView("setup");
+                          setSourceReviewOpen(false);
+                        }}
+                      >
+                        문항으로 이동
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       size="sm"
@@ -1433,7 +1434,7 @@ export function QuestionExplorerPanel({
                     >
                       그룹 삭제
                     </Button>
-                  )}
+                  </div>
                 </div>
               );
             })}
