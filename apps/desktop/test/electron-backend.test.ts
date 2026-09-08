@@ -29,6 +29,7 @@ describe("Electron v2 backend shell", () => {
     const projects = {
       list: async () => [],
       get: async (_projectId: string) => null,
+      open: async (_projectId: string) => null,
       sourceReview: async (_projectId: string) => ({
         sourceRevisionId: "revision-1",
         invalidValueGroupIds: [],
@@ -46,6 +47,29 @@ describe("Electron v2 backend shell", () => {
       ),
     ).resolves.toEqual({ ok: true });
     expect(remove).toHaveBeenCalledWith("project-1");
+  });
+
+  it("routes project workspace open separately from read-only get", async () => {
+    const open = vi.fn(async (_projectId: string) => null);
+    const projects = {
+      list: async () => [],
+      get: async (_projectId: string) => null,
+      open,
+      sourceReview: async (_projectId: string) => ({
+        sourceRevisionId: "revision-1",
+        invalidValueGroupIds: [],
+      }),
+      runTargetPresentations: vi.fn(async () => []),
+      delete: async (_projectId: string) => undefined,
+    };
+
+    await expect(
+      handleBackendCall(
+        serialize(createRequest("test_project_open", "projects.open", { projectId: "project-1" })),
+        { projects },
+      ),
+    ).resolves.toBeNull();
+    expect(open).toHaveBeenCalledWith("project-1");
   });
 
   it("uses one source-review path for reopen and explicit refresh diagnostics", async () => {
@@ -69,6 +93,7 @@ describe("Electron v2 backend shell", () => {
     const projects = {
       list: async () => [],
       get: async (_projectId: string) => project,
+      open: async (_projectId: string) => project,
       sourceReview,
       runTargetPresentations: vi.fn(async () => []),
       delete: async (_projectId: string) => undefined,
@@ -176,6 +201,7 @@ describe("Electron v2 backend shell", () => {
     const projects = {
       list: async () => [],
       get: async (_projectId: string) => null,
+      open: async (_projectId: string) => null,
       sourceReview: async (_projectId: string) => ({
         sourceRevisionId: "revision-1",
         invalidValueGroupIds: [],

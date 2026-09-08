@@ -13,10 +13,14 @@ import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
 import { formSnapshots, projects } from "../persistence/schema";
 import {
+  getActiveGoogleAccountId,
   getProject,
+  getRecentProjectIds,
   getSourceRevision,
   listProjects,
   listSourceResponses,
+  recordRecentProject,
+  removeRecentProject,
   type ProjectRecord,
   type SourceRevisionRecord,
 } from "../persistence/store";
@@ -26,6 +30,7 @@ import { buildRunTargetPresentations } from "./run-presentation";
 export interface ProjectService {
   list(): Promise<ProjectSummaryView[]>;
   get(projectId: string): Promise<ProjectDetailView | null>;
+  open(projectId: string): Promise<ProjectDetailView | null>;
   sourceReview(projectId: string): Promise<{
     sourceRevisionId: string;
     invalidValueGroupIds: string[];
@@ -103,17 +108,43 @@ const responseTimestampRange = (
 };
 
 export const createProjectService = ({ db }: CreateProjectServiceOptions): ProjectService => ({
-  list: async () =>
-    listProjects(db).flatMap((project) => {
+  list: async () => {
+    const summaries = listProjects(db).flatMap((project) => {
       const loaded = loadProject(db, project);
       return loaded ? [summary(loaded)] : [];
-    }),
+    });
+    const activeAccountId = getActiveGoogleAccountId(db);
+    if (!activeAccountId) return summaries;
+    const recentRank = new Map(
+      getRecentProjectIds(db, activeAccountId).map(
+        (projectId, index) => [projectId, index] as const,
+      ),
+    );
+    return summaries.sort(
+      (left, right) =>
+        (recentRank.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (recentRank.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+    );
+  },
 
   get: async (projectId) => {
     const project = getProject(db, projectId);
     if (!project) return null;
     const loaded = loadProject(db, project);
     if (!loaded) return null;
+    return {
+      ...summary(loaded),
+      form: loaded.form,
+      responseTimestampRange: responseTimestampRange(db, loaded.revision.id),
+    };
+  },
+
+  open: async (projectId) => {
+    const project = getProject(db, projectId);
+    if (!project) return null;
+    const loaded = loadProject(db, project);
+    if (!loaded) return null;
+    if (project.googleAccountId) recordRecentProject(db, project.googleAccountId, project.id);
     return {
       ...summary(loaded),
       form: loaded.form,
@@ -141,5 +172,6 @@ export const createProjectService = ({ db }: CreateProjectServiceOptions): Proje
     const project = getProject(db, projectId);
     if (!project) throw backendFailure("NOT_FOUND", "Project was not found");
     db.delete(projects).where(eq(projects.id, projectId)).run();
+    if (project.googleAccountId) removeRecentProject(db, project.googleAccountId, project.id);
   },
 });

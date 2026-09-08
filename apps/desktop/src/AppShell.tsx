@@ -20,11 +20,20 @@ import {
   listProjects,
   login,
   logout,
+  openProjectWorkspace,
   pingBackend,
   refreshProjectSource,
 } from "./api/backend";
 import { appShellErrorMessage } from "./appShellError";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -33,7 +42,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { QuestionExplorerPanel } from "./QuestionExplorerPanel";
+import {
+  filterProjectChoices,
+  promoteProjectChoice,
+  recentProjectChoices,
+} from "./projectSwitcher";
 import { recoverAppliedSourceRefresh } from "./sourceRefreshRecovery";
 
 type RuntimeState = "checking" | "ready" | "error";
@@ -49,6 +64,8 @@ export function AppShell() {
   const [projectsBusy, setProjectsBusy] = useState(false);
   const [sourceReview, setSourceReview] = useState<ProjectSourceReviewResult | null>(null);
   const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
+  const [projectSearchOpen, setProjectSearchOpen] = useState(false);
+  const [projectSearchQuery, setProjectSearchQuery] = useState("");
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [formsBusy, setFormsBusy] = useState(false);
   const [importOperationId, setImportOperationId] = useState<string | null>(null);
@@ -111,19 +128,36 @@ export function AppShell() {
       setSelectedProject(null);
       setSourceReview(null);
       setRefreshDialogOpen(false);
+      setProjectSearchOpen(false);
+      setProjectSearchQuery("");
       return;
     }
 
     let active = true;
     setFormsBusy(true);
     setProjectsBusy(true);
+    setSelectedProject(null);
+    setSourceReview(null);
     setError(null);
 
     void Promise.all([listForms(), listProjects()])
-      .then(([formsResult, projectResult]) => {
+      .then(async ([formsResult, projectResult]) => {
         if (!active) return;
         setForms(formsResult.items);
         setProjects(projectResult);
+        const initialProject = projectResult[0];
+        if (!initialProject) return;
+
+        const project = await openProjectWorkspace(initialProject.id);
+        if (!active) return;
+        setSelectedProject(project);
+        if (project) {
+          try {
+            setSourceReview(await getProjectSourceReview(project.id));
+          } catch {
+            if (active) setError("프로젝트는 열었지만 확인할 설정 상태를 불러오지 못했습니다.");
+          }
+        }
       })
       .catch((cause: unknown) => {
         if (active) setError(appShellErrorMessage(cause, "load_home"));
@@ -144,9 +178,10 @@ export function AppShell() {
     setError(null);
     try {
       setSourceReview(null);
-      const project = await getProject(projectId);
+      const project = await openProjectWorkspace(projectId);
       setSelectedProject(project);
       if (project) {
+        setProjects((current) => promoteProjectChoice(current, project.id));
         try {
           setSourceReview(await getProjectSourceReview(projectId));
         } catch {
@@ -270,6 +305,18 @@ export function AppShell() {
     }
   };
 
+  const switchProject = async (projectId: string): Promise<void> => {
+    if (selectedProject?.id === projectId) {
+      setProjectSearchOpen(false);
+      setProjectSearchQuery("");
+      return;
+    }
+    if (selectedProject && !(await flushActiveDraft())) return;
+    await openProject(projectId);
+    setProjectSearchOpen(false);
+    setProjectSearchQuery("");
+  };
+
   const handleProjectChange = async (): Promise<void> => {
     setProjectsBusy(true);
     setError(null);
@@ -277,6 +324,8 @@ export function AppShell() {
       if (!(await flushActiveDraft())) return;
       setSelectedProject(null);
       setSourceReview(null);
+      setProjectSearchOpen(false);
+      setProjectSearchQuery("");
     } finally {
       setProjectsBusy(false);
     }
@@ -303,6 +352,9 @@ export function AppShell() {
       setProjectsBusy(false);
     }
   };
+
+  const recentProjects = recentProjectChoices(projects, selectedProject?.id ?? null);
+  const filteredProjects = filterProjectChoices(projects, projectSearchQuery);
 
   if (runtimeState !== "ready") {
     return (
@@ -335,14 +387,76 @@ export function AppShell() {
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="flex h-12 items-center justify-between border-b px-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="shrink-0 text-sm font-semibold">Survey Data Generator</span>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="hidden shrink-0 text-sm font-semibold sm:inline">
+            Survey Data Generator
+          </span>
           {selectedProject ? (
-            <span className="truncate text-sm text-muted-foreground">{selectedProject.name}</span>
-          ) : null}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="max-w-[280px] justify-start px-2 font-medium"
+                    disabled={projectsBusy || refreshBusy}
+                  >
+                    <span className="truncate">{selectedProject.name}</span>
+                    <span className="shrink-0 text-muted-foreground" aria-hidden="true">
+                      ▾
+                    </span>
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="start" className="min-w-[280px]">
+                <DropdownMenuLabel>최근 프로젝트</DropdownMenuLabel>
+                {recentProjects.length > 0 ? (
+                  recentProjects.map((project) => (
+                    <DropdownMenuItem
+                      key={project.id}
+                      className="items-start py-2"
+                      onClick={() => void switchProject(project.id)}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{project.name}</span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          응답 {project.responseCount}개 · 문항 {project.questionCount}개
+                        </span>
+                      </span>
+                    </DropdownMenuItem>
+                  ))
+                ) : (
+                  <DropdownMenuItem disabled>다른 최근 프로젝트가 없습니다.</DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setProjectSearchOpen(true)}>
+                  프로젝트 검색…
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void handleProjectChange()}>
+                  새 프로젝트
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void handleProjectChange()}>
+                  모든 프로젝트 보기
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <span className="text-sm font-medium">프로젝트</span>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          <span className="hidden text-xs text-muted-foreground sm:inline">
+          {selectedProject ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={refreshBusy}
+              onClick={() => setRefreshDialogOpen(true)}
+            >
+              원본 업데이트
+            </Button>
+          ) : null}
+          <span className="hidden text-xs text-muted-foreground md:inline">
             {session.account.email}
           </span>
           <Button size="sm" variant="ghost" disabled={authBusy} onClick={() => void handleLogout()}>
@@ -352,33 +466,7 @@ export function AppShell() {
       </header>
 
       {selectedProject ? (
-        <div className="mx-auto w-full max-w-[1440px] px-4 py-4">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h1 className="text-base font-semibold">{selectedProject.name}</h1>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                원본 응답 {selectedProject.responseCount}개 · 문항 {selectedProject.questionCount}개
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={refreshBusy}
-                onClick={() => setRefreshDialogOpen(true)}
-              >
-                원본 업데이트
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={projectsBusy || refreshBusy}
-                onClick={() => void handleProjectChange()}
-              >
-                프로젝트 변경
-              </Button>
-            </div>
-          </div>
+        <div className="mx-auto w-full max-w-[1440px] px-4 py-3">
           <QuestionExplorerPanel
             project={selectedProject}
             sourceReview={sourceReview}
@@ -399,7 +487,7 @@ export function AppShell() {
                     type="button"
                     className="min-w-0 text-left"
                     disabled={projectsBusy}
-                    onClick={() => void openProject(project.id)}
+                    onClick={() => void switchProject(project.id)}
                   >
                     <p className="truncate text-sm font-medium">{project.name}</p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
@@ -470,6 +558,53 @@ export function AppShell() {
           </section>
         </div>
       )}
+
+      <Dialog
+        open={projectSearchOpen}
+        onOpenChange={(open) => {
+          setProjectSearchOpen(open);
+          if (!open) setProjectSearchQuery("");
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>프로젝트 검색</DialogTitle>
+            <DialogDescription>
+              최근 프로젝트를 포함해 이 기기에 저장된 프로젝트를 찾습니다.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={projectSearchQuery}
+            onChange={(event) => setProjectSearchQuery(event.target.value)}
+            placeholder="프로젝트 이름 검색"
+          />
+          <div className="max-h-[320px] divide-y overflow-y-auto border-y">
+            {filteredProjects.map((project) => (
+              <button
+                key={project.id}
+                type="button"
+                className="flex w-full items-center justify-between gap-4 py-3 text-left disabled:opacity-50"
+                disabled={projectsBusy || project.id === selectedProject?.id}
+                onClick={() => void switchProject(project.id)}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{project.name}</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    응답 {project.responseCount}개 · 문항 {project.questionCount}개
+                  </span>
+                </span>
+                {project.id === selectedProject?.id ? (
+                  <span className="shrink-0 text-xs text-muted-foreground">현재</span>
+                ) : null}
+              </button>
+            ))}
+            {filteredProjects.length === 0 ? (
+              <p className="py-5 text-sm text-muted-foreground">일치하는 프로젝트가 없습니다.</p>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={refreshDialogOpen} onOpenChange={setRefreshDialogOpen}>
         <DialogContent className="sm:max-w-[520px]">
