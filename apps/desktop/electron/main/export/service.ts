@@ -1,24 +1,38 @@
 import { eq } from "drizzle-orm";
 
-import type { FormSnapshot } from "@survey-synth/domain";
+import type { FormSnapshot, NormalizedResponse } from "@survey-synth/domain";
 
 import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
 import { getRunRecord, listPersistedRunRows } from "../persistence/run-store";
 import { formSnapshots, sourceRevisions } from "../persistence/schema";
+import { listSourceResponses } from "../persistence/store";
 import { writeCsv } from "./csv";
-import { buildLogicalExportTable, type LogicalExportTable } from "./logical-table";
+import {
+  buildLogicalExportTable,
+  type LogicalExportTable,
+  type PersistedExportRow,
+} from "./logical-table";
 import { writeXlsx } from "./xlsx";
 
 export type RunExportFormat = "csv" | "xlsx";
+export type RunExportDataset = "run_scope" | "full_source_revision";
 
 export type RunExportService = {
-  buildTable: (runId: string) => LogicalExportTable;
-  exportTo: (runId: string, format: RunExportFormat, destination: string) => Promise<void>;
+  buildTable: (runId: string, dataset?: RunExportDataset) => LogicalExportTable;
+  exportTo: (
+    runId: string,
+    format: RunExportFormat,
+    destination: string,
+    dataset?: RunExportDataset,
+  ) => Promise<void>;
 };
 
 export const createRunExportService = (db: SurveyDatabase): RunExportService => {
-  const buildTable = (runId: string): LogicalExportTable => {
+  const buildTable = (
+    runId: string,
+    dataset: RunExportDataset = "run_scope",
+  ): LogicalExportTable => {
     const run = getRunRecord(db, runId);
     if (!run) throw backendFailure("NOT_FOUND", "Run not found");
 
@@ -41,14 +55,36 @@ export const createRunExportService = (db: SurveyDatabase): RunExportService => 
     }
 
     const form = JSON.parse(snapshot.schemaJson) as FormSnapshot;
-    const rows = listPersistedRunRows(db, runId);
-    return buildLogicalExportTable(form, rows);
+    const runRows = listPersistedRunRows(db, runId);
+    if (dataset === "run_scope" || run.scopeKind === "all") {
+      return buildLogicalExportTable(form, runRows);
+    }
+
+    if (
+      run.scopeKind !== "submitted_between" ||
+      run.scopeStartMs === null ||
+      run.scopeEndMs === null
+    ) {
+      throw backendFailure("INTERNAL", "Run source scope is incomplete");
+    }
+
+    const untouchedRows: PersistedExportRow[] = listSourceResponses(db, run.sourceRevisionId)
+      .filter(
+        (row) => row.submittedAtMs < run.scopeStartMs! || row.submittedAtMs > run.scopeEndMs!,
+      )
+      .map((row) => ({
+        responseId: row.responseId,
+        submittedAtMs: row.submittedAtMs,
+        response: row.response as NormalizedResponse,
+      }));
+
+    return buildLogicalExportTable(form, [...untouchedRows, ...runRows]);
   };
 
   return {
     buildTable,
-    async exportTo(runId, format, destination) {
-      const table = buildTable(runId);
+    async exportTo(runId, format, destination, dataset = "run_scope") {
+      const table = buildTable(runId, dataset);
       if (format === "csv") await writeCsv(table, destination);
       else await writeXlsx(table, destination);
     },
