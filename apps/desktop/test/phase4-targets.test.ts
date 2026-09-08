@@ -294,4 +294,67 @@ describe("Phase 4 target profile and draft lifecycle", () => {
       ]),
     );
   });
+
+  it("starts a targetless draft when the final count adds responses", async () => {
+    const database = setup();
+    let captured: SynthesisStartParams | null = null;
+    const service = createTargetService(
+      database.db,
+      captureSynthesis((params) => {
+        captured = params;
+      }),
+    );
+    const input: TargetDraft = {
+      projectId: "project-1",
+      finalCount: 4,
+      sourceScope: { kind: "all" },
+      seed: 42,
+      targets: [],
+    };
+
+    await expect(service.saveDraft(input)).resolves.toMatchObject(input);
+    await expect(service.validate(input)).resolves.toEqual({ issues: [] });
+    await service.startDraft("project-1", "targetless-test");
+
+    expect(captured).toMatchObject({
+      projectId: "project-1",
+      finalCount: 4,
+      sourceScope: { kind: "all" },
+      operationId: "targetless-test",
+      targets: [],
+      targetIntents: [],
+    });
+  });
+
+  it("does not start a targetless draft when there are no responses to add", async () => {
+    const database = setup();
+    let captured: SynthesisStartParams | null = null;
+    const service = createTargetService(
+      database.db,
+      captureSynthesis((params) => {
+        captured = params;
+      }),
+    );
+    const input: TargetDraft = {
+      projectId: "project-1",
+      finalCount: 2,
+      sourceScope: { kind: "all" },
+      seed: 42,
+      targets: [],
+    };
+
+    await service.saveDraft(input);
+    await expect(service.startDraft("project-1")).resolves.toMatchObject({
+      status: "infeasible",
+      issues: [
+        {
+          targetIds: [],
+          code: "out_of_range",
+          message:
+            "Targetless generation requires the final count to exceed the source response count",
+        },
+      ],
+    });
+    expect(captured).toBeNull();
+  });
 });

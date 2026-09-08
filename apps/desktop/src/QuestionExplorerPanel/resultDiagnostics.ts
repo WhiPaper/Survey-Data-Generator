@@ -5,6 +5,9 @@ const datePart = (value: string): string => value.slice(0, 10);
 export const resultSourceScopeLabel = (scope: SourceScope): string =>
   scope.kind === "all" ? "전체 응답" : `${datePart(scope.start)} ~ ${datePart(scope.end)}`;
 
+export const resultTargetNotice = (run: Pick<RunsGetResult, "outcome">): string | null =>
+  run.outcome.targets.length === 0 ? "설정한 분포 목표가 없습니다." : null;
+
 export const resultDiagnosticsLines = (run: RunsGetResult): string[] => {
   const diagnostics = run.diagnostics;
   const replacement =
