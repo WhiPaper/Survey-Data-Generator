@@ -74,15 +74,18 @@ const form = {
   },
 } as unknown as FormSnapshot;
 
-const response = {
-  responseId: "response-1",
-  answers: {
-    q1: { state: "answered", value: { kind: "ordinal", value: 4 } },
-    q2: { state: "answered", value: { kind: "text", value: "=1+1" } },
-  },
-  origin: "synthetic",
-  path: { questions: {}, confidence: "certain" },
-} as unknown as NormalizedResponse;
+const makeResponse = (id: string, score: number, memo: string): NormalizedResponse =>
+  ({
+    responseId: id,
+    answers: {
+      q1: { state: "answered", value: { kind: "ordinal", value: score } },
+      q2: { state: "answered", value: { kind: "text", value: memo } },
+    },
+    origin: "synthetic",
+    path: { questions: {}, confidence: "certain" },
+  }) as unknown as NormalizedResponse;
+
+const response = makeResponse("response-1", 4, "=1+1");
 
 const seedRun = (database: AppDatabase): void => {
   createProject(database.db, {
@@ -147,5 +150,82 @@ describe("M9 saved Run export", () => {
     expect(sheet.getCell("C2").value).toBe("'=1+1");
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
     expect(sheet.autoFilter).toBeTruthy();
+  });
+
+  it("can compose a submitted-time Run back into its frozen full source revision", () => {
+    const { database } = makeDatabase();
+    createProject(database.db, {
+      id: "project-1",
+      name: "한국어 설문",
+      googleFormId: "form-1",
+      nowMs: 1,
+    });
+
+    const beforeMs = Date.UTC(2026, 7, 31, 23, 0, 0);
+    const insideMs = Date.UTC(2026, 8, 1, 12, 0, 0);
+    const afterMs = Date.UTC(2026, 8, 2, 1, 0, 0);
+    const scopeStartMs = Date.UTC(2026, 8, 1, 0, 0, 0);
+    const scopeEndMs = Date.UTC(2026, 8, 1, 23, 59, 59, 999);
+
+    createSourceRevision(database.db, {
+      projectId: "project-1",
+      revisionId: "revision-1",
+      importedAtMs: 2,
+      responseSetHash: "hash",
+      formSnapshot: {
+        id: "snapshot-1",
+        title: form.title,
+        schema: form,
+        schemaHash: form.schemaHash,
+      },
+      responses: [
+        { responseId: "before", submittedAtMs: beforeMs, response: makeResponse("before", 2, "before") },
+        { responseId: "inside", submittedAtMs: insideMs, response: makeResponse("inside", 3, "inside") },
+        { responseId: "after", submittedAtMs: afterMs, response: makeResponse("after", 5, "after") },
+      ],
+    });
+
+    persistRun(database.db, {
+      id: "run-1",
+      projectId: "project-1",
+      sourceRevisionId: "revision-1",
+      scope: {
+        kind: "submitted_between",
+        startMs: scopeStartMs,
+        endMs: scopeEndMs,
+        responseCount: 1,
+        responseSetHash: "scope-hash",
+      },
+      finalResponseCount: 2,
+      target: {
+        finalCount: 2,
+        sourceScope: {
+          kind: "submitted_between",
+          start: new Date(scopeStartMs).toISOString(),
+          end: new Date(scopeEndMs).toISOString(),
+        },
+        targets: [],
+      },
+      seed: 7,
+      engineReport: {},
+      rows: [
+        {
+          responseId: "inside",
+          submittedAtMs: insideMs,
+          origin: "original",
+          response: makeResponse("inside", 3, "inside"),
+        },
+        {
+          responseId: "synthetic-1",
+          submittedAtMs: Date.UTC(2026, 8, 1, 18, 0, 0),
+          origin: "synthetic",
+          response: makeResponse("synthetic-1", 4, "generated"),
+        },
+      ],
+    });
+
+    const service = createRunExportService(database.db);
+    expect(service.buildTable("run-1").rows).toHaveLength(2);
+    expect(service.buildTable("run-1", "full_source_revision").rows).toHaveLength(4);
   });
 });
