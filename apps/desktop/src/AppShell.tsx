@@ -60,8 +60,16 @@ import {
 } from "./newProject";
 import { accountSettingsRows } from "./accountSettings";
 import { recoverAppliedSourceRefresh } from "./sourceRefreshRecovery";
+import {
+  accountRevokeConfirmationCopy,
+  projectDeleteConfirmationCopy,
+} from "./destructiveConfirmation";
 
 type RuntimeState = "checking" | "ready" | "error";
+
+type DestructiveConfirmation =
+  | { kind: "project"; project: ProjectSummaryView }
+  | { kind: "revoke"; account: GoogleAccountListItem };
 
 export function AppShell() {
   const [runtimeState, setRuntimeState] = useState<RuntimeState>("checking");
@@ -87,6 +95,8 @@ export function AppShell() {
   const [importOperationId, setImportOperationId] = useState<string | null>(null);
   const [importingFormId, setImportingFormId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [destructiveConfirmation, setDestructiveConfirmation] =
+    useState<DestructiveConfirmation | null>(null);
   const activeDraftFlushRef = useRef<(() => Promise<void>) | null>(null);
 
   const registerDraftFlush = useCallback((flush: (() => Promise<void>) | null): void => {
@@ -305,14 +315,6 @@ export function AppShell() {
 
   const handleRevokeAccount = async (account: GoogleAccountListItem): Promise<void> => {
     if (!account.connected) return;
-    if (
-      !window.confirm(
-        `“${account.email}” Google 연결을 해제할까요? 이 기기의 프로젝트와 생성 결과는 삭제되지 않습니다.`,
-      )
-    ) {
-      return;
-    }
-
     const current = account.id === session?.account.id;
     if (current && !(await flushActiveDraft())) return;
     setAuthBusy(true);
@@ -467,14 +469,6 @@ export function AppShell() {
   };
 
   const handleDeleteProject = async (project: ProjectSummaryView): Promise<void> => {
-    if (
-      !window.confirm(
-        `“${project.name}” 프로젝트를 삭제할까요? Google Form 원본은 변경되지 않습니다.`,
-      )
-    ) {
-      return;
-    }
-
     setProjectsBusy(true);
     setError(null);
     try {
@@ -494,6 +488,13 @@ export function AppShell() {
   const newProjectNameError = newProjectFormId
     ? projectNameValidationMessage(newProjectName)
     : null;
+  const destructiveBusy = authBusy || accountsBusy || projectsBusy;
+  const destructiveConfirmationCopy =
+    destructiveConfirmation?.kind === "project"
+      ? projectDeleteConfirmationCopy(destructiveConfirmation.project.name)
+      : destructiveConfirmation
+        ? accountRevokeConfirmationCopy(destructiveConfirmation.account.email)
+        : null;
 
   if (runtimeState !== "ready") {
     return (
@@ -651,7 +652,7 @@ export function AppShell() {
                     size="sm"
                     variant="ghost"
                     disabled={projectsBusy}
-                    onClick={() => void handleDeleteProject(project)}
+                    onClick={() => setDestructiveConfirmation({ kind: "project", project })}
                   >
                     삭제
                   </Button>
@@ -715,7 +716,9 @@ export function AppShell() {
                         variant="ghost"
                         className="text-destructive"
                         disabled={authBusy || accountsBusy}
-                        onClick={() => void handleRevokeAccount(account.account)}
+                        onClick={() =>
+                          setDestructiveConfirmation({ kind: "revoke", account: account.account })
+                        }
                       >
                         연결 해제
                       </Button>
@@ -947,6 +950,46 @@ export function AppShell() {
               onClick={() => void handleRefreshProject()}
             >
               {refreshBusy ? "가져오는 중…" : "업데이트"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={destructiveConfirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && !destructiveBusy) setDestructiveConfirmation(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>{destructiveConfirmationCopy?.title}</DialogTitle>
+            <DialogDescription>{destructiveConfirmationCopy?.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={destructiveBusy}
+              onClick={() => setDestructiveConfirmation(null)}
+            >
+              취소
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={destructiveBusy || destructiveConfirmation === null}
+              onClick={() => {
+                if (!destructiveConfirmation) return;
+                if (destructiveConfirmation.kind === "project") {
+                  void handleDeleteProject(destructiveConfirmation.project);
+                } else {
+                  void handleRevokeAccount(destructiveConfirmation.account);
+                }
+                setDestructiveConfirmation(null);
+              }}
+            >
+              {destructiveConfirmationCopy?.actionLabel}
             </Button>
           </DialogFooter>
         </DialogContent>
