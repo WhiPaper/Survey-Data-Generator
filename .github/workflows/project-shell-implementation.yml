@@ -1,0 +1,63 @@
+name: project-shell-implementation
+
+on:
+  push:
+    branches:
+      - product/project-switcher-shell
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: product/project-switcher-shell
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python .github/project_shell_patch.py
+      - run: pnpm install --frozen-lockfile
+      - name: Format changed TypeScript
+        run: |
+          pnpm exec prettier --write \
+            packages/contracts/src/protocol.ts \
+            apps/desktop/electron/main/persistence/store.ts \
+            apps/desktop/electron/main/projects/service.ts \
+            apps/desktop/electron/main/backend.ts \
+            apps/desktop/src/api/backend.ts \
+            apps/desktop/src/AppShell.tsx \
+            apps/desktop/src/projectSwitcher.ts \
+            apps/desktop/test/project-service.test.ts \
+            apps/desktop/test/electron-backend.test.ts \
+            apps/desktop/test/project-switcher.test.ts
+      - run: pnpm run check
+      - run: python -m pip install -r engine/requirements.txt
+      - run: pnpm run engine:test
+      - name: Commit verified implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            packages/contracts/src/protocol.ts \
+            apps/desktop/electron/main/persistence/store.ts \
+            apps/desktop/electron/main/projects/service.ts \
+            apps/desktop/electron/main/backend.ts \
+            apps/desktop/src/api/backend.ts \
+            apps/desktop/src/AppShell.tsx \
+            apps/desktop/src/projectSwitcher.ts \
+            apps/desktop/test/project-service.test.ts \
+            apps/desktop/test/electron-backend.test.ts \
+            apps/desktop/test/project-switcher.test.ts
+          git commit -m "feat: add project workspace switcher"
+          git push origin HEAD:product/project-switcher-shell
