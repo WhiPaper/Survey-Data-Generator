@@ -914,8 +914,13 @@ export function QuestionExplorerPanel({
       };
       const errorMessage = errorObject?.backendError?.message;
       const errorCategory =
-        errorObject?.backendError?.code ?? errorObject?.code ??
-        (cause instanceof Error ? cause.name : typeof cause === "string" ? "string_error" : "unknown");
+        errorObject?.backendError?.code ??
+        errorObject?.code ??
+        (cause instanceof Error
+          ? cause.name
+          : typeof cause === "string"
+            ? "string_error"
+            : "unknown");
       console.error("generation_failed", {
         phase: "start",
         errorCategory,
@@ -1470,13 +1475,15 @@ export function QuestionExplorerPanel({
               >
                 <SelectTrigger className="w-full">
                   <SelectValue>
-                    {({
-                      absolute_share: "최종 비율",
-                      percentage_point_delta: "현재보다 %p 변경",
-                      relative_percent_delta: "현재 비율에서 % 변경",
-                      absolute_count: "최종 인원수",
-                      count_delta: "현재보다 인원수 변경",
-                    } as Record<string, string>)[mode] ?? "목표 선택"}
+                    {(
+                      {
+                        absolute_share: "최종 비율",
+                        percentage_point_delta: "현재보다 %p 변경",
+                        relative_percent_delta: "현재 비율에서 % 변경",
+                        absolute_count: "최종 인원수",
+                        count_delta: "현재보다 인원수 변경",
+                      } as Record<string, string>
+                    )[mode] ?? "목표 선택"}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
