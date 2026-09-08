@@ -728,8 +728,18 @@ export const createTargetService = (
     if (draft.finalCount === null || !Number.isInteger(draft.finalCount) || draft.finalCount <= 0) {
       issues.push(targetIssue([], "out_of_range", "Final count must be a positive integer"));
     }
-    if (draft.targets.length === 0) {
-      issues.push(targetIssue([], "domain_unsupported", "At least one target is required"));
+    if (
+      draft.targets.length === 0 &&
+      draft.finalCount !== null &&
+      draft.finalCount <= context.responses.length
+    ) {
+      issues.push(
+        targetIssue(
+          [],
+          "out_of_range",
+          "Targetless generation requires the final count to exceed the source response count",
+        ),
+      );
     }
     const resolved: SynthesisTarget[] = [];
     for (const target of draft.targets) {

@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { resultDiagnosticsLines } from "./resultDiagnostics";
+import { resultDiagnosticsLines, resultTargetNotice } from "./resultDiagnostics";
 import { runBaselineValue } from "./runBaseline";
 import { runIntentLabel } from "./runIntent";
 import { runPresentationLabel } from "./runPresentation";
@@ -56,6 +56,8 @@ export function ResultView({
     );
   }
 
+  const targetNotice = resultTargetNotice(context.run);
+
   return (
     <div className="mx-auto max-w-[850px] px-8 py-8">
       <div className="flex items-center justify-between gap-4 border-b pb-5">
@@ -95,6 +97,7 @@ export function ResultView({
       </div>
 
       <div className="divide-y">
+        {targetNotice ? <p className="py-5 text-sm text-muted-foreground">{targetNotice}</p> : null}
         {context.run.outcome.targets.map((outcome) => {
           const baseline = context.run.baselines.find(
             (candidate) => String(candidate.targetId) === String(outcome.targetId),

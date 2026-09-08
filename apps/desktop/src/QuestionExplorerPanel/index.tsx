@@ -58,6 +58,7 @@ import { ResultView, type RunContext } from "./ResultView";
 import { TextInspector } from "./TextInspector";
 import { createDraftSaveCoordinator } from "./draftSaveCoordinator";
 import { editPlanOutcomeValue } from "./editPlanPresentation";
+import { generationBlockReason } from "./generationPolicy";
 import { resolvedCountForMode, targetKindForMode, targetModeAllowed } from "./targetModePolicy";
 import { questionPopulationText } from "./questionPopulation";
 import { questionExplorerErrorMessage } from "./userFacingError";
@@ -373,7 +374,13 @@ export function QuestionExplorerPanel({
 
   const sourceCount = profile?.responseCount ?? project.responseCount;
   const finalCount = draft.finalCount;
-  const finalCountInvalid = finalCount === null || finalCount < sourceCount;
+  const generationBlock = generationBlockReason({
+    sourceCount,
+    finalCount,
+    targetCount: draft.targets.length,
+  });
+  const finalCountInvalid = generationBlock === "final_count_below_source";
+  const noAdditionalResponses = generationBlock === "no_additions";
   const additions = finalCountInvalid || finalCount === null ? null : finalCount - sourceCount;
 
   const directTarget = editing ? subjectTarget(draft.targets, editing) : undefined;
@@ -1270,10 +1277,11 @@ export function QuestionExplorerPanel({
               원본 <span className="tabular-nums">{sourceCount}명</span>
               {additions !== null ? ` · +${additions}명 · 최종 ${finalCount}명` : ""}
               {` · ${draft.targets.length > 0 ? `목표 ${draft.targets.length}개` : "목표 없음"}`}
+              {noAdditionalResponses ? " · 추가로 생성할 응답이 없습니다." : ""}
             </p>
             <Button
               type="button"
-              disabled={busy || finalCountInvalid || draft.targets.length === 0}
+              disabled={busy || generationBlock !== null}
               onClick={() => void generate()}
             >
               {busy ? "설정 확인 중…" : "생성"}
