@@ -665,7 +665,8 @@ export const RunTargetSnapshotSchema = z
   .object({
     finalCount: z.number().int().positive(),
     sourceScope: SourceScopeSchema,
-    targets: z.array(FrozenRunTargetSchema).min(1),
+    // Targetless runs are valid; the snapshot preserves an empty target set.
+    targets: z.array(FrozenRunTargetSchema),
     scoreMappings: z.array(LikertScoreMappingSchema).default([]),
     editPlan: EditPlanPreviewSchema.optional(),
   })
