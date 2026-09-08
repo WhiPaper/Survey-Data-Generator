@@ -719,7 +719,8 @@ const profile = (
         const metric = subjectMetric(context, groups, subject);
         if (metric) metrics.push({ kind: "subject", subject, ...metric });
       }
-    } else if (question.kind === "ordinal" || scoreMappingFor(scoreMappings, String(question.id))) {
+    }
+    if (question.kind === "ordinal" || scoreMappingFor(scoreMappings, String(question.id))) {
       const metric = meanMetric(context, String(question.id), scoreMappings);
       if (metric) metrics.push({ kind: "mean", questionId: String(question.id), ...metric });
       const distribution = ordinalDistributionMetric(context, String(question.id), scoreMappings);
