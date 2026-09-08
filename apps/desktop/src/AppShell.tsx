@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -556,25 +557,27 @@ export function AppShell() {
                 }
               />
               <DropdownMenuContent align="start" className="min-w-[280px]">
-                <DropdownMenuLabel>최근 프로젝트</DropdownMenuLabel>
-                {recentProjects.length > 0 ? (
-                  recentProjects.map((project) => (
-                    <DropdownMenuItem
-                      key={project.id}
-                      className="items-start py-2"
-                      onClick={() => void switchProject(project.id)}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{project.name}</span>
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          응답 {project.responseCount}개 · 문항 {project.questionCount}개
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>최근 프로젝트</DropdownMenuLabel>
+                  {recentProjects.length > 0 ? (
+                    recentProjects.map((project) => (
+                      <DropdownMenuItem
+                        key={project.id}
+                        className="items-start py-2"
+                        onClick={() => void switchProject(project.id)}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">{project.name}</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">
+                            응답 {project.responseCount}개 · 문항 {project.questionCount}개
+                          </span>
                         </span>
-                      </span>
-                    </DropdownMenuItem>
-                  ))
-                ) : (
-                  <DropdownMenuItem disabled>다른 최근 프로젝트가 없습니다.</DropdownMenuItem>
-                )}
+                      </DropdownMenuItem>
+                    ))
+                  ) : (
+                    <DropdownMenuItem disabled>다른 최근 프로젝트가 없습니다.</DropdownMenuItem>
+                  )}
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => setProjectSearchOpen(true)}>
                   프로젝트 검색…

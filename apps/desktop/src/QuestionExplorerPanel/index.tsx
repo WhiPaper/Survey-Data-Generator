@@ -908,6 +908,11 @@ export function QuestionExplorerPanel({
         setIssues(result.issues);
       }
     } catch (cause: unknown) {
+      const errorCategory =
+        typeof cause === "object" && cause !== null && "code" in cause
+          ? String((cause as { code?: unknown }).code ?? "unknown")
+          : "unknown";
+      console.error("generation_failed", { phase: "start", errorCategory });
       setError(questionExplorerErrorMessage(cause, "generate"));
     } finally {
       setBusy(false);
