@@ -11,6 +11,7 @@ import {
 } from "@survey-synth/domain";
 
 import { backendFailure } from "../errors";
+import type { LikertScoreMapping } from "@survey-synth/contracts";
 import type { StoredSourceResponse } from "../persistence/store";
 
 export const RESPONSE_ID_COLUMN = "response_id";
@@ -21,6 +22,7 @@ const ORIGIN_COLUMN = "__origin";
 
 export type FlatTablePlan = {
   targetScoreColumns: ReadonlyMap<QuestionId, string>;
+  scoreMappings: ReadonlyMap<QuestionId, LikertScoreMapping>;
   questionColumns: ReadonlyMap<QuestionId, string>;
 };
 
@@ -63,21 +65,31 @@ const asNormalizedResponse = (value: unknown): NormalizedResponse => {
   return value as NormalizedResponse;
 };
 
-const targetScore = (response: NormalizedResponse, questionId: QuestionId): number | null => {
+const targetScore = (
+  response: NormalizedResponse,
+  questionId: QuestionId,
+  mapping?: LikertScoreMapping,
+): number | null => {
   const slot = response.answers[questionId];
   if (!slot) {
     throw backendFailure("INTERNAL", `Stored response is missing question ${questionId}`);
   }
   if (slot.state !== "answered") return null;
-  if (slot.value.kind !== "ordinal") {
+  if (slot.value.kind === "ordinal") return slot.value.value;
+  if (slot.value.kind === "single_choice" && mapping) {
+    const optionKey = String(slot.value.optionKey);
+    const score = mapping.optionScores.find((entry) => entry.optionKey === optionKey)?.score;
+    if (score !== undefined) return score;
+  }
+  {
     throw backendFailure("INTERNAL", `Stored response has a non-ordinal value for ${questionId}`);
   }
-  return slot.value.value;
 };
 
 export const createFlatTablePlan = (
   form: FormSnapshot,
   targetQuestionIds: readonly QuestionId[],
+  scoreMappings: ReadonlyMap<QuestionId, LikertScoreMapping> = new Map(),
 ): FlatTablePlan => {
   const targetIds = new Set(targetQuestionIds);
   const targetScoreColumns = new Map<QuestionId, string>();
@@ -93,7 +105,7 @@ export const createFlatTablePlan = (
     questionColumns.set(question.id, `q_${index}`);
     index += 1;
   }
-  return { targetScoreColumns, questionColumns };
+  return { targetScoreColumns, scoreMappings, questionColumns };
 };
 
 const valueGroupMemberKey = (slot: AnswerSlot | undefined): string | null => {
@@ -302,7 +314,9 @@ export const writeSourceParquet = async (
       },
       ...[...plan.targetScoreColumns].map(([questionId, column]) => ({
         name: column,
-        data: normalized.map(({ response }) => targetScore(response, questionId)),
+        data: normalized.map(({ response }) =>
+          targetScore(response, questionId, plan.scoreMappings.get(questionId)),
+        ),
         type: "DOUBLE" as const,
         nullable: true,
       })),
@@ -429,7 +443,26 @@ const syntheticResponse = (
     const score = typeof scoreValue === "number" ? scoreValue : Number(scoreValue);
     if (!Number.isFinite(score) || !Number.isInteger(score))
       throw backendFailure("INTERNAL", "Synthetic result contains an invalid ordinal score");
-    provisional[questionId] = { state: "answered", value: { kind: "ordinal", value: score } };
+    const mapping = plan.scoreMappings.get(questionId);
+    if (mapping) {
+      const question = form.questions.find((candidate) => candidate.id === questionId);
+      const option =
+        question?.kind === "single_choice"
+          ? question.options.find(
+              (candidate) =>
+                String(candidate.key) ===
+                mapping.optionScores.find((entry) => entry.score === score)?.optionKey,
+            )
+          : undefined;
+      if (!option)
+        throw backendFailure("INTERNAL", "Synthetic result contains an unmapped Likert score");
+      provisional[questionId] = {
+        state: "answered",
+        value: { kind: "single_choice", optionKey: option.key, label: option.label },
+      };
+    } else {
+      provisional[questionId] = { state: "answered", value: { kind: "ordinal", value: score } };
+    }
   }
 
   for (const [questionId, column] of plan.questionColumns) {

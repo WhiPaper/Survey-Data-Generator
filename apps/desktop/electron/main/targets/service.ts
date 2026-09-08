@@ -10,6 +10,7 @@ import type {
   TargetDraftTarget,
   TargetDraftView,
   TargetIssue,
+  LikertScoreMapping,
   TargetProfileResult,
   TargetsValidateResult,
 } from "@survey-synth/contracts";
@@ -160,6 +161,71 @@ const answers = (responses: readonly StoredSourceResponse[], questionId: string)
 const eligible = (slot: AnswerSlot | undefined): boolean =>
   slot?.state === "answered" || slot?.state === "skipped";
 
+const scoreMappingFor = (
+  mappings: readonly LikertScoreMapping[] | undefined,
+  questionId: string,
+): LikertScoreMapping | undefined => mappings?.find((mapping) => mapping.questionId === questionId);
+
+const scoreBounds = (
+  question: FormSnapshot["questions"][number] | undefined,
+  mapping: LikertScoreMapping | undefined,
+): { min: number; max: number } | null => {
+  if (question?.kind === "ordinal") return { min: question.min, max: question.max };
+  if (question?.kind !== "single_choice" || !mapping) return null;
+  const keys = new Set(mapping.optionScores.map((entry) => entry.optionKey));
+  const scores = new Set(mapping.optionScores.map((entry) => entry.score));
+  if (
+    keys.size !== 5 ||
+    scores.size !== 5 ||
+    [1, 2, 3, 4, 5].some((score) => !scores.has(score)) ||
+    question.options.length !== 5 ||
+    question.options.some((option) => !keys.has(String(option.key)))
+  ) {
+    return null;
+  }
+  return { min: 1, max: 5 };
+};
+
+const normalizeLikertLabel = (value: string): string =>
+  value.trim().replaceAll(/\s+/g, " ").toLocaleLowerCase();
+
+const supportedLikertLabels = [
+  ["매우 그렇다", "그렇다", "보통이다", "그렇지 않다", "전혀 그렇지 않다"],
+  ["Strongly Agree", "Agree", "Neutral", "Disagree", "Strongly Disagree"],
+  ["非常认同", "比较认同", "一般", "比较不认同", "非常不认同"],
+  [
+    "非常にそう思う",
+    "ややそう思う",
+    "どちらともいえない",
+    "あまりそう思わない",
+    "全くそう思わない",
+  ],
+] as const;
+
+const isRecognizedLikertMapping = (
+  question: FormSnapshot["questions"][number] | undefined,
+  mapping: LikertScoreMapping | undefined,
+): boolean => {
+  if (
+    question?.kind !== "single_choice" ||
+    question.affectsNavigation ||
+    !mapping ||
+    !scoreBounds(question, mapping)
+  )
+    return false;
+  const byKey = new Map(
+    question.options.map((option) => [String(option.key), normalizeLikertLabel(option.label)]),
+  );
+  return supportedLikertLabels.some((labels) =>
+    labels.every((label, index) =>
+      mapping.optionScores.some(
+        (entry) =>
+          entry.score === 5 - index && byKey.get(entry.optionKey) === normalizeLikertLabel(label),
+      ),
+    ),
+  );
+};
+
 const subjectMetric = (
   context: ScopeContext,
   groups: readonly ValueGroupRecord[],
@@ -246,12 +312,21 @@ const subjectMetric = (
 const meanMetric = (
   context: ScopeContext,
   questionId: string,
+  mappings?: readonly LikertScoreMapping[],
 ): { mean: number; denominatorCount: number } | null => {
   const question = context.form.questions.find((candidate) => candidate.id === questionId);
-  if (!question || question.kind !== "ordinal") return null;
+  const mapping = scoreMappingFor(mappings, questionId);
+  if (!scoreBounds(question, mapping)) return null;
+  if (!question) return null;
+  const scores = new Map(mapping?.optionScores.map((entry) => [entry.optionKey, entry.score]));
   const values: number[] = [];
   for (const slot of answers(context.responses, question.id)) {
-    if (slot?.state === "answered" && slot.value.kind === "ordinal") values.push(slot.value.value);
+    if (slot?.state !== "answered") continue;
+    if (slot.value.kind === "ordinal") values.push(slot.value.value);
+    if (slot.value.kind === "single_choice") {
+      const score = scores.get(String(slot.value.optionKey));
+      if (score !== undefined) values.push(score);
+    }
   }
   return {
     mean: values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length,
@@ -262,21 +337,32 @@ const meanMetric = (
 const ordinalDistributionMetric = (
   context: ScopeContext,
   questionId: string,
+  mappings?: readonly LikertScoreMapping[],
 ): {
   denominatorCount: number;
   values: Array<{ value: number; count: number; share: number }>;
 } | null => {
   const question = context.form.questions.find((candidate) => candidate.id === questionId);
-  if (!question || question.kind !== "ordinal") return null;
+  const mapping = scoreMappingFor(mappings, questionId);
+  const bounds = scoreBounds(question, mapping);
+  if (!question || !bounds) return null;
+  const scores = new Map(mapping?.optionScores.map((entry) => [entry.optionKey, entry.score]));
   const counts = new Map<number, number>();
   let denominatorCount = 0;
   for (const slot of answers(context.responses, question.id)) {
-    if (slot?.state !== "answered" || slot.value.kind !== "ordinal") continue;
+    if (slot?.state !== "answered") continue;
+    const value =
+      slot.value.kind === "ordinal"
+        ? slot.value.value
+        : slot.value.kind === "single_choice"
+          ? scores.get(String(slot.value.optionKey))
+          : undefined;
+    if (value === undefined) continue;
     denominatorCount += 1;
-    counts.set(slot.value.value, (counts.get(slot.value.value) ?? 0) + 1);
+    counts.set(value, (counts.get(value) ?? 0) + 1);
   }
   const values: Array<{ value: number; count: number; share: number }> = [];
-  for (let value = Math.ceil(question.min); value <= Math.floor(question.max); value += 1) {
+  for (let value = Math.ceil(bounds.min); value <= Math.floor(bounds.max); value += 1) {
     const count = counts.get(value) ?? 0;
     values.push({
       value,
@@ -371,7 +457,12 @@ const validateDraft = (
       const question = context.form.questions.find(
         (candidate) => candidate.id === target.questionId,
       );
-      if (!question || question.kind !== "ordinal") {
+      const bounds = scoreBounds(question, target.scoreMapping);
+      if (
+        !bounds ||
+        (question?.kind === "single_choice" &&
+          !isRecognizedLikertMapping(question, target.scoreMapping))
+      ) {
         issues.push(
           targetIssue([id], "invalid_subject", "Mean target must reference an ordinal question"),
         );
@@ -379,7 +470,7 @@ const validateDraft = (
         issues.push(
           targetIssue([id], "domain_unsupported", "Mean targets support absolute intent only"),
         );
-      } else if (target.intent.value < question.min || target.intent.value > question.max) {
+      } else if (target.intent.value < bounds.min || target.intent.value > bounds.max) {
         issues.push(
           targetIssue([id], "out_of_range", "Mean target is outside the ordinal question range"),
         );
@@ -524,6 +615,7 @@ const resolveTarget = (
       kind: "mean",
       questionId: target.questionId,
       value: target.intent.value,
+      ...(target.scoreMapping ? { scoreMapping: target.scoreMapping } : {}),
     };
   }
 
@@ -600,6 +692,7 @@ const profile = (
   db: SurveyDatabase,
   projectId: string,
   sourceScope?: SourceScope,
+  scoreMappings?: readonly LikertScoreMapping[],
 ): TargetProfileResult => {
   const context = scopeContext(db, projectId, sourceScope);
   const groups = projectGroups(db, projectId);
@@ -626,10 +719,10 @@ const profile = (
         const metric = subjectMetric(context, groups, subject);
         if (metric) metrics.push({ kind: "subject", subject, ...metric });
       }
-    } else if (question.kind === "ordinal") {
-      const metric = meanMetric(context, String(question.id));
+    } else if (question.kind === "ordinal" || scoreMappingFor(scoreMappings, String(question.id))) {
+      const metric = meanMetric(context, String(question.id), scoreMappings);
       if (metric) metrics.push({ kind: "mean", questionId: String(question.id), ...metric });
-      const distribution = ordinalDistributionMetric(context, String(question.id));
+      const distribution = ordinalDistributionMetric(context, String(question.id), scoreMappings);
       if (distribution) {
         metrics.push({
           kind: "ordinal_distribution",
@@ -681,7 +774,11 @@ const profile = (
 };
 
 export interface TargetService {
-  profile(projectId: string, sourceScope?: SourceScope): Promise<TargetProfileResult>;
+  profile(
+    projectId: string,
+    sourceScope?: SourceScope,
+    scoreMappings?: LikertScoreMapping[],
+  ): Promise<TargetProfileResult>;
   validate(draft: TargetDraft): Promise<TargetsValidateResult>;
   getDraft(projectId: string): Promise<TargetDraftView | null>;
   saveDraft(draft: TargetDraft): Promise<TargetDraftView>;
@@ -692,7 +789,8 @@ export const createTargetService = (
   db: SurveyDatabase,
   synthesis: SynthesisService,
 ): TargetService => ({
-  profile: async (projectId, sourceScope) => profile(db, projectId, sourceScope),
+  profile: async (projectId, sourceScope, scoreMappings) =>
+    profile(db, projectId, sourceScope, scoreMappings),
 
   validate: async (draft) => ({ issues: validateDraft(db, draft).issues }),
 
@@ -753,6 +851,9 @@ export const createTargetService = (
       projectId,
       finalCount: draft.finalCount!,
       targets: resolved,
+      scoreMappings: draft.targets.flatMap((target) =>
+        target.kind === "mean" && target.scoreMapping ? [target.scoreMapping] : [],
+      ),
       targetIntents: draft.targets.flatMap((target) =>
         target.intent ? [{ targetId: target.id, intent: target.intent }] : [],
       ),

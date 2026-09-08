@@ -480,7 +480,13 @@ export const createSynthesisService = ({
       const form = loadForm(db, revision.formSnapshotId);
       for (const mean of means) {
         const question = form.questions.find((candidate) => candidate.id === mean.questionId);
-        if (!question || question.kind !== "ordinal") {
+        const bounds =
+          question?.kind === "ordinal"
+            ? { min: question.min, max: question.max }
+            : question?.kind === "single_choice" && mean.scoreMapping
+              ? { min: 1, max: 5 }
+              : null;
+        if (!bounds) {
           return {
             status: "infeasible",
             issues: [
@@ -488,7 +494,7 @@ export const createSynthesisService = ({
             ],
           };
         }
-        if (mean.value < question.min || mean.value > question.max) {
+        if (mean.value < bounds.min || mean.value > bounds.max) {
           return {
             status: "infeasible",
             issues: [
@@ -500,6 +506,11 @@ export const createSynthesisService = ({
       const plan = createFlatTablePlan(
         form,
         means.map((mean) => mean.questionId as QuestionId),
+        new Map(
+          means.flatMap((mean) =>
+            mean.scoreMapping ? [[mean.questionId as QuestionId, mean.scoreMapping] as const] : [],
+          ),
+        ),
       );
       const shareJobTargets: Array<{
         id: string;
@@ -807,6 +818,7 @@ export const createSynthesisService = ({
         finalCount: params.finalCount,
         sourceScope: scope.sourceScope,
         targets: frozenTargets,
+        scoreMappings: params.scoreMappings ?? [],
       };
 
       const operationId = params.operationId ?? `synthesis-${randomUUID()}`;
@@ -834,7 +846,13 @@ export const createSynthesisService = ({
                 const question = form.questions.find(
                   (candidate) => candidate.id === mean.questionId,
                 );
-                if (!question || question.kind !== "ordinal") {
+                const bounds =
+                  question?.kind === "ordinal"
+                    ? { min: question.min, max: question.max }
+                    : question?.kind === "single_choice" && mean.scoreMapping
+                      ? { min: 1, max: 5 }
+                      : null;
+                if (!bounds) {
                   throw backendFailure("INTERNAL", "Validated mean question was lost");
                 }
                 const column = plan.targetScoreColumns.get(mean.questionId as QuestionId);
@@ -848,8 +866,8 @@ export const createSynthesisService = ({
                   id: String(mean.id),
                   column,
                   value: mean.value,
-                  minimum: question.min,
-                  maximum: question.max,
+                  minimum: bounds.min,
+                  maximum: bounds.max,
                 };
               }),
               count_targets: countJobTargets,

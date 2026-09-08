@@ -9,6 +9,7 @@ import {
   type FormsListResult,
   type GoogleAccountId,
   type GoogleAccountListItem,
+  type LikertScoreMapping,
   parseRpcResult,
   type ProjectDetailView,
   type ProjectSourceRefreshResult,
@@ -213,11 +214,16 @@ export const deleteValueGroup = (
 export const getTargetProfile = (
   projectId: string,
   sourceScope?: SourceScope,
+  scoreMappings?: LikertScoreMapping[],
   backend?: BackendInvoker,
 ): Promise<TargetProfileResult> =>
   callBackend(
     "targets.profile",
-    { projectId, ...(sourceScope === undefined ? {} : { sourceScope }) },
+    {
+      projectId,
+      ...(sourceScope === undefined ? {} : { sourceScope }),
+      ...(scoreMappings === undefined ? {} : { scoreMappings }),
+    },
     backend,
   );
 export const validateTargetDraft = (

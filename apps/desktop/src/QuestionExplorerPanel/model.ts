@@ -16,6 +16,7 @@ export type QuestionView = {
   options: Array<{ key: string; label: string }>;
   min?: number;
   max?: number;
+  affectsNavigation?: boolean;
 };
 
 export type SubjectKind = "option" | "checkbox_option" | "value_group";
@@ -68,6 +69,7 @@ export const projectQuestions = (project: ProjectDetailView): QuestionView[] => 
         options,
         ...(typeof question.min === "number" ? { min: question.min } : {}),
         ...(typeof question.max === "number" ? { max: question.max } : {}),
+        ...(question.affectsNavigation === true ? { affectsNavigation: true } : {}),
       },
     ];
   });
