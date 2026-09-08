@@ -8,7 +8,7 @@ import {
   type FormsListParams,
   type FormsListResult,
   type GoogleAccountId,
-  type GoogleAccountView,
+  type GoogleAccountListItem,
   parseRpcResult,
   type ProjectDetailView,
   type ProjectSourceRefreshResult,
@@ -111,7 +111,7 @@ export const getSession = (backend?: BackendInvoker): Promise<SessionView | null
   callBackend("session.get", {}, backend);
 export const login = (backend?: BackendInvoker): Promise<SessionView> =>
   callBackend("auth.login", {}, backend);
-export const getAccounts = (backend?: BackendInvoker): Promise<GoogleAccountView[]> =>
+export const getAccounts = (backend?: BackendInvoker): Promise<GoogleAccountListItem[]> =>
   callBackend("auth.accounts", {}, backend);
 export const addAccount = (backend?: BackendInvoker): Promise<SessionView> =>
   callBackend("auth.addAccount", {}, backend);

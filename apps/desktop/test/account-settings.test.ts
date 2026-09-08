@@ -1,30 +1,37 @@
 import { describe, expect, it } from "vitest";
 
-import type { GoogleAccountView } from "@survey-synth/contracts";
+import type { GoogleAccountListItem } from "@survey-synth/contracts";
 
 import { accountSettingsRows } from "../src/accountSettings";
 
-const account = (id: string, email: string, displayName?: string): GoogleAccountView => ({
+const account = (
+  id: string,
+  email: string,
+  connected = true,
+  displayName?: string,
+): GoogleAccountListItem => ({
   id,
   email,
+  connected,
   ...(displayName === undefined ? {} : { displayName }),
 });
 
 describe("account settings rows", () => {
-  it("preserves backend account order and marks the active account", () => {
+  it("preserves backend account order, connection state, and the active account", () => {
     const rows = accountSettingsRows(
-      [account("second", "second@example.com"), account("first", "first@example.com")],
+      [account("second", "second@example.com", false), account("first", "first@example.com", true)],
       "first",
     );
 
     expect(rows.map((row) => row.id)).toEqual(["second", "first"]);
+    expect(rows.map((row) => row.connected)).toEqual([false, true]);
     expect(rows.map((row) => row.current)).toEqual([false, true]);
   });
 
   it("uses display metadata without hiding the Google email", () => {
     const [named, unnamed] = accountSettingsRows(
       [
-        account("named", "named@example.com", "  Research Team  "),
+        account("named", "named@example.com", true, "  Research Team  "),
         account("plain", "plain@example.com"),
       ],
       null,

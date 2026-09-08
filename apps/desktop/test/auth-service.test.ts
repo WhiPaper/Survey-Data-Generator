@@ -72,6 +72,14 @@ describe("Google auth service", () => {
     expect(refreshTokens.values.get("google-sub-1")).toBe("refresh-1");
     expect(getActiveGoogleAccountId(database.db)).toBe("google-sub-1");
     expect(getGoogleAccount(database.db, "google-sub-1")?.email).toBe("user@example.com");
+    await expect(service.getAccounts()).resolves.toEqual([
+      {
+        id: "google-sub-1",
+        email: "user@example.com",
+        displayName: "Survey User",
+        connected: true,
+      },
+    ]);
 
     const restored = createGoogleAuthService({
       db: database.db,
@@ -125,6 +133,14 @@ describe("Google auth service", () => {
     expect(refreshTokens.values.has("google-sub-1")).toBe(false);
     expect(getActiveGoogleAccountId(database.db)).toBeNull();
     expect(getGoogleAccount(database.db, "google-sub-1")).not.toBeNull();
+    await expect(service.getAccounts()).resolves.toEqual([
+      {
+        id: "google-sub-1",
+        email: "user@example.com",
+        displayName: "Survey User",
+        connected: false,
+      },
+    ]);
     await expect(service.getSession()).resolves.toBeNull();
   });
 });

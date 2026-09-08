@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   FormListItem,
-  GoogleAccountView,
+  GoogleAccountListItem,
   ProjectDetailView,
   ProjectSourceReviewResult,
   ProjectSummaryView,
@@ -67,7 +67,7 @@ export function AppShell() {
   const [message, setMessage] = useState("앱을 준비하고 있습니다…");
   const [session, setSession] = useState<SessionView | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
-  const [accounts, setAccounts] = useState<GoogleAccountView[]>([]);
+  const [accounts, setAccounts] = useState<GoogleAccountListItem[]>([]);
   const [accountsBusy, setAccountsBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [forms, setForms] = useState<FormListItem[]>([]);
@@ -285,7 +285,7 @@ export function AppShell() {
     }
   };
 
-  const handleSwitchAccount = async (account: GoogleAccountView): Promise<void> => {
+  const handleSwitchAccount = async (account: GoogleAccountListItem): Promise<void> => {
     if (account.id === session?.account.id) return;
     if (selectedProject && !(await flushActiveDraft())) return;
     setAuthBusy(true);
@@ -654,6 +654,8 @@ export function AppShell() {
                   </div>
                   {account.current ? (
                     <span className="shrink-0 text-xs text-muted-foreground">현재 계정</span>
+                  ) : !account.connected ? (
+                    <span className="shrink-0 text-xs text-muted-foreground">다시 연결 필요</span>
                   ) : (
                     <Button
                       type="button"
@@ -673,6 +675,11 @@ export function AppShell() {
                 <p className="py-5 text-sm text-muted-foreground">저장된 Google 계정이 없습니다.</p>
               ) : null}
             </div>
+            {accountRows.some((account) => !account.connected) ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                다시 연결이 필요한 계정은 Google 계정 추가에서 연결하세요.
+              </p>
+            ) : null}
             <Button
               type="button"
               className="mt-3"
