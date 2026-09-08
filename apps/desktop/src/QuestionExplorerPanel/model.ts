@@ -43,7 +43,7 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
     : null;
 
 export const projectQuestions = (project: ProjectDetailView): QuestionView[] => {
-  const values = Array.isArray(project.form.questions) ? project.form.questions : [];
+  const values = Array.isArray(project.form?.questions) ? project.form.questions : [];
   return values.flatMap((value) => {
     const question = asRecord(value);
     if (!question || typeof question.id !== "string") return [];

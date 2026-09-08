@@ -449,7 +449,13 @@ export function AppShell() {
       return;
     }
     if (selectedProject && !(await flushActiveDraft())) return;
-    await openProject(projectId);
+    try {
+      await openProject(projectId);
+    } catch (cause: unknown) {
+      // Keep menu interaction failures inside the shell so a rejected async
+      // click handler cannot surface as a blank renderer.
+      setError(appShellErrorMessage(cause, "open_project"));
+    }
     setProjectSearchOpen(false);
     setProjectSearchQuery("");
   };

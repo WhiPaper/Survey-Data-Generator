@@ -278,7 +278,7 @@ export function QuestionExplorerPanel({
               finalCount: saved.finalCount,
               sourceScope: saved.sourceScope,
               seed: saved.seed,
-              targets: saved.targets,
+              targets: Array.isArray(saved.targets) ? saved.targets : [],
             }
           : {
               projectId: project.id,
