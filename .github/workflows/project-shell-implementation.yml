@@ -26,6 +26,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Narrow project-change patch anchor
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/project_shell_patch.py")
+          text = path.read_text(encoding="utf-8")
+          old = """replace_once(
+              \"apps/desktop/src/AppShell.tsx\",
+              '''      setSelectedProject(null);\\n      setSourceReview(null);\\n''',
+              '''      setSelectedProject(null);\\n      setSourceReview(null);\\n      setProjectSearchOpen(false);\\n      setProjectSearchQuery(\"\");\\n''',
+          )"""
+          new = """replace_once(
+              \"apps/desktop/src/AppShell.tsx\",
+              '''      if (!(await flushActiveDraft())) return;\\n      setSelectedProject(null);\\n      setSourceReview(null);\\n''',
+              '''      if (!(await flushActiveDraft())) return;\\n      setSelectedProject(null);\\n      setSourceReview(null);\\n      setProjectSearchOpen(false);\\n      setProjectSearchQuery(\"\");\\n''',
+          )"""
+          if text.count(old) != 1:
+              raise RuntimeError(f"project-change patch anchor count: {text.count(old)}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
       - run: python .github/project_shell_patch.py
       - run: pnpm install --frozen-lockfile
       - name: Format changed TypeScript
