@@ -532,18 +532,21 @@ describe("v2 RPC contracts", () => {
           {
             targetId: "t-mean",
             questionId: "q-score",
+            questionOrder: 0,
             questionTitle: "만족도",
             subjectLabel: "만족도",
           },
           {
             targetId: "t-share",
             questionId: "q-choice",
+            questionOrder: 1,
             questionTitle: "관심 분야",
             subjectLabel: "행사 관심",
           },
           {
             targetId: "t-conditional",
             questionId: "q-checkbox",
+            questionOrder: 2,
             questionTitle: "선호 채널",
             subjectLabel: "음악",
             populationLabel: "행사 관심",
@@ -594,18 +597,21 @@ describe("v2 RPC contracts", () => {
         {
           targetId: "t-mean",
           questionId: "q-score",
+          questionOrder: 0,
           questionTitle: "만족도",
           subjectLabel: "만족도",
         },
         {
           targetId: "t-share",
           questionId: "q-choice",
+          questionOrder: 1,
           questionTitle: "관심 분야",
           subjectLabel: "행사 관심",
         },
         {
           targetId: "t-conditional",
           questionId: "q-checkbox",
+          questionOrder: 2,
           questionTitle: "선호 채널",
           subjectLabel: "음악",
           populationLabel: "행사 관심",

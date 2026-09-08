@@ -18,6 +18,7 @@ import { resultDiagnosticsLines, resultTargetNotice } from "./resultDiagnostics"
 import { runBaselineValue } from "./runBaseline";
 import { runIntentLabel } from "./runIntent";
 import { runPresentationLabel } from "./runPresentation";
+import { resultTargetGroups } from "./resultTargetGroups";
 import { outcomeValue, type QuestionView } from "./model";
 
 export type RunContext = {
@@ -57,6 +58,7 @@ export function ResultView({
   }
 
   const targetNotice = resultTargetNotice(context.run);
+  const targetGroups = resultTargetGroups(context.run.outcome.targets, context.run.presentations);
 
   return (
     <div className="mx-auto max-w-[850px] px-8 py-8">
@@ -98,53 +100,61 @@ export function ResultView({
 
       <div className="divide-y">
         {targetNotice ? <p className="py-5 text-sm text-muted-foreground">{targetNotice}</p> : null}
-        {context.run.outcome.targets.map((outcome) => {
-          const baseline = context.run.baselines.find(
-            (candidate) => String(candidate.targetId) === String(outcome.targetId),
-          );
-          const presentation = context.run.presentations.find(
-            (candidate) => String(candidate.targetId) === String(outcome.targetId),
-          );
-          const frozenTarget = context.run.targetSnapshot.targets.find(
-            (candidate) => String(candidate.id) === String(outcome.targetId),
-          );
-          const label = runPresentationLabel(presentation);
-          const difference =
-            outcome.kind === "share" || outcome.kind === "conditional_share"
-              ? `${(outcome.absoluteError * 100).toFixed(1)}%p`
-              : outcome.absoluteError.toFixed(2);
-          const questionId =
-            presentation && questions.some((question) => question.id === presentation.questionId)
-              ? presentation.questionId
-              : null;
+        {targetGroups.map((group) => (
+          <section key={group.questionId} className="py-5">
+            <h3 className="text-sm font-medium">{group.questionTitle}</h3>
+            <div className="mt-3 space-y-4">
+              {group.outcomes.map((outcome) => {
+                const baseline = context.run.baselines.find(
+                  (candidate) => String(candidate.targetId) === String(outcome.targetId),
+                );
+                const presentation = context.run.presentations.find(
+                  (candidate) => String(candidate.targetId) === String(outcome.targetId),
+                );
+                const frozenTarget = context.run.targetSnapshot.targets.find(
+                  (candidate) => String(candidate.id) === String(outcome.targetId),
+                );
+                const label = runPresentationLabel(presentation);
+                const difference =
+                  outcome.kind === "share" || outcome.kind === "conditional_share"
+                    ? `${(outcome.absoluteError * 100).toFixed(1)}%p`
+                    : outcome.absoluteError.toFixed(2);
+                const questionId =
+                  presentation &&
+                  questions.some((question) => question.id === presentation.questionId)
+                    ? presentation.questionId
+                    : null;
 
-          return (
-            <div key={String(outcome.targetId)} className="py-5">
-              <button
-                type="button"
-                className="text-left text-sm font-medium hover:underline"
-                disabled={!questionId}
-                onClick={() => questionId && onEditTarget(questionId)}
-              >
-                {label}
-              </button>
-              <p className="mt-2 text-base tabular-nums">
-                현재 {runBaselineValue(baseline)} → {runIntentLabel(frozenTarget?.intent, outcome)}{" "}
-                → 결과 {outcomeValue(outcome)}
-              </p>
-              {!outcome.exact ? (
-                <p className="mt-1 text-sm text-muted-foreground">목표와 {difference} 차이</p>
-              ) : null}
-              {outcome.kind === "conditional_share" &&
-              outcome.numeratorCount !== undefined &&
-              outcome.denominatorCount !== undefined ? (
-                <p className="mt-1 text-xs tabular-nums text-muted-foreground">
-                  {outcome.numeratorCount}/{outcome.denominatorCount}명
-                </p>
-              ) : null}
+                return (
+                  <div key={String(outcome.targetId)}>
+                    <button
+                      type="button"
+                      className="text-left text-sm font-medium hover:underline"
+                      disabled={!questionId}
+                      onClick={() => questionId && onEditTarget(questionId)}
+                    >
+                      {label}
+                    </button>
+                    <p className="mt-2 text-base tabular-nums">
+                      현재 {runBaselineValue(baseline)} →{" "}
+                      {runIntentLabel(frozenTarget?.intent, outcome)} → 결과 {outcomeValue(outcome)}
+                    </p>
+                    {!outcome.exact ? (
+                      <p className="mt-1 text-sm text-muted-foreground">목표와 {difference} 차이</p>
+                    ) : null}
+                    {outcome.kind === "conditional_share" &&
+                    outcome.numeratorCount !== undefined &&
+                    outcome.denominatorCount !== undefined ? (
+                      <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+                        {outcome.numeratorCount}/{outcome.denominatorCount}명
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
+          </section>
+        ))}
       </div>
 
       <div className="mt-6 border-t pt-4 text-xs text-muted-foreground">
