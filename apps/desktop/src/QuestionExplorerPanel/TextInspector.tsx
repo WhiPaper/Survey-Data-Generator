@@ -24,6 +24,7 @@ import {
   type EditingTarget,
   type QuestionView,
 } from "./model";
+import { RAW_VALUE_PAGE_SIZE, rawValuePage as paginateRawValues } from "./rawValueList";
 
 type GroupDraft = {
   group: ValueGroupView | null;
@@ -57,6 +58,7 @@ export function TextInspector({
   onDeleteGroup,
 }: TextInspectorProps) {
   const [query, setQuery] = useState("");
+  const [visibleRawValueCount, setVisibleRawValueCount] = useState(RAW_VALUE_PAGE_SIZE);
   const [groupQuery, setGroupQuery] = useState("");
   const [draft, setDraft] = useState<GroupDraft | null>(null);
 
@@ -71,6 +73,10 @@ export function TextInspector({
     if (!normalized) return values;
     return values.filter((value) => value.label.toLocaleLowerCase().includes(normalized));
   }, [groupQuery, values]);
+  const rawValuesPage = useMemo(
+    () => paginateRawValues(filteredValues, visibleRawValueCount),
+    [filteredValues, visibleRawValueCount],
+  );
 
   const openGroup = (group: ValueGroupView | null) => {
     setDraft({
@@ -177,12 +183,15 @@ export function TextInspector({
           <h3 className="text-sm font-medium">원본 응답 값</h3>
           <Input
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setVisibleRawValueCount(RAW_VALUE_PAGE_SIZE);
+            }}
             placeholder="응답 값 검색..."
             className="mt-3 h-8"
           />
           <div className="mt-2 max-h-[360px] divide-y overflow-y-auto">
-            {filteredValues.slice(0, 80).map((value) => (
+            {rawValuesPage.items.map((value) => (
               <div
                 key={value.value}
                 className="flex items-center justify-between gap-3 py-2 text-sm"
@@ -195,6 +204,28 @@ export function TextInspector({
               <p className="py-4 text-sm text-muted-foreground">일치하는 응답 값이 없습니다.</p>
             ) : null}
           </div>
+          {filteredValues.length > 0 ? (
+            <div className="mt-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <p>
+                {rawValuesPage.hasMore
+                  ? `처음 ${rawValuesPage.items.length}개 표시 · 검색하면 전체 응답 값에서 찾습니다.`
+                  : `${filteredValues.length}개 응답 값`}
+              </p>
+              {rawValuesPage.hasMore ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2"
+                  onClick={() =>
+                    setVisibleRawValueCount((current) => current + RAW_VALUE_PAGE_SIZE)
+                  }
+                >
+                  더 보기
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </section>
       </div>
 
