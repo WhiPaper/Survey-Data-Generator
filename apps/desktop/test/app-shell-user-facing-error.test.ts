@@ -17,7 +17,15 @@ describe("App shell user-facing errors", () => {
 
     expect(startup).toBe("앱을 시작하지 못했습니다. 다시 실행해주세요.");
     expect(imported).toBe("Google Form을 가져오지 못했습니다.");
-    expect(`${startup} ${imported}`).not.toMatch(/Backend|SourceRevision|SourceScope|engine/);
+    const switchAccount = appShellErrorMessage(
+      new Error("credential provider implementation detail"),
+      "switch_account",
+    );
+
+    expect(switchAccount).toBe("Google 계정을 전환하지 못했습니다.");
+    expect(`${startup} ${imported} ${switchAccount}`).not.toMatch(
+      /Backend|SourceRevision|SourceScope|engine|credential provider/,
+    );
   });
 
   it("shares safe actionable copy for structured account and service errors", () => {

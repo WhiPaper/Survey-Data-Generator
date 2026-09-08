@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   FormListItem,
+  GoogleAccountView,
   ProjectDetailView,
   ProjectSourceReviewResult,
   ProjectSummaryView,
@@ -9,9 +10,11 @@ import type {
 } from "@survey-synth/contracts";
 
 import {
+  addAccount,
   cancelFormImport,
   deleteProject,
   getProject,
+  getAccounts,
   getProjectSourceReview,
   getSession,
   importFormProject,
@@ -22,6 +25,7 @@ import {
   openProjectWorkspace,
   pingBackend,
   refreshProjectSource,
+  switchAccount,
 } from "./api/backend";
 import { appShellErrorMessage } from "./appShellError";
 import { Button } from "@/components/ui/button";
@@ -53,6 +57,7 @@ import {
   normalizeProjectName,
   projectNameValidationMessage,
 } from "./newProject";
+import { accountSettingsRows } from "./accountSettings";
 import { recoverAppliedSourceRefresh } from "./sourceRefreshRecovery";
 
 type RuntimeState = "checking" | "ready" | "error";
@@ -62,6 +67,9 @@ export function AppShell() {
   const [message, setMessage] = useState("앱을 준비하고 있습니다…");
   const [session, setSession] = useState<SessionView | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
+  const [accounts, setAccounts] = useState<GoogleAccountView[]>([]);
+  const [accountsBusy, setAccountsBusy] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [forms, setForms] = useState<FormListItem[]>([]);
   const [projects, setProjects] = useState<ProjectSummaryView[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectDetailView | null>(null);
@@ -134,6 +142,8 @@ export function AppShell() {
       setSelectedProject(null);
       setSourceReview(null);
       setRefreshDialogOpen(false);
+      setSettingsOpen(false);
+      setAccounts([]);
       setProjectSearchOpen(false);
       setProjectSearchQuery("");
       setNewProjectOpen(false);
@@ -222,12 +232,73 @@ export function AppShell() {
     try {
       if (!(await flushActiveDraft())) return;
       await logout();
+      setSettingsOpen(false);
       setSession(null);
       setSelectedProject(null);
     } catch (cause: unknown) {
       setError(appShellErrorMessage(cause, "logout"));
     } finally {
       setAuthBusy(false);
+    }
+  };
+
+  const openSettings = async (): Promise<void> => {
+    setSettingsOpen(true);
+    setAccountsBusy(true);
+    setError(null);
+    try {
+      setAccounts(await getAccounts());
+    } catch (cause: unknown) {
+      setError(appShellErrorMessage(cause, "load_accounts"));
+    } finally {
+      setAccountsBusy(false);
+    }
+  };
+
+  const resetWorkspaceAfterAccountChange = (): void => {
+    setSelectedProject(null);
+    setSourceReview(null);
+    setProjectSearchOpen(false);
+    setProjectSearchQuery("");
+    setNewProjectOpen(false);
+    setNewProjectFormId(null);
+    setNewProjectName("");
+    setSettingsOpen(false);
+  };
+
+  const handleAddAccount = async (): Promise<void> => {
+    if (selectedProject && !(await flushActiveDraft())) return;
+    setAuthBusy(true);
+    setAccountsBusy(true);
+    setError(null);
+    try {
+      const nextSession = await addAccount();
+      const changed = nextSession.account.id !== session?.account.id;
+      setSession(nextSession);
+      if (changed) resetWorkspaceAfterAccountChange();
+      else setSettingsOpen(false);
+    } catch (cause: unknown) {
+      setError(appShellErrorMessage(cause, "add_account"));
+    } finally {
+      setAuthBusy(false);
+      setAccountsBusy(false);
+    }
+  };
+
+  const handleSwitchAccount = async (account: GoogleAccountView): Promise<void> => {
+    if (account.id === session?.account.id) return;
+    if (selectedProject && !(await flushActiveDraft())) return;
+    setAuthBusy(true);
+    setAccountsBusy(true);
+    setError(null);
+    try {
+      setSession(await switchAccount(account.id));
+      resetWorkspaceAfterAccountChange();
+    } catch (cause: unknown) {
+      setError(appShellErrorMessage(cause, "switch_account"));
+    } finally {
+      setAuthBusy(false);
+      setAccountsBusy(false);
     }
   };
 
@@ -381,6 +452,7 @@ export function AppShell() {
 
   const recentProjects = recentProjectChoices(projects, selectedProject?.id ?? null);
   const filteredProjects = filterProjectChoices(projects, projectSearchQuery);
+  const accountRows = accountSettingsRows(accounts, session?.account.id ?? null);
   const newProjectNameError = newProjectFormId
     ? projectNameValidationMessage(newProjectName)
     : null;
@@ -486,8 +558,14 @@ export function AppShell() {
           <span className="hidden text-xs text-muted-foreground md:inline">
             {session.account.email}
           </span>
-          <Button size="sm" variant="ghost" disabled={authBusy} onClick={() => void handleLogout()}>
-            로그아웃
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={authBusy}
+            onClick={() => void openSettings()}
+          >
+            설정
           </Button>
         </div>
       </header>
@@ -548,6 +626,84 @@ export function AppShell() {
           </section>
         </div>
       )}
+
+      <Dialog
+        open={settingsOpen}
+        onOpenChange={(open) => {
+          if (authBusy) return;
+          setSettingsOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>설정</DialogTitle>
+            <DialogDescription>Google 계정을 추가하거나 전환할 수 있습니다.</DialogDescription>
+          </DialogHeader>
+          <div>
+            <p className="text-sm font-medium">Google 계정</p>
+            <div className="mt-2 divide-y border-y">
+              {accountRows.map((account) => (
+                <div key={account.id} className="flex items-center justify-between gap-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{account.primaryLabel}</p>
+                    {account.secondaryLabel ? (
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {account.secondaryLabel}
+                      </p>
+                    ) : null}
+                  </div>
+                  {account.current ? (
+                    <span className="shrink-0 text-xs text-muted-foreground">현재 계정</span>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={authBusy || accountsBusy}
+                      onClick={() => void handleSwitchAccount(account.account)}
+                    >
+                      전환
+                    </Button>
+                  )}
+                </div>
+              ))}
+              {accountsBusy && accountRows.length === 0 ? (
+                <p className="py-5 text-sm text-muted-foreground">계정을 불러오는 중…</p>
+              ) : !accountsBusy && accountRows.length === 0 ? (
+                <p className="py-5 text-sm text-muted-foreground">저장된 Google 계정이 없습니다.</p>
+              ) : null}
+            </div>
+            <Button
+              type="button"
+              className="mt-3"
+              size="sm"
+              variant="outline"
+              disabled={authBusy || accountsBusy}
+              onClick={() => void handleAddAccount()}
+            >
+              {authBusy ? "연결 중…" : "Google 계정 추가"}
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={authBusy}
+              onClick={() => void handleLogout()}
+            >
+              로그아웃
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={authBusy}
+              onClick={() => setSettingsOpen(false)}
+            >
+              닫기
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={newProjectOpen}
