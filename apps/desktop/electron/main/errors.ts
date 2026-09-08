@@ -14,7 +14,7 @@ export const backendFailure = (
 ): BackendFailure => new BackendFailure({ code, message, recoverable });
 
 export const normalizeBackendError = (error: unknown): BackendError => {
-  if (error instanceof BackendFailure && error.backendError.code !== "INTERNAL") {
+  if (error instanceof BackendFailure) {
     return error.backendError;
   }
   return {
