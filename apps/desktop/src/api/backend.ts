@@ -106,7 +106,7 @@ export const callBackend = async <M extends RpcMethod>(
     if (error instanceof BackendClientError) throw error;
     if (error instanceof Error && error.name === "ZodError") {
       throw new BackendClientError(
-        structuredError("INTERNAL", "Backend returned an invalid response"),
+        structuredError("INTERNAL", `Backend returned an invalid response: ${error.message}`),
       );
     }
     throw new BackendClientError(normalizeError(error));
