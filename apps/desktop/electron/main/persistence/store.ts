@@ -17,6 +17,11 @@ export type ProjectRecord = typeof projects.$inferSelect;
 export type SourceRevisionRecord = typeof sourceRevisions.$inferSelect;
 
 const ACTIVE_GOOGLE_ACCOUNT_PREFERENCE = "auth.activeGoogleAccountId";
+const RECENT_PROJECTS_PREFERENCE_PREFIX = "workspace.recentProjectIds.";
+const MAX_RECENT_PROJECTS = 12;
+
+const recentProjectsPreferenceKey = (accountId: string): string =>
+  `${RECENT_PROJECTS_PREFERENCE_PREFIX}${accountId}`;
 
 export type UpsertGoogleAccountInput = {
   /** Google OpenID Connect `sub`. Google is the only provider, so it is also our stable local id. */
@@ -105,6 +110,81 @@ export const setActiveGoogleAccountId = (
       set: { valueJson: JSON.stringify(accountId), updatedAtMs: nowMs },
     })
     .run();
+};
+
+export const getRecentProjectIds = (db: SurveyDatabase, accountId: string): string[] => {
+  const row = db
+    .select()
+    .from(preferences)
+    .where(eq(preferences.key, recentProjectsPreferenceKey(accountId)))
+    .get();
+  if (!row) return [];
+
+  try {
+    const value = JSON.parse(row.valueJson) as unknown;
+    if (!Array.isArray(value)) return [];
+    return [
+      ...new Set(
+        value.filter((item): item is string => typeof item === "string" && item.length > 0),
+      ),
+    ].slice(0, MAX_RECENT_PROJECTS);
+  } catch {
+    return [];
+  }
+};
+
+const writeRecentProjectIds = (
+  db: SurveyDatabase,
+  accountId: string,
+  projectIds: readonly string[],
+  nowMs = Date.now(),
+): void => {
+  const key = recentProjectsPreferenceKey(accountId);
+  const normalized = [...new Set(projectIds.filter((projectId) => projectId.length > 0))].slice(
+    0,
+    MAX_RECENT_PROJECTS,
+  );
+  if (normalized.length === 0) {
+    db.delete(preferences).where(eq(preferences.key, key)).run();
+    return;
+  }
+
+  db.insert(preferences)
+    .values({ key, valueJson: JSON.stringify(normalized), updatedAtMs: nowMs })
+    .onConflictDoUpdate({
+      target: preferences.key,
+      set: { valueJson: JSON.stringify(normalized), updatedAtMs: nowMs },
+    })
+    .run();
+};
+
+export const recordRecentProject = (
+  db: SurveyDatabase,
+  accountId: string,
+  projectId: string,
+  nowMs = Date.now(),
+): void => {
+  const current = getRecentProjectIds(db, accountId);
+  writeRecentProjectIds(
+    db,
+    accountId,
+    [projectId, ...current.filter((candidate) => candidate !== projectId)],
+    nowMs,
+  );
+};
+
+export const removeRecentProject = (
+  db: SurveyDatabase,
+  accountId: string,
+  projectId: string,
+  nowMs = Date.now(),
+): void => {
+  writeRecentProjectIds(
+    db,
+    accountId,
+    getRecentProjectIds(db, accountId).filter((candidate) => candidate !== projectId),
+    nowMs,
+  );
 };
 
 export type CreateProjectInput = {

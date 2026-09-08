@@ -792,6 +792,7 @@ export interface BackendRpc {
   "forms.import.cancel": { input: FormsImportCancelParams; output: ActionResult };
   "projects.list": { input: z.infer<typeof EmptyParamsSchema>; output: ProjectSummaryView[] };
   "projects.get": { input: z.infer<typeof ProjectParamsSchema>; output: ProjectDetailView | null };
+  "projects.open": { input: z.infer<typeof ProjectParamsSchema>; output: ProjectDetailView | null };
   "projects.sourceReview": {
     input: z.infer<typeof ProjectParamsSchema>;
     output: ProjectSourceReviewResult;
@@ -859,6 +860,7 @@ const rpcMethods = [
   "forms.import.cancel",
   "projects.list",
   "projects.get",
+  "projects.open",
   "projects.sourceReview",
   "projects.refreshSource",
   "projects.delete",
@@ -907,6 +909,7 @@ const rpcParamSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "forms.import.cancel": FormsImportCancelParamsSchema,
   "projects.list": EmptyParamsSchema,
   "projects.get": ProjectParamsSchema,
+  "projects.open": ProjectParamsSchema,
   "projects.sourceReview": ProjectParamsSchema,
   "projects.refreshSource": ProjectSourceRefreshParamsSchema,
   "projects.delete": ProjectParamsSchema,
@@ -942,6 +945,7 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "forms.import.cancel": ActionResultSchema,
   "projects.list": z.array(ProjectSummarySchema),
   "projects.get": ProjectDetailSchema.nullable(),
+  "projects.open": ProjectDetailSchema.nullable(),
   "projects.sourceReview": ProjectSourceReviewResultSchema,
   "projects.refreshSource": ProjectSourceRefreshResultSchema,
   "projects.delete": ActionResultSchema,

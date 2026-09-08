@@ -135,6 +135,8 @@ export const handleBackendCall = async (
       return requireProjects(services).list();
     case "projects.get":
       return requireProjects(services).get((request.params as { projectId: string }).projectId);
+    case "projects.open":
+      return requireProjects(services).open((request.params as { projectId: string }).projectId);
     case "projects.sourceReview":
       return sourceReviewForProject(services, (request.params as { projectId: string }).projectId);
     case "projects.refreshSource": {

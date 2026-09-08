@@ -158,6 +158,10 @@ export const getProject = (
   projectId: string,
   backend?: BackendInvoker,
 ): Promise<ProjectDetailView | null> => callBackend("projects.get", { projectId }, backend);
+export const openProjectWorkspace = (
+  projectId: string,
+  backend?: BackendInvoker,
+): Promise<ProjectDetailView | null> => callBackend("projects.open", { projectId }, backend);
 export const getProjectSourceReview = (
   projectId: string,
   backend?: BackendInvoker,

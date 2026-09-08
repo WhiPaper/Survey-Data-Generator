@@ -9,6 +9,8 @@ import { openAppDatabase, type AppDatabase } from "../electron/main/persistence/
 import {
   createImportedProject,
   createSourceRevision,
+  getRecentProjectIds,
+  setActiveGoogleAccountId,
   upsertGoogleAccount,
 } from "../electron/main/persistence/store";
 import { createProjectService } from "../electron/main/projects/service";
@@ -177,6 +179,47 @@ describe("project service", () => {
         subjectLabel: "Original A",
       },
     ]);
+  });
+
+  it("persists workspace recency and uses it for project ordering", async () => {
+    const database = createDatabase();
+    seedImportedProject(database);
+    createImportedProject(database.db, {
+      projectId: "project-2",
+      revisionId: "revision-2",
+      formSnapshotId: "snapshot-2",
+      name: "Later survey",
+      googleAccountId: "google-sub-1",
+      googleFormId: "form-2",
+      importedAtMs: 3000,
+      responseSetHash: "response-set-2",
+      formSnapshot: {
+        title: "Later survey",
+        schemaHash: "schema-2",
+        capturedAtMs: 3000,
+        schema: { title: "Later survey", questions: [] },
+      },
+      responses: [],
+    });
+    setActiveGoogleAccountId(database.db, "google-sub-1", 3500);
+    const service = createProjectService({ db: database.db });
+
+    await expect(service.list().then((items) => items.map((item) => item.id))).resolves.toEqual([
+      "project-2",
+      "project-1",
+    ]);
+
+    await expect(service.open("project-1")).resolves.toMatchObject({ id: "project-1" });
+    expect(getRecentProjectIds(database.db, "google-sub-1")).toEqual(["project-1"]);
+    await expect(service.get("project-2")).resolves.toMatchObject({ id: "project-2" });
+
+    const recreatedService = createProjectService({ db: database.db });
+    await expect(
+      recreatedService.list().then((items) => items.map((item) => item.id)),
+    ).resolves.toEqual(["project-1", "project-2"]);
+
+    await recreatedService.delete("project-1");
+    expect(getRecentProjectIds(database.db, "google-sub-1")).toEqual([]);
   });
 
   it("deletes a project and its persisted source graph", async () => {
