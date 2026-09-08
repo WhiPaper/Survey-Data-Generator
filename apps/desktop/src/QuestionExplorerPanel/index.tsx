@@ -911,7 +911,11 @@ export function QuestionExplorerPanel({
       const errorCategory =
         typeof cause === "object" && cause !== null && "code" in cause
           ? String((cause as { code?: unknown }).code ?? "unknown")
-          : "unknown";
+          : cause instanceof Error
+            ? cause.name || "error"
+            : typeof cause === "string"
+              ? "string_error"
+              : "unknown";
       console.error("generation_failed", { phase: "start", errorCategory });
       setError(questionExplorerErrorMessage(cause, "generate"));
     } finally {
