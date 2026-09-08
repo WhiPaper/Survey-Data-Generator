@@ -19,13 +19,19 @@ const account = (
 describe("account settings rows", () => {
   it("preserves backend account order, connection state, and the active account", () => {
     const rows = accountSettingsRows(
-      [account("second", "second@example.com", false), account("first", "first@example.com", true)],
+      [
+        account("second", "second@example.com", false),
+        account("first", "first@example.com", true),
+        account("third", "third@example.com", true),
+      ],
       "first",
     );
 
-    expect(rows.map((row) => row.id)).toEqual(["second", "first"]);
-    expect(rows.map((row) => row.connected)).toEqual([false, true]);
-    expect(rows.map((row) => row.current)).toEqual([false, true]);
+    expect(rows.map((row) => row.id)).toEqual(["second", "first", "third"]);
+    expect(rows.map((row) => row.connected)).toEqual([false, true, true]);
+    expect(rows.map((row) => row.current)).toEqual([false, true, false]);
+    expect(rows.map((row) => row.canSwitch)).toEqual([false, false, true]);
+    expect(rows.map((row) => row.canRevoke)).toEqual([false, true, true]);
   });
 
   it("uses display metadata without hiding the Google email", () => {

@@ -23,8 +23,14 @@ describe("App shell user-facing errors", () => {
     );
 
     expect(switchAccount).toBe("Google 계정을 전환하지 못했습니다.");
-    expect(`${startup} ${imported} ${switchAccount}`).not.toMatch(
-      /Backend|SourceRevision|SourceScope|engine|credential provider/,
+    const revokeAccount = appShellErrorMessage(
+      new Error("OAuth token provider implementation detail"),
+      "revoke_account",
+    );
+
+    expect(revokeAccount).toBe("Google 계정 연결을 해제하지 못했습니다.");
+    expect(`${startup} ${imported} ${switchAccount} ${revokeAccount}`).not.toMatch(
+      /Backend|SourceRevision|SourceScope|engine|credential provider|OAuth token provider/,
     );
   });
 

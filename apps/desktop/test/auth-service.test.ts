@@ -118,6 +118,34 @@ describe("Google auth service", () => {
     expect(restoredGoogle.refresh).toHaveBeenCalledWith("refresh-1");
   });
 
+  it("revoke removes Google authorization but keeps local account metadata", async () => {
+    const database = createDatabase();
+    const refreshTokens = memoryTokenStore();
+    const google = provider();
+    const service = createGoogleAuthService({
+      db: database.db,
+      refreshTokens,
+      google,
+      now: () => 1_000,
+    });
+    await service.login();
+    await service.revokeAccess("google-sub-1" as GoogleAccountId);
+
+    expect(google.revoke).toHaveBeenCalledWith("refresh-1");
+    expect(refreshTokens.values.has("google-sub-1")).toBe(false);
+    expect(getActiveGoogleAccountId(database.db)).toBeNull();
+    expect(getGoogleAccount(database.db, "google-sub-1")).not.toBeNull();
+    await expect(service.getAccounts()).resolves.toEqual([
+      {
+        id: "google-sub-1",
+        email: "user@example.com",
+        displayName: "Survey User",
+        connected: false,
+      },
+    ]);
+    await expect(service.getSession()).resolves.toBeNull();
+  });
+
   it("logout removes the active refresh token but keeps local account metadata", async () => {
     const database = createDatabase();
     const refreshTokens = memoryTokenStore();

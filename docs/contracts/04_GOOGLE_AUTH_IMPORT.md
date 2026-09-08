@@ -8,6 +8,8 @@ Use Google OpenID Connect `sub` as the stable identity. Email, display name, and
 
 The saved-account list includes an Electron-Main-owned `connected` flag. It is true when local refresh authorization for that account is present; provider-side validity is still checked when the account is actually used. The renderer may use this flag to decide whether a stored account can be switched to, but must not infer connection state from session history, project ownership, or credential errors. Session identity itself does not carry this list-only field.
 
+A successful account revoke removes that account's local authorization and clears the active session when applicable, but it does not delete saved account metadata or unrelated local projects/runs. The saved account remains visible as disconnected so the user can reconnect it later. Local account-data deletion is a separate lifecycle action and is not implied by revoke.
+
 ## OAuth
 
 Electron Main owns installed-app OAuth:

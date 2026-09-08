@@ -25,6 +25,7 @@ import {
   openProjectWorkspace,
   pingBackend,
   refreshProjectSource,
+  revokeAccess,
   switchAccount,
 } from "./api/backend";
 import { appShellErrorMessage } from "./appShellError";
@@ -296,6 +297,43 @@ export function AppShell() {
       resetWorkspaceAfterAccountChange();
     } catch (cause: unknown) {
       setError(appShellErrorMessage(cause, "switch_account"));
+    } finally {
+      setAuthBusy(false);
+      setAccountsBusy(false);
+    }
+  };
+
+  const handleRevokeAccount = async (account: GoogleAccountListItem): Promise<void> => {
+    if (!account.connected) return;
+    if (
+      !window.confirm(
+        `“${account.email}” Google 연결을 해제할까요? 이 기기의 프로젝트와 생성 결과는 삭제되지 않습니다.`,
+      )
+    ) {
+      return;
+    }
+
+    const current = account.id === session?.account.id;
+    if (current && !(await flushActiveDraft())) return;
+    setAuthBusy(true);
+    setAccountsBusy(true);
+    setError(null);
+    try {
+      await revokeAccess(account.id);
+      if (current) {
+        setSettingsOpen(false);
+        setSession(null);
+        setSelectedProject(null);
+        setSourceReview(null);
+      } else {
+        setAccounts((currentAccounts) =>
+          currentAccounts.map((candidate) =>
+            candidate.id === account.id ? { ...candidate, connected: false } : candidate,
+          ),
+        );
+      }
+    } catch (cause: unknown) {
+      setError(appShellErrorMessage(cause, "revoke_account"));
     } finally {
       setAuthBusy(false);
       setAccountsBusy(false);
@@ -637,7 +675,9 @@ export function AppShell() {
         <DialogContent className="sm:max-w-[520px]">
           <DialogHeader>
             <DialogTitle>설정</DialogTitle>
-            <DialogDescription>Google 계정을 추가하거나 전환할 수 있습니다.</DialogDescription>
+            <DialogDescription>
+              Google 계정을 추가하거나 전환하고 연결을 해제할 수 있습니다.
+            </DialogDescription>
           </DialogHeader>
           <div>
             <p className="text-sm font-medium">Google 계정</p>
@@ -652,21 +692,35 @@ export function AppShell() {
                       </p>
                     ) : null}
                   </div>
-                  {account.current ? (
-                    <span className="shrink-0 text-xs text-muted-foreground">현재 계정</span>
-                  ) : !account.connected ? (
-                    <span className="shrink-0 text-xs text-muted-foreground">다시 연결 필요</span>
-                  ) : (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={authBusy || accountsBusy}
-                      onClick={() => void handleSwitchAccount(account.account)}
-                    >
-                      전환
-                    </Button>
-                  )}
+                  <div className="flex shrink-0 items-center gap-2">
+                    {account.current ? (
+                      <span className="text-xs text-muted-foreground">현재 계정</span>
+                    ) : account.canSwitch ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={authBusy || accountsBusy}
+                        onClick={() => void handleSwitchAccount(account.account)}
+                      >
+                        전환
+                      </Button>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">다시 연결 필요</span>
+                    )}
+                    {account.canRevoke ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive"
+                        disabled={authBusy || accountsBusy}
+                        onClick={() => void handleRevokeAccount(account.account)}
+                      >
+                        연결 해제
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               ))}
               {accountsBusy && accountRows.length === 0 ? (
@@ -680,6 +734,9 @@ export function AppShell() {
                 다시 연결이 필요한 계정은 Google 계정 추가에서 연결하세요.
               </p>
             ) : null}
+            <p className="mt-2 text-xs text-muted-foreground">
+              연결을 해제해도 이 기기의 프로젝트와 생성 결과는 삭제되지 않습니다.
+            </p>
             <Button
               type="button"
               className="mt-3"
