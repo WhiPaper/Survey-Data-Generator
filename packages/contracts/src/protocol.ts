@@ -52,6 +52,10 @@ export const GoogleAccountViewSchema = z
   })
   .strict();
 export type GoogleAccountView = z.infer<typeof GoogleAccountViewSchema>;
+export const GoogleAccountListItemSchema = GoogleAccountViewSchema.extend({
+  connected: z.boolean(),
+}).strict();
+export type GoogleAccountListItem = z.infer<typeof GoogleAccountListItemSchema>;
 
 export const SessionViewSchema = z.object({ account: GoogleAccountViewSchema }).strict();
 export type SessionView = z.infer<typeof SessionViewSchema>;
@@ -782,7 +786,7 @@ export interface BackendRpc {
   "system.ping": { input: z.infer<typeof EmptyParamsSchema>; output: SystemPingResult };
   "session.get": { input: z.infer<typeof EmptyParamsSchema>; output: SessionView | null };
   "auth.login": { input: z.infer<typeof EmptyParamsSchema>; output: SessionView };
-  "auth.accounts": { input: z.infer<typeof EmptyParamsSchema>; output: GoogleAccountView[] };
+  "auth.accounts": { input: z.infer<typeof EmptyParamsSchema>; output: GoogleAccountListItem[] };
   "auth.addAccount": { input: z.infer<typeof EmptyParamsSchema>; output: SessionView };
   "auth.switchAccount": { input: z.infer<typeof AccountIdParamsSchema>; output: SessionView };
   "auth.logout": { input: z.infer<typeof EmptyParamsSchema>; output: ActionResult };
@@ -935,7 +939,7 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "system.ping": SystemPingResultSchema,
   "session.get": SessionViewSchema.nullable(),
   "auth.login": SessionViewSchema,
-  "auth.accounts": z.array(GoogleAccountViewSchema),
+  "auth.accounts": z.array(GoogleAccountListItemSchema),
   "auth.addAccount": SessionViewSchema,
   "auth.switchAccount": SessionViewSchema,
   "auth.logout": ActionResultSchema,

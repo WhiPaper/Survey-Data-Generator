@@ -6,6 +6,8 @@ Google is the only identity provider. Do not create a generic provider abstracti
 
 Use Google OpenID Connect `sub` as the stable identity. Email, display name, and picture are display metadata only. Because v2 is Google-only, `GoogleAccountId` may use the `sub` value directly rather than persisting a second duplicate provider identifier.
 
+The saved-account list includes an Electron-Main-owned `connected` flag. It is true when local refresh authorization for that account is present; provider-side validity is still checked when the account is actually used. The renderer may use this flag to decide whether a stored account can be switched to, but must not infer connection state from session history, project ownership, or credential errors. Session identity itself does not carry this list-only field.
+
 ## OAuth
 
 Electron Main owns installed-app OAuth:

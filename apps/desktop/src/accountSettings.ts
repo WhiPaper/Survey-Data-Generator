@@ -1,15 +1,16 @@
-import type { GoogleAccountId, GoogleAccountView } from "@survey-synth/contracts";
+import type { GoogleAccountId, GoogleAccountListItem } from "@survey-synth/contracts";
 
 export type AccountSettingsRow = {
   id: GoogleAccountId;
-  account: GoogleAccountView;
+  account: GoogleAccountListItem;
   primaryLabel: string;
   secondaryLabel: string | null;
   current: boolean;
+  connected: boolean;
 };
 
 export const accountSettingsRows = (
-  accounts: GoogleAccountView[],
+  accounts: GoogleAccountListItem[],
   currentAccountId: GoogleAccountId | null,
 ): AccountSettingsRow[] =>
   accounts.map((account) => {
@@ -20,5 +21,6 @@ export const accountSettingsRows = (
       primaryLabel: displayName || account.email,
       secondaryLabel: displayName ? account.email : null,
       current: account.id === currentAccountId,
+      connected: account.connected,
     };
   });

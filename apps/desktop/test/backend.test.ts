@@ -70,7 +70,7 @@ describe("typed v2 desktop backend client", () => {
         case "auth.switchAccount":
           return { account: { id: "account-1", email: "user@example.com" } };
         case "auth.accounts":
-          return [{ id: "account-1", email: "user@example.com" }];
+          return [{ id: "account-1", email: "user@example.com", connected: true }];
         case "auth.logout":
           return { ok: true };
         default:
@@ -80,7 +80,9 @@ describe("typed v2 desktop backend client", () => {
 
     await expect(getSession({ invoke })).resolves.toBeTruthy();
     await expect(login({ invoke })).resolves.toBeTruthy();
-    await expect(getAccounts({ invoke })).resolves.toHaveLength(1);
+    await expect(getAccounts({ invoke })).resolves.toEqual([
+      { id: "account-1", email: "user@example.com", connected: true },
+    ]);
     await expect(addAccount({ invoke })).resolves.toBeTruthy();
     await expect(switchAccount("account-1" as GoogleAccountId, { invoke })).resolves.toBeTruthy();
     await expect(logout({ invoke })).resolves.toEqual({ ok: true });

@@ -1,5 +1,9 @@
 import type { GoogleAccountId } from "@survey-synth/domain";
-import type { GoogleAccountView, SessionView } from "@survey-synth/contracts";
+import type {
+  GoogleAccountListItem,
+  GoogleAccountView,
+  SessionView,
+} from "@survey-synth/contracts";
 
 import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
@@ -30,7 +34,7 @@ export interface GoogleAuthService {
   logout(): Promise<void>;
   revokeAccess(id: GoogleAccountId): Promise<void>;
   deleteAccountData(id: GoogleAccountId): Promise<void>;
-  getAccounts(): Promise<GoogleAccountView[]>;
+  getAccounts(): Promise<GoogleAccountListItem[]>;
   getAccessToken(id: GoogleAccountId): Promise<string>;
   refreshAccessToken(id: GoogleAccountId): Promise<string>;
 }
@@ -160,7 +164,13 @@ export const createGoogleAuthService = ({
       removeGoogleAccount(db, id);
     },
 
-    getAccounts: async () => listGoogleAccounts(db).map(accountView),
+    getAccounts: async () =>
+      Promise.all(
+        listGoogleAccounts(db).map(async (account) => ({
+          ...accountView(account),
+          connected: (await refreshTokens.get(account.id)) !== null,
+        })),
+      ),
 
     getAccessToken: async (id) => {
       const cached = accessTokens.get(id);
