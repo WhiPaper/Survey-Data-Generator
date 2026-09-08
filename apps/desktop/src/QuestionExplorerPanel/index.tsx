@@ -63,6 +63,7 @@ import { resolvedCountForMode, targetKindForMode, targetModeAllowed } from "./ta
 import { questionPopulationText } from "./questionPopulation";
 import { questionExplorerErrorMessage } from "./userFacingError";
 import { executeValueGroupRepair } from "./sourceReviewRepair";
+import { sourceScopeEditorError, sourceScopesEqual } from "./sourceScopeEditor";
 import {
   conditionalProfileMetric,
   conditionalTarget,
@@ -160,6 +161,8 @@ export function QuestionExplorerPanel({
   });
   const [profile, setProfile] = useState<TargetProfileResult | null>(null);
   const [profileBusy, setProfileBusy] = useState(false);
+  const [scopeApplyBusy, setScopeApplyBusy] = useState(false);
+  const [scopeEditor, setScopeEditor] = useState<SourceScope>({ kind: "all" });
   const [groups, setGroups] = useState<ValueGroupView[]>([]);
   const [textValues, setTextValues] = useState<ValueGroupObservedValue[]>([]);
   const [editing, setEditing] = useState<EditingTarget | null>(null);
@@ -271,6 +274,7 @@ export function QuestionExplorerPanel({
             };
         draftSaveCoordinator.setLatest(nextDraft, saved !== null);
         setDraft(nextDraft);
+        setScopeEditor(nextDraft.sourceScope);
         setGroups(nextGroups);
         setRunSummaries(nextRunSummaries);
         setProfile(await getTargetProfile(project.id, nextDraft.sourceScope));
@@ -373,6 +377,8 @@ export function QuestionExplorerPanel({
   });
 
   const sourceCount = profile?.responseCount ?? project.responseCount;
+  const sourceScopeDirty = !sourceScopesEqual(scopeEditor, draft.sourceScope);
+  const sourceScopeError = sourceScopeEditorError(scopeEditor);
   const finalCount = draft.finalCount;
   const generationBlock = generationBlockReason({
     sourceCount,
@@ -787,31 +793,44 @@ export function QuestionExplorerPanel({
 
   const setSourceScopeKind = (kind: "all" | "submitted_between") => {
     if (kind === "all") {
-      setDraft((current) => ({ ...current, sourceScope: { kind: "all" } }));
+      setScopeEditor({ kind: "all" });
       return;
     }
     const fallbackStart = project.responseTimestampRange?.start ?? new Date().toISOString();
     const fallbackEnd = project.responseTimestampRange?.end ?? fallbackStart;
-    setDraft((current) => ({
-      ...current,
-      sourceScope:
-        current.sourceScope.kind === "submitted_between"
-          ? current.sourceScope
+    setScopeEditor((current) =>
+      current.kind === "submitted_between"
+        ? current
+        : draft.sourceScope.kind === "submitted_between"
+          ? draft.sourceScope
           : { kind: "submitted_between", start: fallbackStart, end: fallbackEnd },
-    }));
+    );
   };
 
   const updateScopeDate = (field: "start" | "end", input: string) => {
     const iso = fromDateTimeInput(input);
     if (!iso) return;
-    setDraft((current) =>
-      current.sourceScope.kind === "submitted_between"
-        ? {
-            ...current,
-            sourceScope: { ...current.sourceScope, [field]: iso },
-          }
-        : current,
+    setScopeEditor((current) =>
+      current.kind === "submitted_between" ? { ...current, [field]: iso } : current,
     );
+  };
+
+  const applySourceScope = async (): Promise<void> => {
+    if (!sourceScopeDirty || sourceScopeError) return;
+    setScopeApplyBusy(true);
+    setProfileBusy(true);
+    setError(null);
+    try {
+      const nextProfile = await getTargetProfile(project.id, scopeEditor);
+      setProfile(nextProfile);
+      setScopeEditor(nextProfile.sourceScope);
+      setDraft((current) => ({ ...current, sourceScope: nextProfile.sourceScope }));
+    } catch (cause: unknown) {
+      setError(questionExplorerErrorMessage(cause, "reload_distribution"));
+    } finally {
+      setScopeApplyBusy(false);
+      setProfileBusy(false);
+    }
   };
 
   const selectRun = async (runId: string): Promise<void> => {
@@ -1034,7 +1053,7 @@ export function QuestionExplorerPanel({
             <div className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">원본</span>
               <Select
-                value={draft.sourceScope.kind}
+                value={scopeEditor.kind}
                 onValueChange={(next) => setSourceScopeKind(next as "all" | "submitted_between")}
               >
                 <SelectTrigger className="h-8 w-[190px]">
@@ -1046,22 +1065,39 @@ export function QuestionExplorerPanel({
                 </SelectContent>
               </Select>
             </div>
-            {draft.sourceScope.kind === "submitted_between" ? (
+            {scopeEditor.kind === "submitted_between" ? (
               <div className="flex items-center gap-2 text-xs">
                 <Input
                   type="datetime-local"
-                  value={toDateTimeInput(draft.sourceScope.start)}
+                  value={toDateTimeInput(scopeEditor.start)}
                   onChange={(event) => updateScopeDate("start", event.target.value)}
                   className="h-8 w-[190px]"
                 />
                 <span className="text-muted-foreground">–</span>
                 <Input
                   type="datetime-local"
-                  value={toDateTimeInput(draft.sourceScope.end)}
+                  value={toDateTimeInput(scopeEditor.end)}
                   onChange={(event) => updateScopeDate("end", event.target.value)}
                   className="h-8 w-[190px]"
                 />
               </div>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8"
+              disabled={scopeApplyBusy || !sourceScopeDirty || sourceScopeError !== null}
+              onClick={() => void applySourceScope()}
+            >
+              {scopeApplyBusy ? "적용 중…" : "적용"}
+            </Button>
+            {sourceScopeError ? (
+              <span className="text-xs text-destructive">{sourceScopeError}</span>
+            ) : sourceScopeDirty ? (
+              <span className="text-xs text-muted-foreground">
+                적용하면 분포와 원본 응답 수가 갱신됩니다.
+              </span>
             ) : null}
             <div className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">최종 응답</span>
@@ -1281,7 +1317,7 @@ export function QuestionExplorerPanel({
             </p>
             <Button
               type="button"
-              disabled={busy || generationBlock !== null}
+              disabled={busy || sourceScopeDirty || generationBlock !== null}
               onClick={() => void generate()}
             >
               {busy ? "설정 확인 중…" : "생성"}
