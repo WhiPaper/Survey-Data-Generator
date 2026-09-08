@@ -195,10 +195,15 @@ export const resolveEngineLaunch = ({
     };
   }
 
-  return {
-    command: env.SURVEY_SYNTH_PYTHON?.trim() || (platform === "win32" ? "python" : "python3"),
-    argsPrefix: [pathApi.resolve(appPath, "../../engine/main.py")],
-  };
+  if (env.SURVEY_SYNTH_PYTHON?.trim()) {
+    return {
+      command: env.SURVEY_SYNTH_PYTHON.trim(),
+      argsPrefix: [pathApi.resolve(appPath, "../../engine/main.py")],
+    };
+  }
+  return platform === "win32"
+    ? { command: "py", argsPrefix: ["-3.12", pathApi.resolve(appPath, "../../engine/main.py")] }
+    : { command: "python3", argsPrefix: [pathApi.resolve(appPath, "../../engine/main.py")] };
 };
 
 export type CreatePythonEngineOptions = {

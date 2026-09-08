@@ -106,14 +106,21 @@ const frozenSubjectMetric = (
 const meanBaseline = (
   form: FormSnapshot,
   responses: readonly StoredSourceResponse[],
-  questionId: string,
+  target: Extract<FrozenRunTarget, { kind: "mean" }>,
 ): { mean: number; denominatorCount: number } | null => {
-  const question = form.questions.find((candidate) => candidate.id === questionId);
-  if (!question || question.kind !== "ordinal") return null;
+  const question = form.questions.find((candidate) => candidate.id === target.questionId);
+  if (!question || (question.kind !== "ordinal" && !target.scoreMapping)) return null;
+  const scores = new Map(
+    target.scoreMapping?.optionScores.map((entry) => [entry.optionKey, entry.score]),
+  );
   const values: number[] = [];
   for (const stored of responses) {
-    const slot = answer(stored, question.id);
+    const slot = answer(stored, target.questionId);
     if (slot?.state === "answered" && slot.value.kind === "ordinal") values.push(slot.value.value);
+    if (slot?.state === "answered" && slot.value.kind === "single_choice") {
+      const score = scores.get(String(slot.value.optionKey));
+      if (score !== undefined) values.push(score);
+    }
   }
   return {
     mean: values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length,
@@ -183,7 +190,7 @@ export const buildRunTargetBaselines = (
 ): RunTargetBaseline[] =>
   targets.map((target) => {
     if (target.kind === "mean") {
-      const metric = meanBaseline(form, responses, target.questionId) ?? invalidBaseline();
+      const metric = meanBaseline(form, responses, target) ?? invalidBaseline();
       return {
         targetId: target.id,
         kind: "mean",

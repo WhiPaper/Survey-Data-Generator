@@ -229,12 +229,25 @@ export const ShareTargetSchema = z
   .strict();
 export type ShareTarget = z.infer<typeof ShareTargetSchema>;
 
+export const LikertScoreMappingSchema = z
+  .object({
+    questionId: z.string().min(1),
+    optionScores: z
+      .array(
+        z.object({ optionKey: z.string().min(1), score: z.number().int().min(1).max(5) }).strict(),
+      )
+      .length(5),
+  })
+  .strict();
+export type LikertScoreMapping = z.infer<typeof LikertScoreMappingSchema>;
+
 export const MeanTargetSchema = z
   .object({
     id: TargetIdSchema,
     kind: z.literal("mean"),
     questionId: z.string().min(1),
     value: z.number().finite(),
+    scoreMapping: LikertScoreMappingSchema.optional(),
   })
   .strict();
 export type MeanTarget = z.infer<typeof MeanTargetSchema>;
@@ -293,6 +306,7 @@ export const TargetDraftTargetSchema = z.discriminatedUnion("kind", [
       kind: z.literal("mean"),
       questionId: z.string().min(1),
       intent: DraftIntentSchema,
+      scoreMapping: LikertScoreMappingSchema.optional(),
     })
     .strict(),
   z
@@ -400,6 +414,7 @@ export const SynthesisStartParamsSchema = z
     finalCount: z.number().int().positive(),
     targets: z.array(SynthesisTargetSchema).min(1),
     targetIntents: z.array(SynthesisTargetIntentSnapshotSchema).optional(),
+    scoreMappings: z.array(LikertScoreMappingSchema).optional(),
     sourceScope: SourceScopeSchema.optional(),
     seed: z.number().int(),
     operationId: z.string().min(1).max(200).optional(),
@@ -650,7 +665,9 @@ export const RunTargetSnapshotSchema = z
   .object({
     finalCount: z.number().int().positive(),
     sourceScope: SourceScopeSchema,
-    targets: z.array(FrozenRunTargetSchema).min(1),
+    // Targetless runs are valid; the snapshot preserves an empty target set.
+    targets: z.array(FrozenRunTargetSchema),
+    scoreMappings: z.array(LikertScoreMappingSchema).default([]),
     editPlan: EditPlanPreviewSchema.optional(),
   })
   .strict();
@@ -777,7 +794,11 @@ const ValueGroupsCreateParamsSchema = z
   .strict();
 const ValueGroupsDeleteParamsSchema = z.object({ valueGroupId: z.string().min(1) }).strict();
 const TargetsProfileParamsSchema = z
-  .object({ projectId: ProjectIdSchema, sourceScope: SourceScopeSchema.optional() })
+  .object({
+    projectId: ProjectIdSchema,
+    sourceScope: SourceScopeSchema.optional(),
+    scoreMappings: z.array(LikertScoreMappingSchema).optional(),
+  })
   .strict();
 const TargetsDraftStartParamsSchema = z
   .object({ projectId: ProjectIdSchema, operationId: z.string().min(1).max(200).optional() })

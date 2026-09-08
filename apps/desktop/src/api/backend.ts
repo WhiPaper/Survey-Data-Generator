@@ -9,6 +9,7 @@ import {
   type FormsListResult,
   type GoogleAccountId,
   type GoogleAccountListItem,
+  type LikertScoreMapping,
   parseRpcResult,
   type ProjectDetailView,
   type ProjectSourceRefreshResult,
@@ -83,6 +84,12 @@ export const callBackend = async <M extends RpcMethod>(
     request = createRequest(nextRequestId(), method, params);
   } catch (error) {
     if (error instanceof Error && error.name === "ZodError") {
+      console.error("backend_response_invalid", {
+        method,
+        errorCategory: "ZOD_RESPONSE",
+        errorType: error.name,
+        errorMessage: error.message,
+      });
       throw new BackendClientError(
         structuredError("VALIDATION_FAILED", "Backend request parameters are invalid"),
       );
@@ -213,11 +220,16 @@ export const deleteValueGroup = (
 export const getTargetProfile = (
   projectId: string,
   sourceScope?: SourceScope,
+  scoreMappings?: LikertScoreMapping[],
   backend?: BackendInvoker,
 ): Promise<TargetProfileResult> =>
   callBackend(
     "targets.profile",
-    { projectId, ...(sourceScope === undefined ? {} : { sourceScope }) },
+    {
+      projectId,
+      ...(sourceScope === undefined ? {} : { sourceScope }),
+      ...(scoreMappings === undefined ? {} : { scoreMappings }),
+    },
     backend,
   );
 export const validateTargetDraft = (

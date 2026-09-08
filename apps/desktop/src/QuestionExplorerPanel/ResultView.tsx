@@ -72,7 +72,15 @@ export function ResultView({
         <div className="flex items-center gap-2">
           <Select value={context.run.runId} onValueChange={(value) => value && onSelectRun(value)}>
             <SelectTrigger className="w-[180px]">
-              <SelectValue />
+              <SelectValue>
+                {summaries.find((summary) => summary.runId === context.run.runId)?.runId ===
+                summaries[0]?.runId
+                  ? "최신 결과"
+                  : new Date(
+                      summaries.find((summary) => summary.runId === context.run.runId)?.createdAt ??
+                        Date.now(),
+                    ).toLocaleString()}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {summaries.map((summary, index) => (

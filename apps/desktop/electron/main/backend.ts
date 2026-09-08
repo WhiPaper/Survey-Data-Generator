@@ -178,8 +178,16 @@ export const handleBackendCall = async (
       );
       return { ok: true };
     case "targets.profile": {
-      const params = request.params as { projectId: string; sourceScope?: SourceScope };
-      return requireTargets(services).profile(params.projectId, params.sourceScope);
+      const params = request.params as {
+        projectId: string;
+        sourceScope?: SourceScope;
+        scoreMappings?: import("@survey-synth/contracts").LikertScoreMapping[];
+      };
+      return requireTargets(services).profile(
+        params.projectId,
+        params.sourceScope,
+        params.scoreMappings,
+      );
     }
     case "targets.validate": {
       const params = request.params as TargetDraft;

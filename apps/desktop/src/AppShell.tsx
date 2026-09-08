@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -449,7 +450,13 @@ export function AppShell() {
       return;
     }
     if (selectedProject && !(await flushActiveDraft())) return;
-    await openProject(projectId);
+    try {
+      await openProject(projectId);
+    } catch (cause: unknown) {
+      // Keep menu interaction failures inside the shell so a rejected async
+      // click handler cannot surface as a blank renderer.
+      setError(appShellErrorMessage(cause, "open_project"));
+    }
     setProjectSearchOpen(false);
     setProjectSearchQuery("");
   };
@@ -485,6 +492,8 @@ export function AppShell() {
   const recentProjects = recentProjectChoices(projects, selectedProject?.id ?? null);
   const filteredProjects = filterProjectChoices(projects, projectSearchQuery);
   const accountRows = accountSettingsRows(accounts, session?.account.id ?? null);
+  const selectedProjectDisplayName =
+    projects.find((project) => project.id === selectedProject?.id)?.name ?? selectedProject?.name;
   const newProjectNameError = newProjectFormId
     ? projectNameValidationMessage(newProjectName)
     : null;
@@ -542,7 +551,7 @@ export function AppShell() {
                     className="max-w-[280px] justify-start px-2 font-medium"
                     disabled={projectsBusy || refreshBusy}
                   >
-                    <span className="truncate">{selectedProject.name}</span>
+                    <span className="truncate">{selectedProjectDisplayName}</span>
                     <span className="shrink-0 text-muted-foreground" aria-hidden="true">
                       ▾
                     </span>
@@ -550,25 +559,27 @@ export function AppShell() {
                 }
               />
               <DropdownMenuContent align="start" className="min-w-[280px]">
-                <DropdownMenuLabel>최근 프로젝트</DropdownMenuLabel>
-                {recentProjects.length > 0 ? (
-                  recentProjects.map((project) => (
-                    <DropdownMenuItem
-                      key={project.id}
-                      className="items-start py-2"
-                      onClick={() => void switchProject(project.id)}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{project.name}</span>
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          응답 {project.responseCount}개 · 문항 {project.questionCount}개
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>최근 프로젝트</DropdownMenuLabel>
+                  {recentProjects.length > 0 ? (
+                    recentProjects.map((project) => (
+                      <DropdownMenuItem
+                        key={project.id}
+                        className="items-start py-2"
+                        onClick={() => void switchProject(project.id)}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">{project.name}</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">
+                            응답 {project.responseCount}개 · 문항 {project.questionCount}개
+                          </span>
                         </span>
-                      </span>
-                    </DropdownMenuItem>
-                  ))
-                ) : (
-                  <DropdownMenuItem disabled>다른 최근 프로젝트가 없습니다.</DropdownMenuItem>
-                )}
+                      </DropdownMenuItem>
+                    ))
+                  ) : (
+                    <DropdownMenuItem disabled>다른 최근 프로젝트가 없습니다.</DropdownMenuItem>
+                  )}
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => setProjectSearchOpen(true)}>
                   프로젝트 검색…

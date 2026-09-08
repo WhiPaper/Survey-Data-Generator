@@ -16,6 +16,7 @@ export type QuestionView = {
   options: Array<{ key: string; label: string }>;
   min?: number;
   max?: number;
+  affectsNavigation?: boolean;
 };
 
 export type SubjectKind = "option" | "checkbox_option" | "value_group";
@@ -42,7 +43,7 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
     : null;
 
 export const projectQuestions = (project: ProjectDetailView): QuestionView[] => {
-  const values = Array.isArray(project.form.questions) ? project.form.questions : [];
+  const values = Array.isArray(project.form?.questions) ? project.form.questions : [];
   return values.flatMap((value) => {
     const question = asRecord(value);
     if (!question || typeof question.id !== "string") return [];
@@ -68,6 +69,7 @@ export const projectQuestions = (project: ProjectDetailView): QuestionView[] => 
         options,
         ...(typeof question.min === "number" ? { min: question.min } : {}),
         ...(typeof question.max === "number" ? { max: question.max } : {}),
+        ...(question.affectsNavigation === true ? { affectsNavigation: true } : {}),
       },
     ];
   });

@@ -64,6 +64,7 @@ import { questionPopulationText } from "./questionPopulation";
 import { questionExplorerErrorMessage } from "./userFacingError";
 import { executeValueGroupRepair } from "./sourceReviewRepair";
 import { sourceScopeEditorError, sourceScopesEqual } from "./sourceScopeEditor";
+import { recognizeLikertScoreMapping } from "./likertScoreMapping";
 import {
   conditionalProfileMetric,
   conditionalTarget,
@@ -197,6 +198,20 @@ export function QuestionExplorerPanel({
 
   const selectedQuestion =
     questions.find((question) => question.id === selectedQuestionId) ?? questions[0];
+  const scoreMappings = useMemo(
+    () =>
+      draft.targets.flatMap((target) =>
+        target.kind === "mean" && target.scoreMapping ? [target.scoreMapping] : [],
+      ),
+    [draft.targets],
+  );
+  const selectedLikertMapping = selectedQuestion
+    ? recognizeLikertScoreMapping(selectedQuestion)
+    : null;
+  const selectedScoreMapping = selectedQuestion
+    ? meanTarget(draft.targets, selectedQuestion.id)?.scoreMapping
+    : undefined;
+  const selectedIsScoreQuestion = selectedQuestion?.kind === "ordinal" || !!selectedScoreMapping;
   const activeReviewGroups = (sourceReview?.invalidValueGroupIds ?? [])
     .map((groupId) => groups.find((group) => group.id === groupId))
     .filter((group): group is ValueGroupView => group !== undefined);
@@ -230,7 +245,7 @@ export function QuestionExplorerPanel({
   };
 
   const reloadProfile = async (sourceScope: SourceScope): Promise<TargetProfileResult> => {
-    const nextProfile = await getTargetProfile(project.id, sourceScope);
+    const nextProfile = await getTargetProfile(project.id, sourceScope, scoreMappings);
     setProfile(nextProfile);
     return nextProfile;
   };
@@ -263,7 +278,7 @@ export function QuestionExplorerPanel({
               finalCount: saved.finalCount,
               sourceScope: saved.sourceScope,
               seed: saved.seed,
-              targets: saved.targets,
+              targets: Array.isArray(saved.targets) ? saved.targets : [],
             }
           : {
               projectId: project.id,
@@ -277,7 +292,7 @@ export function QuestionExplorerPanel({
         setScopeEditor(nextDraft.sourceScope);
         setGroups(nextGroups);
         setRunSummaries(nextRunSummaries);
-        setProfile(await getTargetProfile(project.id, nextDraft.sourceScope));
+        setProfile(await getTargetProfile(project.id, nextDraft.sourceScope, []));
         if (active) setLoaded(true);
       })
       .catch((cause: unknown) => {
@@ -331,7 +346,7 @@ export function QuestionExplorerPanel({
     if (!loaded) return;
     let active = true;
     setProfileBusy(true);
-    void getTargetProfile(project.id, draft.sourceScope)
+    void getTargetProfile(project.id, draft.sourceScope, scoreMappings)
       .then((nextProfile) => {
         if (active) setProfile(nextProfile);
       })
@@ -345,7 +360,7 @@ export function QuestionExplorerPanel({
     return () => {
       active = false;
     };
-  }, [draft.sourceScope, loaded, project.id]);
+  }, [draft.sourceScope, loaded, project.id, scoreMappings]);
 
   useEffect(() => {
     if (selectedQuestion?.kind !== "text") {
@@ -454,7 +469,7 @@ export function QuestionExplorerPanel({
   const currentMeanMetric = editingMean ? meanMetric(profile, editingMean.questionId) : undefined;
 
   const selectedOrdinalDistribution =
-    selectedQuestion?.kind === "ordinal"
+    selectedIsScoreQuestion && selectedQuestion
       ? ordinalDistributionMetric(profile, selectedQuestion.id)
       : undefined;
 
@@ -623,13 +638,16 @@ export function QuestionExplorerPanel({
   };
 
   const openMeanTarget = (question: QuestionView) => {
-    if (question.min === undefined || question.max === undefined) return;
+    const mapping = meanTarget(draft.targets, question.id)?.scoreMapping;
+    const min = question.min ?? (mapping ? 1 : undefined);
+    const max = question.max ?? (mapping ? 5 : undefined);
+    if (min === undefined || max === undefined) return;
     const existing = meanTarget(draft.targets, question.id);
     setEditingMean({
       questionId: question.id,
       questionTitle: question.title,
-      min: question.min,
-      max: question.max,
+      min,
+      max,
     });
     setMeanValue(existing?.intent ? String(existing.intent.value) : "");
   };
@@ -641,6 +659,9 @@ export function QuestionExplorerPanel({
       kind: "mean",
       questionId: editingMean.questionId,
       intent: { kind: "absolute", value: parsedMean },
+      ...(meanTarget(draft.targets, editingMean.questionId)?.scoreMapping
+        ? { scoreMapping: meanTarget(draft.targets, editingMean.questionId)!.scoreMapping }
+        : {}),
     };
     setDraft((current) => ({
       ...current,
@@ -821,7 +842,7 @@ export function QuestionExplorerPanel({
     setProfileBusy(true);
     setError(null);
     try {
-      const nextProfile = await getTargetProfile(project.id, scopeEditor);
+      const nextProfile = await getTargetProfile(project.id, scopeEditor, scoreMappings);
       setProfile(nextProfile);
       setScopeEditor(nextProfile.sourceScope);
       setDraft((current) => ({ ...current, sourceScope: nextProfile.sourceScope }));
@@ -887,6 +908,24 @@ export function QuestionExplorerPanel({
         setIssues(result.issues);
       }
     } catch (cause: unknown) {
+      const errorObject = cause as {
+        code?: unknown;
+        backendError?: { code?: unknown; message?: unknown };
+      };
+      const errorMessage = errorObject?.backendError?.message;
+      const errorCategory =
+        errorObject?.backendError?.code ??
+        errorObject?.code ??
+        (cause instanceof Error
+          ? cause.name
+          : typeof cause === "string"
+            ? "string_error"
+            : "unknown");
+      console.error("generation_failed", {
+        phase: "start",
+        errorCategory,
+        ...(typeof errorMessage === "string" ? { errorMessage } : {}),
+      });
       setError(questionExplorerErrorMessage(cause, "generate"));
     } finally {
       setBusy(false);
@@ -1057,7 +1096,9 @@ export function QuestionExplorerPanel({
                 onValueChange={(next) => setSourceScopeKind(next as "all" | "submitted_between")}
               >
                 <SelectTrigger className="h-8 w-[190px]">
-                  <SelectValue />
+                  <SelectValue>
+                    {scopeEditor.kind === "all" ? `전체 응답 · ${sourceCount}명` : "응답 기간 선택"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">전체 응답 · {sourceCount}명</SelectItem>
@@ -1220,7 +1261,54 @@ export function QuestionExplorerPanel({
                   {selectedQuestion.kind === "multi_choice"
                     ? renderChoiceRows(selectedQuestion, "checkbox_option")
                     : null}
-                  {selectedQuestion.kind === "ordinal" ? (
+                  {selectedQuestion.kind === "single_choice" &&
+                  selectedLikertMapping &&
+                  !selectedScoreMapping ? (
+                    <div className="mt-7 flex max-w-md items-center justify-between gap-4 border-y py-4">
+                      <div>
+                        <p className="text-sm font-medium">점수형으로 해석</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          선택지 의미를 5점부터 1점까지로 해석합니다. 원본 응답은 바꾸지 않습니다.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setDraft((current) => ({
+                            ...current,
+                            targets: [
+                              ...current.targets.filter(
+                                (target) =>
+                                  !(
+                                    target.kind === "mean" &&
+                                    target.questionId === selectedQuestion.id
+                                  ),
+                              ),
+                              {
+                                id: meanTargetId(selectedQuestion.id),
+                                kind: "mean",
+                                questionId: selectedQuestion.id,
+                                intent: null,
+                                scoreMapping: selectedLikertMapping,
+                              },
+                            ],
+                          }));
+                          setEditingMean({
+                            questionId: selectedQuestion.id,
+                            questionTitle: selectedQuestion.title,
+                            min: 1,
+                            max: 5,
+                          });
+                          setMeanValue("");
+                        }}
+                      >
+                        사용
+                      </Button>
+                    </div>
+                  ) : null}
+                  {selectedIsScoreQuestion && selectedQuestion ? (
                     <div className="mt-8 max-w-md">
                       <p className="text-xs font-medium text-muted-foreground">평균</p>
                       <div className="mt-2 flex items-end justify-between gap-4">
@@ -1242,17 +1330,14 @@ export function QuestionExplorerPanel({
                           type="button"
                           size="sm"
                           variant="outline"
-                          disabled={
-                            selectedQuestion.min === undefined || selectedQuestion.max === undefined
-                          }
                           onClick={() => openMeanTarget(selectedQuestion)}
                         >
                           목표 설정
                         </Button>
                       </div>
-                      {selectedQuestion.min !== undefined && selectedQuestion.max !== undefined ? (
+                      {selectedQuestion.min !== undefined || selectedScoreMapping ? (
                         <p className="mt-2 text-xs text-muted-foreground">
-                          가능한 범위 {selectedQuestion.min}–{selectedQuestion.max}
+                          가능한 범위 {selectedQuestion.min ?? 1}–{selectedQuestion.max ?? 5}
                         </p>
                       ) : null}
                       <div className="mt-8 border-t pt-5">
@@ -1357,7 +1442,11 @@ export function QuestionExplorerPanel({
                   onValueChange={(value) => value && changePopulation(value)}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue />
+                    <SelectValue>
+                      {populationGroupId === "all"
+                        ? "전체 응답 대상"
+                        : `특정 그룹 · ${groups.find((group) => group.id === populationGroupId)?.name ?? "그룹"}`}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">전체 응답 대상</SelectItem>
@@ -1385,7 +1474,17 @@ export function QuestionExplorerPanel({
                 }}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue />
+                  <SelectValue>
+                    {(
+                      {
+                        absolute_share: "최종 비율",
+                        percentage_point_delta: "현재보다 %p 변경",
+                        relative_percent_delta: "현재 비율에서 % 변경",
+                        absolute_count: "최종 인원수",
+                        count_delta: "현재보다 인원수 변경",
+                      } as Record<string, string>
+                    )[mode] ?? "목표 선택"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="absolute_share">최종 비율</SelectItem>

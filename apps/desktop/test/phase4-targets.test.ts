@@ -53,6 +53,17 @@ const setup = (): AppDatabase => {
             ],
           },
           { id: "q-score", kind: "ordinal", min: 1, max: 5 },
+          {
+            id: "q-likert",
+            kind: "single_choice",
+            options: [
+              { key: "neutral", label: "Neutral" },
+              { key: "strongly-disagree", label: "Strongly Disagree" },
+              { key: "strongly-agree", label: "Strongly Agree" },
+              { key: "disagree", label: "Disagree" },
+              { key: "agree", label: "Agree" },
+            ],
+          },
           { id: "q-city", kind: "text" },
           {
             id: "q-checkbox",
@@ -77,6 +88,14 @@ const setup = (): AppDatabase => {
               value: { kind: "single_choice", optionKey: "female", label: "여성" },
             },
             "q-score": { state: "answered", value: { kind: "ordinal", value: 4 } },
+            "q-likert": {
+              state: "answered",
+              value: {
+                kind: "single_choice",
+                optionKey: "strongly-agree",
+                label: "Strongly Agree",
+              },
+            },
             "q-city": { state: "answered", value: { kind: "text", value: "Seoul" } },
             "q-checkbox": {
               state: "answered",
@@ -98,6 +117,10 @@ const setup = (): AppDatabase => {
               value: { kind: "single_choice", optionKey: "male", label: "남성" },
             },
             "q-score": { state: "answered", value: { kind: "ordinal", value: 5 } },
+            "q-likert": {
+              state: "answered",
+              value: { kind: "single_choice", optionKey: "disagree", label: "Disagree" },
+            },
             "q-city": { state: "answered", value: { kind: "text", value: "Busan" } },
             "q-checkbox": {
               state: "answered",
@@ -186,6 +209,21 @@ describe("Phase 4 target profile and draft lifecycle", () => {
         metric.subject.optionKey === "female",
     );
     expect(all.responseCount).toBe(2);
+    const likert = await service.profile("project-1", { kind: "all" }, [
+      {
+        questionId: "q-likert",
+        optionScores: [
+          { optionKey: "strongly-agree", score: 5 },
+          { optionKey: "agree", score: 4 },
+          { optionKey: "neutral", score: 3 },
+          { optionKey: "disagree", score: 2 },
+          { optionKey: "strongly-disagree", score: 1 },
+        ],
+      },
+    ]);
+    expect(
+      likert.metrics.find((metric) => metric.kind === "mean" && metric.questionId === "q-likert"),
+    ).toMatchObject({ mean: 3.5, denominatorCount: 2 });
     expect(femaleAll).toMatchObject({ count: 1, denominatorCount: 2, share: 0.5 });
     expect(
       all.metrics.find(
