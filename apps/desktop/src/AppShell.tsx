@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
-  FormImportResult,
   FormListItem,
   ProjectDetailView,
   ProjectSourceReviewResult,
@@ -15,7 +14,7 @@ import {
   getProject,
   getProjectSourceReview,
   getSession,
-  importForm,
+  importFormProject,
   listForms,
   listProjects,
   login,
@@ -49,6 +48,11 @@ import {
   promoteProjectChoice,
   recentProjectChoices,
 } from "./projectSwitcher";
+import {
+  MAX_PROJECT_NAME_LENGTH,
+  normalizeProjectName,
+  projectNameValidationMessage,
+} from "./newProject";
 import { recoverAppliedSourceRefresh } from "./sourceRefreshRecovery";
 
 type RuntimeState = "checking" | "ready" | "error";
@@ -66,11 +70,13 @@ export function AppShell() {
   const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
   const [projectSearchOpen, setProjectSearchOpen] = useState(false);
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [newProjectFormId, setNewProjectFormId] = useState<FormListItem["formId"] | null>(null);
+  const [newProjectName, setNewProjectName] = useState("");
   const [refreshBusy, setRefreshBusy] = useState(false);
   const [formsBusy, setFormsBusy] = useState(false);
   const [importOperationId, setImportOperationId] = useState<string | null>(null);
   const [importingFormId, setImportingFormId] = useState<string | null>(null);
-  const [importSummary, setImportSummary] = useState<FormImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const activeDraftFlushRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -130,6 +136,9 @@ export function AppShell() {
       setRefreshDialogOpen(false);
       setProjectSearchOpen(false);
       setProjectSearchQuery("");
+      setNewProjectOpen(false);
+      setNewProjectFormId(null);
+      setNewProjectName("");
       return;
     }
 
@@ -222,17 +231,34 @@ export function AppShell() {
     }
   };
 
-  const handleImport = async (form: FormListItem): Promise<void> => {
+  const openNewProjectDialog = (): void => {
+    setNewProjectFormId(null);
+    setNewProjectName("");
+    setNewProjectOpen(true);
+  };
+
+  const selectNewProjectForm = (form: FormListItem): void => {
+    setNewProjectFormId(form.formId);
+    setNewProjectName(form.title);
+  };
+
+  const handleImport = async (): Promise<void> => {
+    const form = forms.find((candidate) => candidate.formId === newProjectFormId);
+    const projectName = normalizeProjectName(newProjectName);
+    if (!form || projectNameValidationMessage(newProjectName)) return;
+    if (selectedProject && !(await flushActiveDraft())) return;
+
     const operationId = `form-import-${Date.now()}`;
     setImportOperationId(operationId);
     setImportingFormId(form.formId);
-    setImportSummary(null);
     setError(null);
 
     try {
-      const summary = await importForm(form.formId, operationId);
-      setImportSummary(summary);
+      const summary = await importFormProject(form.formId, projectName, operationId);
       setProjects(await listProjects());
+      setNewProjectOpen(false);
+      setNewProjectFormId(null);
+      setNewProjectName("");
       await openProject(summary.projectId);
     } catch (cause: unknown) {
       setError(appShellErrorMessage(cause, "import_form"));
@@ -355,6 +381,9 @@ export function AppShell() {
 
   const recentProjects = recentProjectChoices(projects, selectedProject?.id ?? null);
   const filteredProjects = filterProjectChoices(projects, projectSearchQuery);
+  const newProjectNameError = newProjectFormId
+    ? projectNameValidationMessage(newProjectName)
+    : null;
 
   if (runtimeState !== "ready") {
     return (
@@ -433,9 +462,7 @@ export function AppShell() {
                 <DropdownMenuItem onClick={() => setProjectSearchOpen(true)}>
                   프로젝트 검색…
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void handleProjectChange()}>
-                  새 프로젝트
-                </DropdownMenuItem>
+                <DropdownMenuItem onClick={openNewProjectDialog}>새 프로젝트</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => void handleProjectChange()}>
                   모든 프로젝트 보기
                 </DropdownMenuItem>
@@ -474,12 +501,22 @@ export function AppShell() {
           />
         </div>
       ) : (
-        <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-8 px-6 py-10 md:grid-cols-2">
+        <div className="mx-auto w-full max-w-3xl px-6 py-10">
           <section>
-            <h1 className="text-lg font-semibold tracking-tight">프로젝트</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              최근 작업을 열거나 새 Google Form을 가져오세요.
-            </p>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-lg font-semibold tracking-tight">프로젝트</h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  최근 작업을 열거나 새 프로젝트를 만드세요.
+                </p>
+              </div>
+              <Button
+                disabled={formsBusy || importingFormId !== null}
+                onClick={openNewProjectDialog}
+              >
+                새 프로젝트
+              </Button>
+            </div>
             <div className="mt-5 divide-y border-y">
               {projects.map((project) => (
                 <div key={project.id} className="flex items-center justify-between gap-4 py-3">
@@ -509,55 +546,111 @@ export function AppShell() {
               ) : null}
             </div>
           </section>
+        </div>
+      )}
 
-          <section>
-            <h2 className="text-lg font-semibold tracking-tight">Google Forms</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              사용할 Form을 선택해 프로젝트를 만듭니다.
-            </p>
-            <div className="mt-5 divide-y border-y">
+      <Dialog
+        open={newProjectOpen}
+        onOpenChange={(open) => {
+          if (importOperationId) return;
+          setNewProjectOpen(open);
+          if (!open) {
+            setNewProjectFormId(null);
+            setNewProjectName("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>새 프로젝트</DialogTitle>
+            <DialogDescription>
+              Google Form을 선택하고 이 앱에서 사용할 프로젝트 이름을 정합니다. Google Form 원본은
+              변경되지 않습니다.
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <p className="text-sm font-medium">Google Form</p>
+            <div className="mt-2 max-h-[220px] divide-y overflow-y-auto border-y">
               {forms.map((form) => (
-                <div key={form.formId} className="flex items-center justify-between gap-4 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{form.title}</p>
+                <button
+                  key={form.formId}
+                  type="button"
+                  className="flex w-full items-center justify-between gap-4 py-3 text-left disabled:opacity-50"
+                  disabled={importingFormId !== null}
+                  onClick={() => selectNewProjectForm(form)}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{form.title}</span>
                     {form.modifiedAt ? (
-                      <p className="mt-0.5 text-xs text-muted-foreground">수정 {form.modifiedAt}</p>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        수정 {form.modifiedAt}
+                      </span>
                     ) : null}
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={formsBusy || importingFormId !== null}
-                    onClick={() => void handleImport(form)}
-                  >
-                    {importingFormId === form.formId ? "가져오는 중…" : "가져오기"}
-                  </Button>
-                </div>
+                  </span>
+                  {newProjectFormId === form.formId ? (
+                    <span className="shrink-0 text-xs text-muted-foreground">선택됨</span>
+                  ) : null}
+                </button>
               ))}
-              {!formsBusy && forms.length === 0 ? (
+              {formsBusy ? (
+                <p className="py-5 text-sm text-muted-foreground">Google Forms를 불러오는 중…</p>
+              ) : forms.length === 0 ? (
                 <p className="py-5 text-sm text-muted-foreground">
                   접근 가능한 Google Form이 없습니다.
                 </p>
               ) : null}
             </div>
+          </div>
+          <div>
+            <label htmlFor="new-project-name" className="text-sm font-medium">
+              프로젝트 이름
+            </label>
+            <Input
+              id="new-project-name"
+              className="mt-2"
+              value={newProjectName}
+              maxLength={MAX_PROJECT_NAME_LENGTH}
+              disabled={!newProjectFormId || importingFormId !== null}
+              onChange={(event) => setNewProjectName(event.target.value)}
+              placeholder="프로젝트 이름"
+            />
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              기본값은 선택한 Google Form 이름입니다. 같은 이름의 프로젝트도 만들 수 있습니다.
+            </p>
+            {newProjectNameError ? (
+              <p className="mt-1.5 text-sm text-destructive">{newProjectNameError}</p>
+            ) : null}
+          </div>
+          <DialogFooter>
             {importOperationId ? (
-              <Button
-                className="mt-3"
-                size="sm"
-                variant="ghost"
-                onClick={() => void handleCancelImport()}
-              >
+              <Button type="button" variant="outline" onClick={() => void handleCancelImport()}>
                 가져오기 취소
               </Button>
-            ) : null}
-            {importSummary ? (
-              <p className="mt-3 text-sm text-muted-foreground">
-                {importSummary.title} 프로젝트를 만들었습니다.
-              </p>
-            ) : null}
-          </section>
-        </div>
-      )}
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setNewProjectOpen(false);
+                    setNewProjectFormId(null);
+                    setNewProjectName("");
+                  }}
+                >
+                  취소
+                </Button>
+                <Button
+                  type="button"
+                  disabled={!newProjectFormId || newProjectNameError !== null}
+                  onClick={() => void handleImport()}
+                >
+                  프로젝트 만들기
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={projectSearchOpen}

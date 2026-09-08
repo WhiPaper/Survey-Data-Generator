@@ -153,6 +153,40 @@ describe("Google Forms service", () => {
     });
   });
 
+  it("stores an explicit project name separately from the Google Form title", async () => {
+    const database = createDatabase();
+    const service = createFormsService({
+      auth: fakeAuth(),
+      google: fakeGoogle(),
+      db: database.db,
+      jobs: createJobRegistry(),
+      now: () => 2_000,
+    });
+
+    const summary = await service.importForm({
+      formId: "form-1" as FormId,
+      projectName: "  Q3 launch sample  ",
+    });
+
+    expect(getProject(database.db, summary.projectId)?.name).toBe("Q3 launch sample");
+    expect(summary.title).toBe("Event survey");
+  });
+
+  it("rejects an explicitly blank project name", async () => {
+    const database = createDatabase();
+    const service = createFormsService({
+      auth: fakeAuth(),
+      google: fakeGoogle(),
+      db: database.db,
+      jobs: createJobRegistry(),
+    });
+
+    await expect(
+      service.importForm({ formId: "form-1" as FormId, projectName: "   " }),
+    ).rejects.toMatchObject({ backendError: { code: "VALIDATION_FAILED" } });
+    expect(listProjects(database.db)).toEqual([]);
+  });
+
   it("creates a new immutable source revision only after an explicit successful refresh", async () => {
     const database = createDatabase();
     const google = fakeGoogle();

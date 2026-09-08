@@ -92,6 +92,7 @@ export type FormsListResult = z.infer<typeof FormsListResultSchema>;
 export const FormsImportParamsSchema = z
   .object({
     formId: FormIdSchema,
+    projectName: z.string().trim().min(1).max(120).optional(),
     operationId: z.string().min(1).max(200).optional(),
   })
   .strict();

@@ -84,6 +84,18 @@ export const createFormsService = ({
           );
         }
 
+        const requestedProjectName = params.projectName?.trim();
+        if (
+          params.projectName !== undefined &&
+          (!requestedProjectName || requestedProjectName.length > 120)
+        ) {
+          throw backendFailure(
+            "VALIDATION_FAILED",
+            "Project name must be between 1 and 120 characters",
+          );
+        }
+        const projectName = requestedProjectName ?? form.title;
+
         const rawResponses = await google.getAllResponses(account.id, params.formId, signal);
         if (rawResponses.length === 0) {
           throw backendFailure("VALIDATION_FAILED", "선택한 Google Form에 응답이 없습니다");
@@ -98,7 +110,7 @@ export const createFormsService = ({
         }
 
         const imported = createImportedProject(db, {
-          name: form.title,
+          name: projectName,
           googleAccountId: account.id,
           googleFormId: form.formId,
           formSnapshot: {
