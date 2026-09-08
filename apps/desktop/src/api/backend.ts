@@ -147,6 +147,17 @@ export const importForm = (
     invoker,
   );
 };
+export const importFormProject = (
+  formId: FormId,
+  projectName: string,
+  operationId?: string,
+  backend?: BackendInvoker,
+): Promise<FormImportSummary> =>
+  callBackend(
+    "forms.import",
+    { formId, projectName, ...(operationId === undefined ? {} : { operationId }) },
+    backend,
+  );
 export const cancelFormImport = (
   operationId: string,
   backend?: BackendInvoker,
