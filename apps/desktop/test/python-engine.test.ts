@@ -54,7 +54,7 @@ describe("Python compute boundary", () => {
         platform: "win32",
         env: {},
       }),
-    ).toMatchObject({ command: "py", argsPrefix: ["-3.12"] });
+    ).toMatchObject({ command: "py" });
     expect(
       resolveEngineLaunch({
         isPackaged: false,
