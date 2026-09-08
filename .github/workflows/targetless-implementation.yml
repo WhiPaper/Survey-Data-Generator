@@ -1,0 +1,133 @@
+name: targetless-generation-implementation
+
+on:
+  push:
+    branches:
+      - product/targetless-generation
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: product/targetless-generation
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apply targetless generation slice
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              if text.count(old) != 1:
+                  raise RuntimeError(f"expected one match in {path}, found {text.count(old)}")
+              file.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "apps/desktop/electron/main/targets/service.ts",
+              '''    if (draft.targets.length === 0) {\n      issues.push(targetIssue([], "domain_unsupported", "At least one target is required"));\n    }\n''',
+              '''    if (\n      draft.targets.length === 0 &&\n      draft.finalCount !== null &&\n      draft.finalCount <= context.responses.length\n    ) {\n      issues.push(\n        targetIssue(\n          [],\n          "out_of_range",\n          "Targetless generation requires the final count to exceed the source response count",\n        ),\n      );\n    }\n''',
+          )
+
+          replace_once(
+              "apps/desktop/src/QuestionExplorerPanel/index.tsx",
+              '''import { editPlanOutcomeValue } from "./editPlanPresentation";\nimport { resolvedCountForMode, targetKindForMode, targetModeAllowed } from "./targetModePolicy";\n''',
+              '''import { editPlanOutcomeValue } from "./editPlanPresentation";\nimport { generationBlockReason } from "./generationPolicy";\nimport { resolvedCountForMode, targetKindForMode, targetModeAllowed } from "./targetModePolicy";\n''',
+          )
+          replace_once(
+              "apps/desktop/src/QuestionExplorerPanel/index.tsx",
+              '''  const sourceCount = profile?.responseCount ?? project.responseCount;\n  const finalCount = draft.finalCount;\n  const finalCountInvalid = finalCount === null || finalCount < sourceCount;\n  const additions = finalCountInvalid || finalCount === null ? null : finalCount - sourceCount;\n''',
+              '''  const sourceCount = profile?.responseCount ?? project.responseCount;\n  const finalCount = draft.finalCount;\n  const generationBlock = generationBlockReason({\n    sourceCount,\n    finalCount,\n    targetCount: draft.targets.length,\n  });\n  const finalCountInvalid = generationBlock === "final_count_below_source";\n  const noAdditionalResponses = generationBlock === "no_additions";\n  const additions = finalCountInvalid || finalCount === null ? null : finalCount - sourceCount;\n''',
+          )
+          replace_once(
+              "apps/desktop/src/QuestionExplorerPanel/index.tsx",
+              '''              {` · ${draft.targets.length > 0 ? `목표 ${draft.targets.length}개` : "목표 없음"}`}\n            </p>\n            <Button\n              type="button"\n              disabled={busy || finalCountInvalid || draft.targets.length === 0}\n''',
+              '''              {` · ${draft.targets.length > 0 ? `목표 ${draft.targets.length}개` : "목표 없음"}`}\n              {noAdditionalResponses ? " · 추가로 생성할 응답이 없습니다." : ""}\n            </p>\n            <Button\n              type="button"\n              disabled={busy || generationBlock !== null}\n''',
+          )
+
+          Path("apps/desktop/src/QuestionExplorerPanel/generationPolicy.ts").write_text(
+              '''export type GenerationBlockReason = "final_count_below_source" | "no_additions" | null;\n\ntype GenerationPolicyInput = {\n  sourceCount: number;\n  finalCount: number | null;\n  targetCount: number;\n};\n\nexport const generationBlockReason = ({\n  sourceCount,\n  finalCount,\n  targetCount,\n}: GenerationPolicyInput): GenerationBlockReason => {\n  if (finalCount === null || finalCount < sourceCount) return "final_count_below_source";\n  if (targetCount === 0 && finalCount === sourceCount) return "no_additions";\n  return null;\n};\n''',
+              encoding="utf-8",
+          )
+
+          replace_once(
+              "apps/desktop/src/QuestionExplorerPanel/resultDiagnostics.ts",
+              '''export const resultSourceScopeLabel = (scope: SourceScope): string =>\n  scope.kind === "all" ? "전체 응답" : `${datePart(scope.start)} ~ ${datePart(scope.end)}`;\n\nexport const resultDiagnosticsLines = (run: RunsGetResult): string[] => {\n''',
+              '''export const resultSourceScopeLabel = (scope: SourceScope): string =>\n  scope.kind === "all" ? "전체 응답" : `${datePart(scope.start)} ~ ${datePart(scope.end)}`;\n\nexport const resultTargetNotice = (run: Pick<RunsGetResult, "outcome">): string | null =>\n  run.outcome.targets.length === 0 ? "설정한 분포 목표가 없습니다." : null;\n\nexport const resultDiagnosticsLines = (run: RunsGetResult): string[] => {\n''',
+          )
+          replace_once(
+              "apps/desktop/src/QuestionExplorerPanel/ResultView.tsx",
+              '''import { resultDiagnosticsLines } from "./resultDiagnostics";\n''',
+              '''import { resultDiagnosticsLines, resultTargetNotice } from "./resultDiagnostics";\n''',
+          )
+          replace_once(
+              "apps/desktop/src/QuestionExplorerPanel/ResultView.tsx",
+              '''  if (!context) {\n    return (\n      <div className="mx-auto max-w-[850px] px-8 py-10">\n        <p className="text-sm text-muted-foreground">아직 생성한 결과가 없습니다.</p>\n      </div>\n    );\n  }\n\n  return (\n''',
+              '''  if (!context) {\n    return (\n      <div className="mx-auto max-w-[850px] px-8 py-10">\n        <p className="text-sm text-muted-foreground">아직 생성한 결과가 없습니다.</p>\n      </div>\n    );\n  }\n\n  const targetNotice = resultTargetNotice(context.run);\n\n  return (\n''',
+          )
+          replace_once(
+              "apps/desktop/src/QuestionExplorerPanel/ResultView.tsx",
+              '''      <div className="divide-y">\n        {context.run.outcome.targets.map((outcome) => {\n''',
+              '''      <div className="divide-y">\n        {targetNotice ? (\n          <p className="py-5 text-sm text-muted-foreground">{targetNotice}</p>\n        ) : null}\n        {context.run.outcome.targets.map((outcome) => {\n''',
+          )
+
+          phase4 = Path("apps/desktop/test/phase4-targets.test.ts")
+          phase4_text = phase4.read_text(encoding="utf-8")
+          insertion = r'''\n\n  it("starts a targetless draft when the final count adds responses", async () => {\n    const database = setup();\n    let captured: SynthesisStartParams | null = null;\n    const service = createTargetService(\n      database.db,\n      captureSynthesis((params) => {\n        captured = params;\n      }),\n    );\n    const input: TargetDraft = {\n      projectId: "project-1",\n      finalCount: 4,\n      sourceScope: { kind: "all" },\n      seed: 42,\n      targets: [],\n    };\n\n    await expect(service.saveDraft(input)).resolves.toMatchObject(input);\n    await expect(service.validate(input)).resolves.toEqual({ issues: [] });\n    await service.startDraft("project-1", "targetless-test");\n\n    expect(captured).toMatchObject({\n      projectId: "project-1",\n      finalCount: 4,\n      sourceScope: { kind: "all" },\n      operationId: "targetless-test",\n      targets: [],\n      targetIntents: [],\n    });\n  });\n\n  it("does not start a targetless draft when there are no responses to add", async () => {\n    const database = setup();\n    let captured: SynthesisStartParams | null = null;\n    const service = createTargetService(\n      database.db,\n      captureSynthesis((params) => {\n        captured = params;\n      }),\n    );\n    const input: TargetDraft = {\n      projectId: "project-1",\n      finalCount: 2,\n      sourceScope: { kind: "all" },\n      seed: 42,\n      targets: [],\n    };\n\n    await service.saveDraft(input);\n    await expect(service.startDraft("project-1")).resolves.toMatchObject({\n      status: "infeasible",\n      issues: [\n        {\n          targetIds: [],\n          code: "out_of_range",\n          message: "Targetless generation requires the final count to exceed the source response count",\n        },\n      ],\n    });\n    expect(captured).toBeNull();\n  });'''
+          closing = "\n});\n"
+          index = phase4_text.rfind(closing)
+          if index < 0:
+              raise RuntimeError("phase4 test closing block not found")
+          phase4.write_text(phase4_text[:index] + insertion + phase4_text[index:], encoding="utf-8")
+
+          Path("apps/desktop/test/question-explorer-generation-policy.test.ts").write_text(
+              '''import { describe, expect, it } from "vitest";\n\nimport { generationBlockReason } from "../src/QuestionExplorerPanel/generationPolicy";\n\ndescribe("Question Explorer generation policy", () => {\n  it("allows targetless generation when the final count adds responses", () => {\n    expect(generationBlockReason({ sourceCount: 184, finalCount: 300, targetCount: 0 })).toBeNull();\n  });\n\n  it("blocks a targetless no-op with a dedicated reason", () => {\n    expect(generationBlockReason({ sourceCount: 184, finalCount: 184, targetCount: 0 })).toBe(\n      "no_additions",\n    );\n  });\n\n  it("preserves existing target-based generation at the source count", () => {\n    expect(generationBlockReason({ sourceCount: 184, finalCount: 184, targetCount: 1 })).toBeNull();\n  });\n\n  it("keeps final counts below the source count invalid", () => {\n    expect(generationBlockReason({ sourceCount: 184, finalCount: 183, targetCount: 0 })).toBe(\n      "final_count_below_source",\n    );\n  });\n});\n''',
+              encoding="utf-8",
+          )
+
+          Path("apps/desktop/test/result-target-notice.test.ts").write_text(
+              '''import { describe, expect, it } from "vitest";\n\nimport { resultTargetNotice } from "../src/QuestionExplorerPanel/resultDiagnostics";\n\ndescribe("targetless Result notice", () => {\n  it("shows the planned empty-target copy", () => {\n    expect(resultTargetNotice({ outcome: { targets: [] } })).toBe(\n      "설정한 분포 목표가 없습니다.",\n    );\n  });\n\n  it("does not add a notice when target outcomes exist", () => {\n    expect(\n      resultTargetNotice({\n        outcome: {\n          targets: [\n            {\n              targetId: "t-1" as never,\n              kind: "count",\n              requested: 2,\n              achieved: 2,\n              absoluteError: 0,\n              exact: true,\n              numeratorCount: 2,\n            },\n          ],\n        },\n      }),\n    ).toBeNull();\n  });\n});\n''',
+              encoding="utf-8",
+          )
+
+          Path("engine/test_targetless_generation.py").write_text(
+              '''from __future__ import annotations\n\nimport json\nimport tempfile\nimport unittest\nfrom pathlib import Path\n\nimport pandas as pd\n\nfrom main import run_synthesize\n\n\nclass TargetlessGenerationEngineTest(unittest.TestCase):\n    def test_targetless_generation_adds_rows_without_public_target_outcomes(self) -> None:\n        with tempfile.TemporaryDirectory() as directory:\n            root = Path(directory)\n            pd.DataFrame(\n                {\n                    "response_id": ["r1", "r2", "r3", "r4"],\n                    "q_0": ["A", "B", "A", "B"],\n                }\n            ).to_parquet(root / "source.parquet")\n            (root / "job.json").write_text(\n                json.dumps(\n                    {\n                        "protocol_version": 1,\n                        "kind": "synthesize",\n                        "source_parquet": "source.parquet",\n                        "result_parquet": "result.parquet",\n                        "report_json": "report.json",\n                        "final_count": 6,\n                        "mean_targets": [],\n                        "count_targets": [],\n                        "share_targets": [],\n                        "conditional_share_targets": [],\n                        "seed": 17,\n                        "id_column": "response_id",\n                        "categorical_columns": ["q_0"],\n                        "candidate_pool_size": 30,\n                    }\n                ),\n                encoding="utf-8",\n            )\n\n            report = run_synthesize(root / "job.json")\n\n            self.assertEqual(report["status"], "success")\n            self.assertEqual(report["sourceCount"], 4)\n            self.assertEqual(report["syntheticCount"], 2)\n            self.assertEqual(report["finalCount"], 6)\n            self.assertEqual(report["achieved"]["means"], [])\n            self.assertEqual(report["achieved"]["counts"], [])\n            self.assertEqual(report["achieved"]["shares"], [])\n            self.assertEqual(report["achieved"]["conditionalShares"], [])\n\n\nif __name__ == "__main__":\n    unittest.main()\n''',
+              encoding="utf-8",
+          )
+          PY
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - run: python -m pip install -r engine/requirements.txt
+      - run: pnpm run engine:test
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/desktop/electron/main/targets/service.ts \
+            apps/desktop/src/QuestionExplorerPanel/index.tsx \
+            apps/desktop/src/QuestionExplorerPanel/generationPolicy.ts \
+            apps/desktop/src/QuestionExplorerPanel/ResultView.tsx \
+            apps/desktop/src/QuestionExplorerPanel/resultDiagnostics.ts \
+            apps/desktop/test/phase4-targets.test.ts \
+            apps/desktop/test/question-explorer-generation-policy.test.ts \
+            apps/desktop/test/result-target-notice.test.ts \
+            engine/test_targetless_generation.py
+          git commit -m "feat: support targetless generation"
+          git push origin HEAD:product/targetless-generation
