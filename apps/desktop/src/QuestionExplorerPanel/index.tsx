@@ -908,14 +908,10 @@ export function QuestionExplorerPanel({
         setIssues(result.issues);
       }
     } catch (cause: unknown) {
+      const errorObject = cause as { code?: unknown; backendError?: { code?: unknown } };
       const errorCategory =
-        typeof cause === "object" && cause !== null && "code" in cause
-          ? String((cause as { code?: unknown }).code ?? "unknown")
-          : cause instanceof Error
-            ? cause.name || "error"
-            : typeof cause === "string"
-              ? "string_error"
-              : "unknown";
+        errorObject?.backendError?.code ?? errorObject?.code ??
+        (cause instanceof Error ? cause.name : typeof cause === "string" ? "string_error" : "unknown");
       console.error("generation_failed", { phase: "start", errorCategory });
       setError(questionExplorerErrorMessage(cause, "generate"));
     } finally {
