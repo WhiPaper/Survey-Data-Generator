@@ -1091,7 +1091,9 @@ export function QuestionExplorerPanel({
                 onValueChange={(next) => setSourceScopeKind(next as "all" | "submitted_between")}
               >
                 <SelectTrigger className="h-8 w-[190px]">
-                  <SelectValue />
+                  <SelectValue>
+                    {scopeEditor.kind === "all" ? `전체 응답 · ${sourceCount}명` : "응답 기간 선택"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">전체 응답 · {sourceCount}명</SelectItem>
