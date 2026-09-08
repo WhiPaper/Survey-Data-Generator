@@ -1437,7 +1437,11 @@ export function QuestionExplorerPanel({
                   onValueChange={(value) => value && changePopulation(value)}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue />
+                    <SelectValue>
+                      {populationGroupId === "all"
+                        ? "전체 응답 대상"
+                        : `특정 그룹 · ${groups.find((group) => group.id === populationGroupId)?.name ?? "그룹"}`}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">전체 응답 대상</SelectItem>
@@ -1465,7 +1469,15 @@ export function QuestionExplorerPanel({
                 }}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue />
+                  <SelectValue>
+                    {({
+                      absolute_share: "최종 비율",
+                      percentage_point_delta: "현재보다 %p 변경",
+                      relative_percent_delta: "현재 비율에서 % 변경",
+                      absolute_count: "최종 인원수",
+                      count_delta: "현재보다 인원수 변경",
+                    } as Record<string, string>)[mode] ?? "목표 선택"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="absolute_share">최종 비율</SelectItem>
