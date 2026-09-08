@@ -13,6 +13,16 @@ kept source-derived rows
 = final dataset
 ```
 
+For a Run created from a submitted-time SourceScope, the product may additionally offer an explicit **full source revision** export mode. This mode does not change the Run or rerun synthesis. It composes:
+
+```text
+source rows outside the frozen Run scope
++ the saved Run final rows inside the frozen scope
+= full-source composed dataset
+```
+
+The source rows outside the scope must come from the exact immutable SourceRevision frozen by the Run, not from the project's current/latest revision. This keeps historical export reproducible even after a later source refresh.
+
 Do not add provenance/debug columns by default, including:
 
 ```text
@@ -27,6 +37,8 @@ seed
 ## Ordering
 
 Default row order is response timestamp ascending with a stable tie-break. Synthetic timestamps therefore mix naturally with source-derived rows.
+
+The same ordering rule applies to full-source composed exports after untouched source rows and saved Run rows are merged.
 
 ## Columns
 
@@ -49,11 +61,13 @@ Keep export semantics aligned between CSV and XLSX through one shared logical ro
 
 CSV response timestamps use ISO 8601 with offset. XLSX uses datetime cells rendered consistently for the project's selected/display timezone.
 
-A Run created from a submitted-time SourceScope must export exactly that frozen final result; changing the current project scope later has no effect.
+A Run created from a submitted-time SourceScope must export exactly that frozen final result by default; changing the current project scope later has no effect. When the user explicitly chooses full-source composed export, only rows outside that frozen scope are taken from the Run's frozen SourceRevision and combined with the saved scoped result.
 
 ## Original replacement
 
 When a Run contains an approved EditPlan, export the approved final replacement row, not the imported source value. The immutable imported observation remains in persistence for provenance/review but is not the final dataset row.
+
+In full-source composed export, this replacement behavior applies only inside the Run scope. Untouched rows outside the scope come directly from the frozen SourceRevision.
 
 ## CSV
 
