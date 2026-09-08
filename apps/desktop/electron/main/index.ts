@@ -82,7 +82,19 @@ ipcMain.handle(BACKEND_CALL_CHANNEL, async (_event, serializedRequest: string) =
       result: await handleBackendCall(serializedRequest, backendServices),
     };
   } catch (error: unknown) {
-    return { ok: false as const, error: normalizeBackendError(error) };
+    const normalized = normalizeBackendError(error);
+    let method = "unknown";
+    try {
+      method = (JSON.parse(serializedRequest) as { method?: string }).method ?? method;
+    } catch {
+      // Keep malformed requests out of diagnostics.
+    }
+    console.error("backend_call_failed", {
+      method,
+      errorCategory: normalized.code,
+      errorType: error instanceof Error ? error.name : typeof error,
+    });
+    return { ok: false as const, error: normalized };
   }
 });
 
