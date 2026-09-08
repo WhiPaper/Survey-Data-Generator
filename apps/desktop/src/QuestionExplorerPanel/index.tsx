@@ -57,6 +57,7 @@ import {
 import { ResultView, type RunContext } from "./ResultView";
 import { TextInspector } from "./TextInspector";
 import { createDraftSaveCoordinator } from "./draftSaveCoordinator";
+import { editPlanOutcomeValue } from "./editPlanPresentation";
 import { resolvedCountForMode, targetKindForMode, targetModeAllowed } from "./targetModePolicy";
 import { questionPopulationText } from "./questionPopulation";
 import { questionExplorerErrorMessage } from "./userFacingError";
@@ -1676,8 +1677,8 @@ export function QuestionExplorerPanel({
                         {target ? targetLabel(target, questions, groups) : "목표"}
                       </p>
                       <p className="mt-1 tabular-nums text-muted-foreground">
-                        원본 유지 {appendOutcome.achieved.toFixed(3)} · 대체{" "}
-                        {replacementOutcome ? replacementOutcome.achieved.toFixed(3) : "—"}
+                        원본 유지 {editPlanOutcomeValue(appendOutcome)} · 대체{" "}
+                        {editPlanOutcomeValue(replacementOutcome)}
                       </p>
                     </div>
                   );
