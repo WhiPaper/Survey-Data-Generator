@@ -492,6 +492,8 @@ export function AppShell() {
   const recentProjects = recentProjectChoices(projects, selectedProject?.id ?? null);
   const filteredProjects = filterProjectChoices(projects, projectSearchQuery);
   const accountRows = accountSettingsRows(accounts, session?.account.id ?? null);
+  const selectedProjectDisplayName =
+    projects.find((project) => project.id === selectedProject?.id)?.name ?? selectedProject?.name;
   const newProjectNameError = newProjectFormId
     ? projectNameValidationMessage(newProjectName)
     : null;
@@ -549,7 +551,7 @@ export function AppShell() {
                     className="max-w-[280px] justify-start px-2 font-medium"
                     disabled={projectsBusy || refreshBusy}
                   >
-                    <span className="truncate">{selectedProject.name}</span>
+                    <span className="truncate">{selectedProjectDisplayName}</span>
                     <span className="shrink-0 text-muted-foreground" aria-hidden="true">
                       ▾
                     </span>
