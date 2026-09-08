@@ -84,6 +84,12 @@ export const callBackend = async <M extends RpcMethod>(
     request = createRequest(nextRequestId(), method, params);
   } catch (error) {
     if (error instanceof Error && error.name === "ZodError") {
+      console.error("backend_response_invalid", {
+        method,
+        errorCategory: "ZOD_RESPONSE",
+        errorType: error.name,
+        errorMessage: error.message,
+      });
       throw new BackendClientError(
         structuredError("VALIDATION_FAILED", "Backend request parameters are invalid"),
       );
