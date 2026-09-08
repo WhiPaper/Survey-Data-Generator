@@ -8,6 +8,7 @@ describe("Result historical presentation labels", () => {
       runPresentationLabel({
         targetId: "t-share" as never,
         questionId: "q-segment",
+        questionOrder: 0,
         questionTitle: "관심 분야",
         subjectLabel: "축제",
       }),
@@ -19,6 +20,7 @@ describe("Result historical presentation labels", () => {
       runPresentationLabel({
         targetId: "t-conditional" as never,
         questionId: "q-channel",
+        questionOrder: 1,
         questionTitle: "선호 채널",
         subjectLabel: "음악",
         populationLabel: "행사 관심",

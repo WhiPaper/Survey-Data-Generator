@@ -33,6 +33,14 @@ const historicalQuestionTitle = (form: Record<string, unknown>, questionId: stri
     : questionId;
 };
 
+const historicalQuestionOrder = (form: Record<string, unknown>, questionId: string): number => {
+  const index = formQuestions(form).findIndex((candidate) => candidate.id === questionId);
+  if (index < 0) {
+    throw backendFailure("INTERNAL", "Historical Run question is missing from its Form snapshot");
+  }
+  return index;
+};
+
 const historicalOptionLabel = (
   form: Record<string, unknown>,
   questionId: string,
@@ -61,6 +69,7 @@ export const buildRunTargetPresentations = (
       return {
         targetId: target.id,
         questionId: target.questionId,
+        questionOrder: historicalQuestionOrder(form, target.questionId),
         questionTitle,
         subjectLabel: questionTitle,
       };
@@ -71,6 +80,7 @@ export const buildRunTargetPresentations = (
       return {
         targetId: target.id,
         questionId: target.questionId,
+        questionOrder: historicalQuestionOrder(form, target.questionId),
         questionTitle: historicalQuestionTitle(form, target.questionId),
         subjectLabel: historicalOptionLabel(form, target.questionId, target.optionKey),
         populationLabel: target.population.valueGroup.name,
@@ -82,6 +92,7 @@ export const buildRunTargetPresentations = (
       return {
         targetId: target.id,
         questionId: subject.valueGroup.questionId,
+        questionOrder: historicalQuestionOrder(form, subject.valueGroup.questionId),
         questionTitle: historicalQuestionTitle(form, subject.valueGroup.questionId),
         subjectLabel: subject.valueGroup.name,
       };
@@ -90,6 +101,7 @@ export const buildRunTargetPresentations = (
     return {
       targetId: target.id,
       questionId: subject.questionId,
+      questionOrder: historicalQuestionOrder(form, subject.questionId),
       questionTitle: historicalQuestionTitle(form, subject.questionId),
       subjectLabel: historicalOptionLabel(form, subject.questionId, subject.optionKey),
     };

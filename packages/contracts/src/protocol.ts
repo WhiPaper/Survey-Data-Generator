@@ -697,6 +697,7 @@ export const RunTargetPresentationSchema = z
   .object({
     targetId: TargetIdSchema,
     questionId: z.string().min(1),
+    questionOrder: z.number().int().nonnegative(),
     questionTitle: z.string().min(1),
     subjectLabel: z.string().min(1),
     populationLabel: z.string().min(1).optional(),

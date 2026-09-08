@@ -67,24 +67,28 @@ describe("historical Run target presentation", () => {
       {
         targetId: "t-mean",
         questionId: "q-score",
+        questionOrder: 2,
         questionTitle: "만족도",
         subjectLabel: "만족도",
       },
       {
         targetId: "t-share",
         questionId: "q-segment",
+        questionOrder: 0,
         questionTitle: "관심 분야",
         subjectLabel: "축제",
       },
       {
         targetId: "t-group",
         questionId: "q-segment",
+        questionOrder: 0,
         questionTitle: "관심 분야",
         subjectLabel: "행사 관심",
       },
       {
         targetId: "t-conditional",
         questionId: "q-channel",
+        questionOrder: 1,
         questionTitle: "선호 채널",
         subjectLabel: "음악",
         populationLabel: "행사 관심",

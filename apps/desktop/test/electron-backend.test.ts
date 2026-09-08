@@ -194,6 +194,7 @@ describe("Electron v2 backend shell", () => {
     const presentation = {
       targetId: "t-mean" as never,
       questionId: "q-score",
+      questionOrder: 0,
       questionTitle: "생성 당시 만족도",
       subjectLabel: "생성 당시 만족도",
     };

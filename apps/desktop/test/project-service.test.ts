@@ -175,6 +175,7 @@ describe("project service", () => {
       {
         targetId: "t-share",
         questionId: "q1",
+        questionOrder: 0,
         questionTitle: "Original choice",
         subjectLabel: "Original A",
       },
