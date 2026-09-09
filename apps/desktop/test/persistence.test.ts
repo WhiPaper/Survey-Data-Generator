@@ -46,7 +46,11 @@ describe("v2 persistence", () => {
     const migrationFiles = readdirSync(migrationsFolder)
       .filter((name) => name.endsWith(".sql"))
       .sort();
-    expect(migrationFiles).toEqual(["0001_initial.sql", "0002_target_drafts.sql"]);
+    expect(migrationFiles).toEqual([
+      "0001_initial.sql",
+      "0002_target_drafts.sql",
+      "0003_composite_results.sql",
+    ]);
 
     const journal = JSON.parse(
       readFileSync(join(migrationsFolder, "meta", "_journal.json"), "utf8"),
@@ -59,6 +63,10 @@ describe("v2 persistence", () => {
       expect.objectContaining({
         idx: 1,
         tag: "0002_target_drafts",
+      }),
+      expect.objectContaining({
+        idx: 2,
+        tag: "0003_composite_results",
       }),
     ]);
 

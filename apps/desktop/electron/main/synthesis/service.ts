@@ -52,6 +52,7 @@ import {
   type DecodedRunRow,
 } from "./flat-table";
 import { buildRunTargetBaselines } from "./run-baseline";
+import { resolveSourceScope } from "../source-scope";
 
 export type CreateSynthesisServiceOptions = {
   db: SurveyDatabase;
@@ -410,16 +411,19 @@ export const createSynthesisService = ({
         throw backendFailure("VALIDATION_FAILED", "Project has no imported source revision");
       }
 
-      const revision = getSourceRevision(db, project.currentSourceRevisionId);
+      // Internal batch orchestration may supply an already-frozen revision. It is
+      // deliberately not part of the public IPC schema.
+      const requestedRevisionId = (params as SynthesisStartParams & { sourceRevisionId?: string })
+        .sourceRevisionId;
+      const revision = getSourceRevision(
+        db,
+        requestedRevisionId ?? project.currentSourceRevisionId,
+      );
       if (!revision || revision.projectId !== project.id) {
         throw backendFailure("INTERNAL", "Project source revision is invalid");
       }
-      const scope = freezeScope(
-        revision.id,
-        revision.responseSetHash,
-        listSourceResponses(db, revision.id),
-        params.sourceScope,
-      );
+      const resolvedScope = resolveSourceScope(db, revision.id, params.sourceScope);
+      const scope: FrozenScope = { ...resolvedScope, kind: resolvedScope.sourceScope.kind };
       if (scope.responses.length === 0) {
         return {
           status: "infeasible",

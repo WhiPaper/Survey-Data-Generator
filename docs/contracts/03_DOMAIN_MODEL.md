@@ -184,6 +184,10 @@ app version
 
 A saved Run is immutable.
 
+## Composite augmentation
+
+A batch is editable orchestration above independent single-scope Runs. A saved CompositeResult freezes one base revision and ordered child Runs; v1 rejects overlapping response membership. See `18_COMPOSITE_AUGMENTATION.md`.
+
 ## Result rows
 
 The persisted/imported source row and the run's final output row are distinct concepts.

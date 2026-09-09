@@ -15,6 +15,13 @@
       "when": 1788757200000,
       "tag": "0002_target_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788910227671,
+      "tag": "0003_composite_results",
+      "breakpoints": true
     }
   ]
 }

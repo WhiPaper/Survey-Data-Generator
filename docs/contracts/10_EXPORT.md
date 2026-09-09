@@ -4,6 +4,8 @@
 
 Export is a representation of a saved Run result. It does not rerun synthesis.
 
+Saved CompositeResults export through the same logical table after composing untouched base rows with each saved child Run, using the frozen base Form snapshot.
+
 The default logical table is:
 
 ```text

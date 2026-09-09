@@ -10,6 +10,7 @@ import { handleBackendCall, type BackendServices } from "./backend";
 import { createPythonEngine, resolveEngineLaunch } from "./compute/python-engine";
 import { normalizeBackendError } from "./errors";
 import { createRunExportService } from "./export/service";
+import { createCompositeService } from "./composites/service";
 import { createGoogleFormsClient } from "./forms/google-client";
 import { createFormsService } from "./forms/service";
 import { createJobRegistry } from "./jobs";
@@ -136,15 +137,18 @@ void app
       workRoot: join(userDataPath, "compute-jobs"),
     });
     const runExports = createRunExportService(appDatabase.db);
+    const targets = createTargetService(appDatabase.db, synthesis);
+    const composites = createCompositeService(appDatabase.db, synthesis, targets);
 
     backendServices = {
       auth,
       forms,
       projects: createProjectService({ db: appDatabase.db }),
       valueGroups: createValueGroupService(appDatabase.db),
-      targets: createTargetService(appDatabase.db, synthesis),
+      targets,
       synthesis,
       runExports,
+      composites,
       pickRunExportDestination: async ({ format }) => {
         const isCsv = format === "csv";
         const result = await dialog.showSaveDialog({

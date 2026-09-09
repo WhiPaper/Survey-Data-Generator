@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { asc, eq } from "drizzle-orm";
 
 import type {
@@ -24,13 +22,9 @@ import type {
 import { backendFailure } from "../errors";
 import type { SurveyDatabase } from "../persistence/database";
 import { formSnapshots, targetDrafts, valueGroups } from "../persistence/schema";
-import {
-  getProject,
-  getSourceRevision,
-  listSourceResponses,
-  type StoredSourceResponse,
-} from "../persistence/store";
+import { getProject, getSourceRevision, type StoredSourceResponse } from "../persistence/store";
 import type { SynthesisService } from "../synthesis/service";
+import { resolveSourceScope } from "../source-scope";
 
 type ScopeContext = {
   revisionId: string;
@@ -42,24 +36,6 @@ type ScopeContext = {
 };
 
 type ValueGroupRecord = typeof valueGroups.$inferSelect;
-
-const parseTimestamp = (value: string, label: string): number => {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) {
-    throw backendFailure("VALIDATION_FAILED", `${label} timestamp is invalid`);
-  }
-  return timestamp;
-};
-
-const subsetHash = (revisionId: string, responses: readonly StoredSourceResponse[]): string => {
-  const hash = createHash("sha256");
-  hash.update(revisionId);
-  for (const response of responses) {
-    hash.update("\0");
-    hash.update(response.responseId);
-  }
-  return hash.digest("hex");
-};
 
 const parseForm = (schemaJson: string): FormSnapshot => {
   const parsed = JSON.parse(schemaJson) as unknown;
@@ -84,13 +60,14 @@ const scopeContext = (
   db: SurveyDatabase,
   projectId: string,
   requested: SourceScope | undefined,
+  explicitRevisionId?: string,
 ): ScopeContext => {
   const project = getProject(db, projectId);
   if (!project) throw backendFailure("NOT_FOUND", "Project was not found");
   if (!project.currentSourceRevisionId) {
     throw backendFailure("VALIDATION_FAILED", "Project has no imported source revision");
   }
-  const revision = getSourceRevision(db, project.currentSourceRevisionId);
+  const revision = getSourceRevision(db, explicitRevisionId ?? project.currentSourceRevisionId);
   if (!revision || revision.projectId !== project.id) {
     throw backendFailure("INTERNAL", "Project source revision is invalid");
   }
@@ -101,37 +78,13 @@ const scopeContext = (
     .get();
   if (!snapshot) throw backendFailure("INTERNAL", "Source revision Form snapshot is missing");
 
-  const allResponses = listSourceResponses(db, revision.id);
-  const sourceScope = requested ?? { kind: "all" as const };
-  if (sourceScope.kind === "all") {
-    return {
-      revisionId: revision.id,
-      revisionHash: revision.responseSetHash,
-      sourceScope,
-      responses: allResponses,
-      responseSetHash: revision.responseSetHash,
-      form: parseForm(snapshot.schemaJson),
-    };
-  }
-
-  const startMs = parseTimestamp(sourceScope.start, "Start");
-  const endMs = parseTimestamp(sourceScope.end, "End");
-  if (startMs > endMs) {
-    throw backendFailure("VALIDATION_FAILED", "SourceScope start must not be after end");
-  }
-  const responses = allResponses.filter(
-    (response) => response.submittedAtMs >= startMs && response.submittedAtMs <= endMs,
-  );
+  const resolved = resolveSourceScope(db, revision.id, requested);
   return {
     revisionId: revision.id,
     revisionHash: revision.responseSetHash,
-    sourceScope: {
-      kind: "submitted_between",
-      start: new Date(startMs).toISOString(),
-      end: new Date(endMs).toISOString(),
-    },
-    responses,
-    responseSetHash: subsetHash(revision.id, responses),
+    sourceScope: resolved.sourceScope,
+    responses: resolved.responses,
+    responseSetHash: resolved.responseSetHash,
     form: parseForm(snapshot.schemaJson),
   };
 };
@@ -688,13 +641,12 @@ const resolveTarget = (
   };
 };
 
-const profile = (
+const profileFromContext = (
   db: SurveyDatabase,
   projectId: string,
-  sourceScope?: SourceScope,
+  context: ScopeContext,
   scoreMappings?: readonly LikertScoreMapping[],
 ): TargetProfileResult => {
-  const context = scopeContext(db, projectId, sourceScope);
   const groups = projectGroups(db, projectId);
   const metrics: TargetProfileResult["metrics"] = [];
 
@@ -774,9 +726,23 @@ const profile = (
   };
 };
 
+const profile = (
+  db: SurveyDatabase,
+  projectId: string,
+  sourceScope?: SourceScope,
+  scoreMappings?: readonly LikertScoreMapping[],
+): TargetProfileResult =>
+  profileFromContext(db, projectId, scopeContext(db, projectId, sourceScope), scoreMappings);
+
 export interface TargetService {
   profile(
     projectId: string,
+    sourceScope?: SourceScope,
+    scoreMappings?: LikertScoreMapping[],
+  ): Promise<TargetProfileResult>;
+  profileForRevision(
+    projectId: string,
+    sourceRevisionId: string,
     sourceScope?: SourceScope,
     scoreMappings?: LikertScoreMapping[],
   ): Promise<TargetProfileResult>;
@@ -792,6 +758,11 @@ export const createTargetService = (
 ): TargetService => ({
   profile: async (projectId, sourceScope, scoreMappings) =>
     profile(db, projectId, sourceScope, scoreMappings),
+
+  profileForRevision: async (projectId, sourceRevisionId, sourceScope, scoreMappings) => {
+    const context = scopeContext(db, projectId, sourceScope, sourceRevisionId);
+    return profileFromContext(db, projectId, context, scoreMappings);
+  },
 
   validate: async (draft) => ({ issues: validateDraft(db, draft).issues }),
 
