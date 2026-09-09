@@ -21,6 +21,8 @@ Use PyInstaller first unless packaging/size/startup benchmarks justify another t
 
 The compute executable is versioned and shipped with the application. It is not separately downloaded or updated in v2.
 
+`SURVEY_SYNTH_ENGINE_EXECUTABLE` is a development-only override. Packaged applications always resolve and execute the engine bundled under `resources/engine`; user-installed Python and environment overrides must not affect packaged compute.
+
 ## Initial targets
 
 Initial release packaging targets:

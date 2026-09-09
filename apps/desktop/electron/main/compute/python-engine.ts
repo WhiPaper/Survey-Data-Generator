@@ -181,9 +181,6 @@ export const resolveEngineLaunch = ({
   env = process.env,
 }: ResolveEngineLaunchOptions): EngineLaunch => {
   const pathApi = platform === "win32" ? win32 : posix;
-  const explicit = env.SURVEY_SYNTH_ENGINE_EXECUTABLE?.trim();
-  if (explicit) return { command: explicit, argsPrefix: [] };
-
   if (isPackaged) {
     return {
       command: pathApi.join(
@@ -194,6 +191,9 @@ export const resolveEngineLaunch = ({
       argsPrefix: [],
     };
   }
+
+  const explicit = env.SURVEY_SYNTH_ENGINE_EXECUTABLE?.trim();
+  if (explicit) return { command: explicit, argsPrefix: [] };
 
   if (env.SURVEY_SYNTH_PYTHON?.trim()) {
     return {
@@ -209,6 +209,7 @@ export const resolveEngineLaunch = ({
 export type CreatePythonEngineOptions = {
   jobs: JobRegistry;
   launch: EngineLaunch;
+  development?: boolean;
 };
 
 export interface PythonEngine {
@@ -437,6 +438,7 @@ const runEngineProcess = async (
   launch: EngineLaunch,
   operationId: string,
   args: string[],
+  development: boolean,
 ): Promise<void> => {
   let child: ChildProcess | null = null;
   const signal = jobs.start(operationId, () => child?.kill());
@@ -467,6 +469,15 @@ const runEngineProcess = async (
           return;
         }
         if (code !== 0) {
+          if (development) {
+            console.error("python_compute_failed", {
+              command: launch.command,
+              args: [...launch.argsPrefix, ...args],
+              exitCode: code,
+              stdout,
+              stderr,
+            });
+          }
           rejectRun(
             backendFailure(
               "INTERNAL",
@@ -474,6 +485,14 @@ const runEngineProcess = async (
             ),
           );
           return;
+        }
+        if (development && stderr.trim()) {
+          console.error("python_compute_stderr", {
+            command: launch.command,
+            args: [...launch.argsPrefix, ...args],
+            exitCode: code,
+            stderr,
+          });
         }
         resolveRun();
       });
@@ -492,14 +511,30 @@ const runEngineProcess = async (
   }
 };
 
-export const createPythonEngine = ({ jobs, launch }: CreatePythonEngineOptions): PythonEngine => ({
+export const createPythonEngine = ({
+  jobs,
+  launch,
+  development = false,
+}: CreatePythonEngineOptions): PythonEngine => ({
   selftest: async (operationId, workDir) => {
-    await runEngineProcess(jobs, launch, operationId, ["selftest", "--work-dir", workDir]);
+    await runEngineProcess(
+      jobs,
+      launch,
+      operationId,
+      ["selftest", "--work-dir", workDir],
+      development,
+    );
     return parseSmokeReport(await readReport(join(workDir, "report.json")));
   },
 
   synthesize: async (operationId, jobPath, reportPath) => {
-    await runEngineProcess(jobs, launch, operationId, ["synthesize", "--job", jobPath]);
+    await runEngineProcess(
+      jobs,
+      launch,
+      operationId,
+      ["synthesize", "--job", jobPath],
+      development,
+    );
     return parseSynthesisReport(await readReport(reportPath));
   },
 

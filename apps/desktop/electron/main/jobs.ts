@@ -1,4 +1,4 @@
-export const createJobRegistry = () => {
+export const createJobRegistry = ({ development = false }: { development?: boolean } = {}) => {
   const jobs = new Map<
     string,
     {
@@ -12,11 +12,13 @@ export const createJobRegistry = () => {
       if (jobs.has(id)) throw new Error(`Job already exists: ${id}`);
       const controller = new AbortController();
       jobs.set(id, { controller, onCancel });
+      if (development) console.info("job_started", { id });
       return controller.signal;
     },
 
     finish(id: string): void {
       jobs.delete(id);
+      if (development) console.info("job_finished", { id });
     },
 
     cancel(id: string): boolean {
@@ -27,6 +29,7 @@ export const createJobRegistry = () => {
         job.onCancel?.();
       } finally {
         jobs.delete(id);
+        if (development) console.info("job_cancelled", { id });
       }
       return true;
     },

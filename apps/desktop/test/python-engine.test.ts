@@ -87,6 +87,16 @@ describe("Python compute boundary", () => {
 
     expect(
       resolveEngineLaunch({
+        isPackaged: true,
+        appPath: "/opt/survey-synth/resources/app.asar",
+        resourcesPath: "/opt/survey-synth/resources",
+        platform: "linux",
+        env: { SURVEY_SYNTH_ENGINE_EXECUTABLE: "/usr/bin/python3.14" },
+      }).command,
+    ).toBe("/opt/survey-synth/resources/engine/survey-synth-engine");
+
+    expect(
+      resolveEngineLaunch({
         isPackaged: false,
         appPath: "/opt/survey-synth/apps/desktop",
         resourcesPath: "/opt/survey-synth/resources",

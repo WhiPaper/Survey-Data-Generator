@@ -165,3 +165,7 @@ A new custom subsystem requires an actual scenario or benchmark showing the curr
 ## ADR-031 — Multi-scope composition is above Runs
 
 An editable batch orchestrates independent single-scope Runs against one frozen base source revision. Immutable composite results reference those saved Runs and reject overlapping source response membership in v1. Ordered overlap composition is deferred.
+
+## ADR-032 — Development diagnostics are lossless
+
+In development, Electron Main must log the original exception and the complete Python compute failure context (command, exit code, stdout, and stderr). Renderer-facing errors may remain normalized for stable UI behavior, but backend failures must not be diagnosable only as `Unexpected backend error`.

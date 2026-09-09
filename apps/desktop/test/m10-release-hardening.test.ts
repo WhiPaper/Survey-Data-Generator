@@ -81,6 +81,14 @@ describe("M10 release hardening", () => {
       message: "Unexpected backend error",
       recoverable: true,
     });
+    expect(
+      normalizeBackendError(new Error("engine exploded"), { exposeInternalDetails: true }),
+    ).toMatchObject({
+      code: "INTERNAL",
+      message: "engine exploded",
+      details: { stack: expect.any(String) },
+      recoverable: true,
+    });
   });
 
   it("uses sanitized startup diagnostics instead of logging raw initialization errors", () => {

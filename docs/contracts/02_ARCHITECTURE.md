@@ -99,6 +99,18 @@ Do not move large row datasets through renderer IPC.
 
 Small progress messages may be emitted on stdout as structured JSON lines. Logging goes to stderr. This is not a general request/response RPC protocol.
 
+### Development error observability
+
+Development execution (`pnpm dev`) must preserve the complete diagnostic chain in the Electron Main console. This includes:
+
+- the backend method and normalized product-facing error;
+- the original JavaScript exception and stack when an IPC/backend call fails;
+- Python engine command, exit code, captured stdout, and captured stderr when a compute job fails;
+- Python stderr even when the process exits successfully, because dependency warnings and backend diagnostics may explain a later report or validation failure.
+- backend-call and compute-job start/success/failure/cancellation lifecycle events, identified by method or operation ID and without secrets or response payloads.
+
+Production/package user responses may normalize internal errors, but normalization must not prevent these development diagnostics from being emitted. Backend failures must never be represented only as `Unexpected backend error` in development logs.
+
 ## Cancellation
 
 A running compute job has a durable application-level job record independent of renderer request lifetime.

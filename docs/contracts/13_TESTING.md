@@ -127,6 +127,8 @@ Electron/application job input
 
 Cover cancellation, malformed input, engine failure, and cleanup of partial output.
 
+The Electron development logging path must also be tested or manually smoke-verified for an engine failure: the console includes the original engine stderr, stdout, command, and exit code, while the renderer receives the stable product-facing error category.
+
 ## Export
 
 Export the same saved Run to CSV and XLSX and compare the logical table after reading both back.

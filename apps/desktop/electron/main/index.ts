@@ -27,12 +27,21 @@ const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
 const WINDOW_CLOSE_REQUEST_CHANNEL = "survey-synth:window-close-request";
 const WINDOW_CLOSE_RESPONSE_CHANNEL = "survey-synth:window-close-response";
 const closeGates = new WeakMap<BrowserWindow, ReturnType<typeof createWindowCloseGate>>();
+const developmentMode = !app.isPackaged;
 const packagedSmoke = app.isPackaged && process.env.SURVEY_SYNTH_PACKAGED_SMOKE === "1";
 const packagedSmokeUserData = process.env.SURVEY_SYNTH_PACKAGED_SMOKE_DIR?.trim();
 if (packagedSmoke && packagedSmokeUserData) app.setPath("userData", packagedSmokeUserData);
+// Electron otherwise may silently select Chromium's insecure basic_text backend on Linux.
+// Force the Secret Service/libsecret backend before app readiness is reached.
+if (process.platform === "linux") app.commandLine.appendSwitch("password-store", "gnome-libsecret");
 
 let appDatabase: AppDatabase | null = null;
 let backendServices: BackendServices = {};
+
+if (developmentMode) {
+  process.on("uncaughtException", (error) => console.error("uncaught_exception", error));
+  process.on("unhandledRejection", (reason) => console.error("unhandled_rejection", reason));
+}
 
 const createWindow = (): BrowserWindow => {
   const window = new BrowserWindow({
@@ -77,24 +86,33 @@ ipcMain.on(WINDOW_CLOSE_RESPONSE_CHANNEL, (event, canClose: unknown) => {
 });
 
 ipcMain.handle(BACKEND_CALL_CHANNEL, async (_event, serializedRequest: string) => {
+  let method = "unknown";
   try {
-    return {
+    method = (JSON.parse(serializedRequest) as { method?: string }).method ?? method;
+  } catch {
+    // The request parser below reports malformed requests.
+  }
+  if (developmentMode) console.info("backend_call_started", { method });
+  try {
+    const response = {
       ok: true as const,
       result: await handleBackendCall(serializedRequest, backendServices),
     };
+    if (developmentMode) console.info("backend_call_succeeded", { method });
+    return response;
   } catch (error: unknown) {
-    const normalized = normalizeBackendError(error);
-    let method = "unknown";
-    try {
-      method = (JSON.parse(serializedRequest) as { method?: string }).method ?? method;
-    } catch {
-      // Keep malformed requests out of diagnostics.
-    }
+    const normalized = normalizeBackendError(error, {
+      exposeInternalDetails: developmentMode,
+    });
     console.error("backend_call_failed", {
       method,
       errorCategory: normalized.code,
+      errorMessage: normalized.message,
       errorType: error instanceof Error ? error.name : typeof error,
     });
+    if (developmentMode) {
+      console.error("backend_call_failed_detail", error);
+    }
     return { ok: false as const, error: normalized };
   }
 });
@@ -120,11 +138,12 @@ void app
       refreshTokens,
       google: googleProvider,
     });
-    const jobs = createJobRegistry();
+    const jobs = createJobRegistry({ development: developmentMode });
     const googleForms = createGoogleFormsClient({ auth });
     const forms = createFormsService({ auth, google: googleForms, db: appDatabase.db, jobs });
     const engine = createPythonEngine({
       jobs,
+      development: !app.isPackaged,
       launch: resolveEngineLaunch({
         isPackaged: app.isPackaged,
         appPath: app.getAppPath(),
@@ -186,6 +205,9 @@ void app
   .catch((error: unknown) => {
     const normalized = normalizeBackendError(error);
     console.error("Failed to initialize Survey Synth:", normalized.code, normalized.message);
+    if (developmentMode) {
+      console.error("Failed to initialize Survey Synth (detail):", error);
+    }
     app.quit();
   });
 
