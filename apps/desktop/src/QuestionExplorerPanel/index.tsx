@@ -31,7 +31,6 @@ import {
   listValueGroupValues,
   resolveSynthesisEditPlan,
   saveTargetDraft,
-  startTargetDraft,
   startComposite,
   resolveCompositeEditPlan,
   saveCompositeDraft,
@@ -957,47 +956,6 @@ export function QuestionExplorerPanel({
       .catch(() => undefined);
   };
 
-  const generate = async (): Promise<void> => {
-    setBusy(true);
-    setMessage(null);
-    setError(null);
-    setIssues([]);
-    setEditPlan(null);
-    try {
-      await flushDraft();
-      const result = await startTargetDraft(project.id, `ui-generate-${Date.now()}`);
-      if (result.status === "success") {
-        await recordRun(result.runId);
-      } else if (result.status === "approval_required") {
-        setEditPlan({ planId: result.planId, preview: result.editPlan });
-      } else {
-        setIssues(result.issues);
-      }
-    } catch (cause: unknown) {
-      const errorObject = cause as {
-        code?: unknown;
-        backendError?: { code?: unknown; message?: unknown };
-      };
-      const errorMessage = errorObject?.backendError?.message;
-      const errorCategory =
-        errorObject?.backendError?.code ??
-        errorObject?.code ??
-        (cause instanceof Error
-          ? cause.name
-          : typeof cause === "string"
-            ? "string_error"
-            : "unknown");
-      console.error("generation_failed", {
-        phase: "start",
-        errorCategory,
-        ...(typeof errorMessage === "string" ? { errorMessage } : {}),
-      });
-      setError(questionExplorerErrorMessage(cause, "generate"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const selectRule = (index: number) => {
     const next = ruleDrafts[index];
     if (!next) return;
@@ -1682,7 +1640,7 @@ export function QuestionExplorerPanel({
             <Button
               type="button"
               disabled={busy || sourceScopeDirty || generationBlock !== null}
-              onClick={() => void (ruleIds.length > 1 ? generateBatch() : generate())}
+              onClick={() => void generateBatch()}
             >
               {busy ? "설정 확인 중…" : ruleIds.length > 1 ? "일괄 생성" : "생성"}
             </Button>
