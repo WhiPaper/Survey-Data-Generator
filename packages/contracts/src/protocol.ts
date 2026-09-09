@@ -412,7 +412,8 @@ export const SynthesisStartParamsSchema = z
   .object({
     projectId: ProjectIdSchema,
     finalCount: z.number().int().positive(),
-    targets: z.array(SynthesisTargetSchema).min(1),
+    // A positive targetless augmentation preserves the scoped source distribution.
+    targets: z.array(SynthesisTargetSchema),
     targetIntents: z.array(SynthesisTargetIntentSnapshotSchema).optional(),
     scoreMappings: z.array(LikertScoreMappingSchema).optional(),
     sourceScope: SourceScopeSchema.optional(),
@@ -475,6 +476,79 @@ export const SynthesisStartParamsSchema = z
     });
   });
 export type SynthesisStartParams = z.infer<typeof SynthesisStartParamsSchema>;
+
+export const AugmentationCountSpecSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("add"), value: z.number().int().positive() }).strict(),
+  z.object({ kind: z.literal("final"), value: z.number().int().positive() }).strict(),
+]);
+export type AugmentationCountSpec = z.infer<typeof AugmentationCountSpecSchema>;
+
+export const AugmentationRuleSchema = z
+  .object({
+    ruleId: z.string().min(1),
+    sourceScope: SourceScopeSchema,
+    count: AugmentationCountSpecSchema,
+    targets: z.array(SynthesisTargetSchema),
+    targetIntents: z.array(SynthesisTargetIntentSnapshotSchema).optional(),
+    scoreMappings: z.array(LikertScoreMappingSchema).optional(),
+    seed: z.number().int(),
+  })
+  .strict();
+export type AugmentationRule = z.infer<typeof AugmentationRuleSchema>;
+
+export const AugmentationBatchDraftSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    overlapPolicy: z.literal("reject"),
+    rules: z.array(AugmentationRuleSchema).min(1),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const ids = new Set<string>();
+    value.rules.forEach((rule, index) => {
+      if (ids.has(rule.ruleId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["rules", index, "ruleId"],
+          message: "RuleId must be unique",
+        });
+      }
+      ids.add(rule.ruleId);
+      const targetIds = new Set<string>();
+      rule.targets.forEach((target, targetIndex) => {
+        if (targetIds.has(String(target.id))) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["rules", index, "targets", targetIndex, "id"],
+            message: "TargetId must be unique within a rule",
+          });
+        }
+        targetIds.add(String(target.id));
+      });
+    });
+  });
+export type AugmentationBatchDraft = z.infer<typeof AugmentationBatchDraftSchema>;
+
+export const AugmentationBatchEditorRuleSchema = z
+  .object({
+    ruleId: z.string().min(1),
+    draft: TargetDraftSchema,
+    count: AugmentationCountSpecSchema,
+  })
+  .strict();
+export const AugmentationBatchEditorDraftSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    rules: z.array(AugmentationBatchEditorRuleSchema).min(1),
+  })
+  .strict();
+export type AugmentationBatchEditorDraft = z.infer<typeof AugmentationBatchEditorDraftSchema>;
+export const AugmentationBatchEditorDraftViewSchema = AugmentationBatchEditorDraftSchema.extend({
+  updatedAt: z.string().min(1),
+}).strict();
+export type AugmentationBatchEditorDraftView = z.infer<
+  typeof AugmentationBatchEditorDraftViewSchema
+>;
 
 export const TargetOutcomeSchema = z
   .object({
@@ -775,10 +849,60 @@ export type RunsExportParams = z.infer<typeof RunsExportParamsSchema>;
 export const RunsExportResultSchema = z.object({ status: z.enum(["saved", "cancelled"]) }).strict();
 export type RunsExportResult = z.infer<typeof RunsExportResultSchema>;
 
+export const CompositeChildSchema = z
+  .object({
+    ruleId: z.string().min(1),
+    runId: z.string().min(1),
+    count: AugmentationCountSpecSchema,
+    sourceScope: SourceScopeSchema,
+    scopeResponseCount: z.number().int().nonnegative(),
+    finalResponseCount: z.number().int().nonnegative(),
+    outcome: TargetSetOutcomeSchema,
+  })
+  .strict();
+export type CompositeChild = z.infer<typeof CompositeChildSchema>;
+
+export const CompositeResultSchema = z
+  .object({
+    compositeId: z.string().min(1),
+    projectId: ProjectIdSchema,
+    sourceRevisionId: z.string().min(1),
+    overlapPolicy: z.literal("reject"),
+    createdAt: z.string().min(1),
+    finalResponseCount: z.number().int().nonnegative(),
+    children: z.array(CompositeChildSchema).min(1),
+  })
+  .strict();
+export type CompositeResult = z.infer<typeof CompositeResultSchema>;
+
+export const CompositeStartResultSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("success"), composite: CompositeResultSchema }).strict(),
+  z
+    .object({
+      status: z.literal("approval_required"),
+      batchId: z.string().min(1),
+      ruleId: z.string().min(1),
+      planId: z.string().min(1),
+      editPlan: EditPlanPreviewSchema,
+    })
+    .strict(),
+  z.object({ status: z.literal("infeasible"), issues: z.array(TargetIssueSchema) }).strict(),
+]);
+export type CompositeStartResult = z.infer<typeof CompositeStartResultSchema>;
+export const CompositeResolveEditPlanParamsSchema = z
+  .object({ batchId: z.string().min(1), choice: z.enum(["append_only", "replacement"]) })
+  .strict();
+export type CompositeResolveEditPlanParams = z.infer<typeof CompositeResolveEditPlanParamsSchema>;
+export const CompositeExportParamsSchema = z
+  .object({ compositeId: z.string().min(1), format: RunExportFormatSchema })
+  .strict();
+export type CompositeExportParams = z.infer<typeof CompositeExportParamsSchema>;
+
 const EmptyParamsSchema = z.object({}).strict();
 const AccountIdParamsSchema = z.object({ id: GoogleAccountIdSchema }).strict();
 const ProjectParamsSchema = z.object({ projectId: ProjectIdSchema }).strict();
 const RunParamsSchema = z.object({ runId: z.string().min(1) }).strict();
+const CompositeParamsSchema = z.object({ compositeId: z.string().min(1) }).strict();
 const SynthesisCancelParamsSchema = z.object({ operationId: z.string().min(1).max(200) }).strict();
 const ValueGroupsListParamsSchema = ProjectParamsSchema;
 const ValueGroupsValuesParamsSchema = z
@@ -868,6 +992,22 @@ export interface BackendRpc {
   "runs.list": { input: z.infer<typeof ProjectParamsSchema>; output: RunSummary[] };
   "runs.get": { input: z.infer<typeof RunParamsSchema>; output: RunsGetResult };
   "runs.export": { input: RunsExportParams; output: RunsExportResult };
+  "composites.start": { input: AugmentationBatchDraft; output: CompositeStartResult };
+  "composites.resolveEditPlan": {
+    input: CompositeResolveEditPlanParams;
+    output: CompositeStartResult;
+  };
+  "composites.list": { input: z.infer<typeof ProjectParamsSchema>; output: CompositeResult[] };
+  "composites.get": { input: z.infer<typeof CompositeParamsSchema>; output: CompositeResult };
+  "composites.export": { input: CompositeExportParams; output: RunsExportResult };
+  "composites.draft.get": {
+    input: z.infer<typeof ProjectParamsSchema>;
+    output: AugmentationBatchEditorDraftView | null;
+  };
+  "composites.draft.save": {
+    input: AugmentationBatchEditorDraft;
+    output: AugmentationBatchEditorDraftView;
+  };
 }
 
 export type RpcMethod = keyof BackendRpc;
@@ -906,6 +1046,13 @@ const rpcMethods = [
   "runs.list",
   "runs.get",
   "runs.export",
+  "composites.start",
+  "composites.resolveEditPlan",
+  "composites.list",
+  "composites.get",
+  "composites.export",
+  "composites.draft.get",
+  "composites.draft.save",
 ] as const satisfies readonly RpcMethod[];
 
 const RpcMethodSchema = z.enum(rpcMethods);
@@ -955,6 +1102,13 @@ const rpcParamSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "runs.list": ProjectParamsSchema,
   "runs.get": RunParamsSchema,
   "runs.export": RunsExportParamsSchema,
+  "composites.start": AugmentationBatchDraftSchema,
+  "composites.resolveEditPlan": CompositeResolveEditPlanParamsSchema,
+  "composites.list": ProjectParamsSchema,
+  "composites.get": CompositeParamsSchema,
+  "composites.export": CompositeExportParamsSchema,
+  "composites.draft.get": ProjectParamsSchema,
+  "composites.draft.save": AugmentationBatchEditorDraftSchema,
 };
 
 const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
@@ -991,6 +1145,13 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "runs.list": z.array(RunSummarySchema),
   "runs.get": RunsGetResultSchema,
   "runs.export": RunsExportResultSchema,
+  "composites.start": CompositeStartResultSchema,
+  "composites.resolveEditPlan": CompositeStartResultSchema,
+  "composites.list": z.array(CompositeResultSchema),
+  "composites.get": CompositeResultSchema,
+  "composites.export": RunsExportResultSchema,
+  "composites.draft.get": AugmentationBatchEditorDraftViewSchema.nullable(),
+  "composites.draft.save": AugmentationBatchEditorDraftViewSchema,
 };
 
 export const parseRpcRequest = (input: unknown): RequestEnvelope => {

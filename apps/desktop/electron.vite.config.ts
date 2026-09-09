@@ -6,6 +6,10 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
+const workspaceAliases = {
+  "@survey-synth/contracts": resolve(root, "../../packages/contracts/src/index.ts"),
+  "@survey-synth/domain": resolve(root, "../../packages/domain/src/index.ts"),
+};
 const bundledPackages = [
   "@survey-synth/contracts",
   "@survey-synth/domain",
@@ -19,6 +23,7 @@ const buildUpdateGithubToken = process.env.SURVEY_SYNTH_UPDATE_GITHUB_TOKEN?.tri
 
 export default defineConfig({
   main: {
+    resolve: { alias: workspaceAliases },
     define: {
       __SURVEY_SYNTH_GOOGLE_CLIENT_ID__: JSON.stringify(buildGoogleClientId),
       __SURVEY_SYNTH_GOOGLE_CLIENT_SECRET__: JSON.stringify(buildGoogleClientSecret),
@@ -32,6 +37,7 @@ export default defineConfig({
     },
   },
   preload: {
+    resolve: { alias: workspaceAliases },
     plugins: [externalizeDepsPlugin({ exclude: bundledPackages })],
     build: {
       rollupOptions: {
@@ -44,6 +50,7 @@ export default defineConfig({
     resolve: {
       alias: {
         "@": resolve(root, "src"),
+        ...workspaceAliases,
       },
     },
     plugins: [react(), tailwindcss()],

@@ -278,3 +278,28 @@ export const exportRun = (
   format: RunExportFormat,
   backend?: BackendInvoker,
 ): Promise<RunsExportResult> => callBackend("runs.export", { runId, format }, backend);
+
+export const startComposite = (
+  draft: import("@survey-synth/contracts").AugmentationBatchDraft,
+  backend?: BackendInvoker,
+) => callBackend("composites.start", draft, backend);
+export const resolveCompositeEditPlan = (
+  batchId: string,
+  choice: "append_only" | "replacement",
+  backend?: BackendInvoker,
+) => callBackend("composites.resolveEditPlan", { batchId, choice }, backend);
+export const listComposites = (projectId: string, backend?: BackendInvoker) =>
+  callBackend("composites.list", { projectId }, backend);
+export const getComposite = (compositeId: string, backend?: BackendInvoker) =>
+  callBackend("composites.get", { compositeId }, backend);
+export const exportComposite = (
+  compositeId: string,
+  format: RunExportFormat,
+  backend?: BackendInvoker,
+) => callBackend("composites.export", { compositeId, format }, backend);
+export const getCompositeDraft = (projectId: string, backend?: BackendInvoker) =>
+  callBackend("composites.draft.get", { projectId }, backend);
+export const saveCompositeDraft = (
+  draft: import("@survey-synth/contracts").AugmentationBatchEditorDraft,
+  backend?: BackendInvoker,
+) => callBackend("composites.draft.save", draft, backend);

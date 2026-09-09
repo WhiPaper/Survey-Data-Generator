@@ -115,3 +115,7 @@ Raw engine keys remain internal. The Result UI should present these diagnostics 
 - no mutation of historical Runs
 - no raw engine validation object in user-facing UI
 - no generic quality score
+
+## Composite result presentation
+
+Main supplies immutable child-Run evidence for a CompositeResult: overall final count and, per rule, frozen scope, source count, entered add/final count, and outcomes. React does not reconstruct historical composite evidence.

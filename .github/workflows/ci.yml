@@ -27,5 +27,6 @@ jobs:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
-      - run: python -m pip install -r engine/requirements.txt
+      - run: pnpm run engine:install:packaged
+      - run: pnpm run engine:check:packaged-deps
       - run: pnpm run engine:test

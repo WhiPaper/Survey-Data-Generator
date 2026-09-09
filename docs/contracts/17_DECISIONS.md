@@ -161,3 +161,7 @@ Ship one Electron bundle including the packaged Python engine. Initial release t
 ## ADR-030 — Complexity gate
 
 A new custom subsystem requires an actual scenario or benchmark showing the current dependency-backed pipeline cannot meet the product requirement.
+
+## ADR-031 — Multi-scope composition is above Runs
+
+An editable batch orchestrates independent single-scope Runs against one frozen base source revision. Immutable composite results reference those saved Runs and reject overlapping source response membership in v1. Ordered overlap composition is deferred.

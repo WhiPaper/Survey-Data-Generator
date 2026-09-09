@@ -158,6 +158,49 @@ export const runRows = sqliteTable(
   ],
 );
 
+export const compositeResults = sqliteTable(
+  "composite_results",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    sourceRevisionId: text("source_revision_id")
+      .notNull()
+      .references(() => sourceRevisions.id, { onDelete: "restrict" }),
+    overlapPolicy: text("overlap_policy").notNull(),
+    finalResponseCount: integer("final_response_count").notNull(),
+    createdAtMs: integer("created_at_ms").notNull(),
+  },
+  (table) => [
+    index("composite_results_project_idx").on(table.projectId),
+    index("composite_results_source_revision_idx").on(table.sourceRevisionId),
+  ],
+);
+
+export const compositeChildren = sqliteTable(
+  "composite_children",
+  {
+    compositeId: text("composite_id")
+      .notNull()
+      .references(() => compositeResults.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    ruleId: text("rule_id").notNull(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "restrict" }),
+    countJson: text("count_json").notNull(),
+    scopeResponseCount: integer("scope_response_count").notNull(),
+    finalResponseCount: integer("final_response_count").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.compositeId, table.position] }),
+    uniqueIndex("composite_children_rule_unique").on(table.compositeId, table.ruleId),
+    uniqueIndex("composite_children_run_unique").on(table.compositeId, table.runId),
+    index("composite_children_run_idx").on(table.runId),
+  ],
+);
+
 export const preferences = sqliteTable("preferences", {
   key: text("key").primaryKey(),
   valueJson: text("value_json").notNull(),
@@ -174,5 +217,7 @@ export const persistenceSchema = {
   targetDrafts,
   runs,
   runRows,
+  compositeResults,
+  compositeChildren,
   preferences,
 };

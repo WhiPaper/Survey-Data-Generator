@@ -64,6 +64,7 @@ Python is not a daemon and not the app backend.
 - `15_MONOREPO.md` — repository/dependency boundaries
 - `16_MILESTONES.md` — v2 implementation sequence
 - `17_DECISIONS.md` — consolidated major decisions
+- `18_COMPOSITE_AUGMENTATION.md` — multi-scope orchestration and immutable composite results
 
 `11_AI_TEXT.md` is intentionally removed because v2 has no AI/LLM plan.
 

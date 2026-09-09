@@ -6,6 +6,10 @@ import {
   type GoogleAccountId,
   type ProjectSourceRefreshParams,
   type RunsExportParams,
+  type CompositeExportParams,
+  type CompositeResolveEditPlanParams,
+  type AugmentationBatchDraft,
+  type AugmentationBatchEditorDraft,
   type SourceScope,
   type SynthesisResolveEditPlanParams,
   type SynthesisStartParams,
@@ -15,6 +19,7 @@ import {
 import type { GoogleAuthService } from "./auth/service";
 import { backendFailure } from "./errors";
 import type { RunExportService } from "./export/service";
+import type { CompositeService } from "./composites/service";
 import type { FormsService } from "./forms/service";
 import type { ProjectService } from "./projects/service";
 import type { SynthesisService } from "./synthesis/service";
@@ -22,7 +27,9 @@ import type { TargetService } from "./targets/service";
 import { semanticDuplicateTargetIssues } from "./targets/semantic-key";
 import type { ValueGroupService } from "./value-groups/service";
 
-export type RunExportDestinationPicker = (params: RunsExportParams) => Promise<string | null>;
+export type RunExportDestinationPicker = (
+  params: RunsExportParams | CompositeExportParams,
+) => Promise<string | null>;
 
 export type BackendServices = {
   auth?: GoogleAuthService;
@@ -33,6 +40,7 @@ export type BackendServices = {
   synthesis?: SynthesisService;
   runExports?: RunExportService;
   pickRunExportDestination?: RunExportDestinationPicker;
+  composites?: CompositeService;
 };
 
 const requireAuth = (services: BackendServices): GoogleAuthService => {
@@ -69,6 +77,11 @@ const requireRunExports = (services: BackendServices): RunExportService => {
   if (!services.runExports)
     throw backendFailure("BACKEND_UNAVAILABLE", "Run export is not initialized");
   return services.runExports;
+};
+const requireComposites = (services: BackendServices): CompositeService => {
+  if (!services.composites)
+    throw backendFailure("BACKEND_UNAVAILABLE", "Composite augmentation is not initialized");
+  return services.composites;
 };
 const requireRunExportDestinationPicker = (
   services: BackendServices,
@@ -248,5 +261,34 @@ export const handleBackendCall = async (
       await requireRunExports(services).exportTo(params.runId, params.format, destination);
       return { status: "saved" };
     }
+    case "composites.start":
+      return requireComposites(services).start(request.params as AugmentationBatchDraft);
+    case "composites.resolveEditPlan": {
+      const params = request.params as CompositeResolveEditPlanParams;
+      return requireComposites(services).resolveEditPlan(params.batchId, params.choice);
+    }
+    case "composites.list":
+      return requireComposites(services).list((request.params as { projectId: string }).projectId);
+    case "composites.get":
+      return requireComposites(services).get(
+        (request.params as { compositeId: string }).compositeId,
+      );
+    case "composites.export": {
+      const params = request.params as CompositeExportParams;
+      const destination = await requireRunExportDestinationPicker(services)(params);
+      if (destination === null) return { status: "cancelled" };
+      await requireRunExports(services).exportCompositeTo(
+        params.compositeId,
+        params.format,
+        destination,
+      );
+      return { status: "saved" };
+    }
+    case "composites.draft.get":
+      return requireComposites(services).getDraft(
+        (request.params as { projectId: string }).projectId,
+      );
+    case "composites.draft.save":
+      return requireComposites(services).saveDraft(request.params as AugmentationBatchEditorDraft);
   }
 };

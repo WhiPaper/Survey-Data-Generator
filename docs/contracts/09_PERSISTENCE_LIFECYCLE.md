@@ -78,6 +78,10 @@ status/report
 
 Completed Run results are immutable and export does not rerun synthesis.
 
+## Composite results
+
+Composite records persist immutable base revision metadata and ordered child Run links, including stable rule IDs and entered count specs. Rows reconstruct from immutable source evidence plus persisted Run rows and never rerun synthesis.
+
 ## Original replacements
 
 Never update imported source response values to represent an approved replacement.

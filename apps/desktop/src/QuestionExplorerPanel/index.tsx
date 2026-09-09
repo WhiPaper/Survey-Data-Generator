@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
+  AugmentationCountSpec,
+  CompositeResult,
   EditPlanPreview,
   ProjectDetailView,
   ProjectSourceReviewResult,
   RunSummary,
   SourceScope,
+  SynthesisTarget,
   TargetDraft,
   TargetDraftTarget,
   TargetIssue,
@@ -18,6 +21,8 @@ import {
   createValueGroup,
   deleteValueGroup,
   exportRun,
+  exportComposite,
+  getCompositeDraft,
   getRun,
   getTargetDraft,
   getTargetProfile,
@@ -26,7 +31,9 @@ import {
   listValueGroupValues,
   resolveSynthesisEditPlan,
   saveTargetDraft,
-  startTargetDraft,
+  startComposite,
+  resolveCompositeEditPlan,
+  saveCompositeDraft,
   validateTargetDraft,
 } from "../api/backend";
 import { Button } from "@/components/ui/button";
@@ -160,6 +167,19 @@ export function QuestionExplorerPanel({
     seed: 42,
     targets: [],
   });
+  const [ruleIds, setRuleIds] = useState<string[]>(["rule-1"]);
+  const [ruleDrafts, setRuleDrafts] = useState<TargetDraft[]>([]);
+  const [ruleCounts, setRuleCounts] = useState<AugmentationCountSpec[]>([
+    { kind: "final", value: project.responseCount + 40 },
+  ]);
+  const [selectedRuleIndex, setSelectedRuleIndex] = useState(0);
+  const [composite, setComposite] = useState<CompositeResult | null>(null);
+  const [compositeEditPlan, setCompositeEditPlan] = useState<{
+    batchId: string;
+    planId: string;
+    ruleId: string;
+    preview: EditPlanPreview;
+  } | null>(null);
   const [profile, setProfile] = useState<TargetProfileResult | null>(null);
   const [profileBusy, setProfileBusy] = useState(false);
   const [scopeApplyBusy, setScopeApplyBusy] = useState(false);
@@ -269,8 +289,9 @@ export function QuestionExplorerPanel({
       getTargetDraft(project.id),
       listValueGroups(project.id),
       listRuns(project.id),
+      getCompositeDraft(project.id),
     ])
-      .then(async ([saved, nextGroups, nextRunSummaries]) => {
+      .then(async ([saved, nextGroups, nextRunSummaries, savedBatch]) => {
         if (!active) return;
         const nextDraft: TargetDraft = saved
           ? {
@@ -289,6 +310,23 @@ export function QuestionExplorerPanel({
             };
         draftSaveCoordinator.setLatest(nextDraft, saved !== null);
         setDraft(nextDraft);
+        const batchRules = savedBatch?.rules ?? [
+          {
+            ruleId: "rule-1",
+            draft: nextDraft,
+            count: {
+              kind: "final" as const,
+              value: nextDraft.finalCount ?? project.responseCount + 40,
+            },
+          },
+        ];
+        const selected = batchRules[0]!;
+        setRuleIds(batchRules.map((rule) => rule.ruleId));
+        setRuleDrafts(batchRules.map((rule) => rule.draft));
+        setRuleCounts(batchRules.map((rule) => rule.count));
+        setSelectedRuleIndex(0);
+        setDraft(selected.draft);
+        setScopeEditor(selected.draft.sourceScope);
         setScopeEditor(nextDraft.sourceScope);
         setGroups(nextGroups);
         setRunSummaries(nextRunSummaries);
@@ -361,6 +399,33 @@ export function QuestionExplorerPanel({
       active = false;
     };
   }, [draft.sourceScope, loaded, project.id, scoreMappings]);
+
+  // The existing target editor operates on `draft`; retain one independent
+  // snapshot per rule and swap it when the selected rule changes.
+  useEffect(() => {
+    if (!loaded) return;
+    setRuleDrafts((current) => {
+      if (current.length === 0 || selectedRuleIndex >= current.length) return current;
+      const next = [...current];
+      next[selectedRuleIndex] = draft;
+      return next;
+    });
+  }, [draft, loaded, selectedRuleIndex]);
+
+  useEffect(() => {
+    if (!loaded || ruleDrafts.length === 0 || ruleDrafts.length !== ruleIds.length) return;
+    const timer = window.setTimeout(() => {
+      void saveCompositeDraft({
+        projectId: project.id,
+        rules: ruleDrafts.map((rule, index) => ({
+          ruleId: ruleIds[index]!,
+          draft: index === selectedRuleIndex ? draft : rule,
+          count: ruleCounts[index]!,
+        })),
+      }).catch((cause: unknown) => setError(questionExplorerErrorMessage(cause, "save_draft")));
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [draft, loaded, project.id, ruleCounts, ruleDrafts, ruleIds, selectedRuleIndex]);
 
   useEffect(() => {
     if (selectedQuestion?.kind !== "text") {
@@ -891,42 +956,143 @@ export function QuestionExplorerPanel({
       .catch(() => undefined);
   };
 
-  const generate = async (): Promise<void> => {
+  const selectRule = (index: number) => {
+    const next = ruleDrafts[index];
+    if (!next) return;
+    setSelectedRuleIndex(index);
+    setDraft(next);
+    setScopeEditor(next.sourceScope);
+    setIssues([]);
+  };
+
+  const addRule = () => {
+    const nextIndex = ruleIds.length;
+    const nextDraft: TargetDraft = {
+      ...draft,
+      targets: [],
+      sourceScope: { kind: "all" },
+      finalCount: project.responseCount + 40,
+      seed: draft.seed + nextIndex,
+    };
+    setRuleIds((current) => [...current, `rule-${nextIndex + 1}`]);
+    setRuleDrafts((current) => [...current, nextDraft]);
+    setRuleCounts((current) => [...current, { kind: "add", value: 40 }]);
+    setSelectedRuleIndex(nextIndex);
+    setDraft(nextDraft);
+    setScopeEditor(nextDraft.sourceScope);
+  };
+
+  const deleteRule = () => {
+    if (ruleIds.length <= 1) return;
+    const nextIds = ruleIds.filter((_, index) => index !== selectedRuleIndex);
+    const nextDrafts = ruleDrafts.filter((_, index) => index !== selectedRuleIndex);
+    const nextCounts = ruleCounts.filter((_, index) => index !== selectedRuleIndex);
+    const nextIndex = Math.max(0, selectedRuleIndex - 1);
+    setRuleIds(nextIds);
+    setRuleDrafts(nextDrafts);
+    setRuleCounts(nextCounts);
+    setSelectedRuleIndex(nextIndex);
+    setDraft(nextDrafts[nextIndex]!);
+    setScopeEditor(nextDrafts[nextIndex]!.sourceScope);
+  };
+
+  const generateBatch = async (): Promise<void> => {
+    const drafts = ruleDrafts.map((candidate, index) =>
+      index === selectedRuleIndex ? draft : candidate,
+    );
     setBusy(true);
-    setMessage(null);
     setError(null);
     setIssues([]);
-    setEditPlan(null);
     try {
-      await flushDraft();
-      const result = await startTargetDraft(project.id, `ui-generate-${Date.now()}`);
+      const result = await startComposite({
+        projectId: project.id,
+        overlapPolicy: "reject",
+        rules: drafts.map((rule, index) => ({
+          ruleId: ruleIds[index]!,
+          sourceScope: rule.sourceScope,
+          count: ruleCounts[index]!,
+          targets: rule.targets.flatMap<SynthesisTarget>((target) => {
+            if (!target.intent) return [];
+            if (target.kind === "mean") {
+              return [
+                {
+                  id: target.id,
+                  kind: "mean" as const,
+                  questionId: target.questionId,
+                  value: target.intent.value,
+                  ...(target.scoreMapping ? { scoreMapping: target.scoreMapping } : {}),
+                },
+              ];
+            }
+            if (target.kind === "conditional_share") {
+              return [
+                {
+                  id: target.id,
+                  kind: "conditional_share" as const,
+                  population: target.population,
+                  questionId: target.questionId,
+                  optionKey: target.optionKey,
+                  value: target.intent.value,
+                },
+              ];
+            }
+            return [
+              {
+                id: target.id,
+                kind: target.kind,
+                subject: target.subject,
+                value: target.intent.value,
+              },
+            ];
+          }),
+          targetIntents: rule.targets.flatMap((target) =>
+            target.intent ? [{ targetId: target.id, intent: target.intent }] : [],
+          ),
+          scoreMappings: rule.targets.flatMap((target) =>
+            target.kind === "mean" && target.scoreMapping ? [target.scoreMapping] : [],
+          ),
+          seed: rule.seed,
+        })),
+      });
       if (result.status === "success") {
-        await recordRun(result.runId);
+        setComposite(result.composite);
+        setMessage(`규칙 ${result.composite.children.length}개를 포함한 결과를 만들었습니다.`);
       } else if (result.status === "approval_required") {
-        setEditPlan({ planId: result.planId, preview: result.editPlan });
+        setCompositeEditPlan({
+          batchId: result.batchId,
+          planId: result.planId,
+          ruleId: result.ruleId,
+          preview: result.editPlan,
+        });
       } else {
         setIssues(result.issues);
       }
     } catch (cause: unknown) {
-      const errorObject = cause as {
-        code?: unknown;
-        backendError?: { code?: unknown; message?: unknown };
-      };
-      const errorMessage = errorObject?.backendError?.message;
-      const errorCategory =
-        errorObject?.backendError?.code ??
-        errorObject?.code ??
-        (cause instanceof Error
-          ? cause.name
-          : typeof cause === "string"
-            ? "string_error"
-            : "unknown");
-      console.error("generation_failed", {
-        phase: "start",
-        errorCategory,
-        ...(typeof errorMessage === "string" ? { errorMessage } : {}),
-      });
       setError(questionExplorerErrorMessage(cause, "generate"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resolveCompositePlan = async (choice: "append_only" | "replacement") => {
+    if (!compositeEditPlan) return;
+    setBusy(true);
+    try {
+      const result = await resolveCompositeEditPlan(compositeEditPlan.batchId, choice);
+      setCompositeEditPlan(null);
+      if (result.status === "success") {
+        setComposite(result.composite);
+        setMessage(`규칙 ${result.composite.children.length}개를 포함한 결과를 만들었습니다.`);
+      } else if (result.status === "approval_required") {
+        setCompositeEditPlan({
+          batchId: result.batchId,
+          planId: result.planId,
+          ruleId: result.ruleId,
+          preview: result.editPlan,
+        });
+      } else setIssues(result.issues);
+    } catch (cause: unknown) {
+      setError(questionExplorerErrorMessage(cause, "complete_generation"));
     } finally {
       setBusy(false);
     }
@@ -1088,6 +1254,32 @@ export function QuestionExplorerPanel({
         />
       ) : (
         <>
+          <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-2">
+            <span className="text-xs font-medium text-muted-foreground">증강 규칙</span>
+            {ruleIds.map((ruleId, index) => (
+              <Button
+                key={ruleId}
+                type="button"
+                size="sm"
+                variant={index === selectedRuleIndex ? "secondary" : "ghost"}
+                className="h-7"
+                onClick={() => selectRule(index)}
+              >
+                규칙 {index + 1}
+              </Button>
+            ))}
+            <Button type="button" size="sm" variant="outline" className="h-7" onClick={addRule}>
+              규칙 추가
+            </Button>
+            {ruleIds.length > 1 ? (
+              <Button type="button" size="sm" variant="ghost" className="h-7" onClick={deleteRule}>
+                현재 규칙 삭제
+              </Button>
+            ) : null}
+            <span className="ml-auto text-xs text-muted-foreground">
+              각 규칙은 독립된 기간·목표·시드를 사용합니다.
+            </span>
+          </div>
           <div className="flex min-h-16 flex-wrap items-center gap-x-6 gap-y-2 border-b px-4 py-2">
             <div className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">원본</span>
@@ -1141,23 +1333,68 @@ export function QuestionExplorerPanel({
               </span>
             ) : null}
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">최종 응답</span>
+              <Select
+                value={ruleCounts[selectedRuleIndex]?.kind ?? "final"}
+                onValueChange={(kind) => {
+                  setRuleCounts((current) => {
+                    const next = [...current];
+                    const previous = next[selectedRuleIndex] ?? {
+                      kind: "final" as const,
+                      value: finalCount ?? sourceCount,
+                    };
+                    next[selectedRuleIndex] = {
+                      kind: kind as "add" | "final",
+                      value: previous.value,
+                    };
+                    return next;
+                  });
+                }}
+              >
+                <SelectTrigger className="h-8 w-[92px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="add">추가</SelectItem>
+                  <SelectItem value="final">최종</SelectItem>
+                </SelectContent>
+              </Select>
+              <span className="text-muted-foreground">응답</span>
               <Input
                 inputMode="numeric"
-                value={finalCount ?? ""}
+                value={
+                  ruleCounts[selectedRuleIndex]?.kind === "add"
+                    ? (ruleCounts[selectedRuleIndex]?.value ?? "")
+                    : (finalCount ?? "")
+                }
                 onChange={(event) => {
                   const next = Number(event.target.value);
-                  setDraft((current) => ({
-                    ...current,
-                    finalCount:
-                      event.target.value === "" || !Number.isFinite(next) ? null : Math.trunc(next),
-                  }));
+                  if (ruleCounts[selectedRuleIndex]?.kind === "add") {
+                    setRuleCounts((current) => {
+                      const values = [...current];
+                      values[selectedRuleIndex] = {
+                        kind: "add",
+                        value: Math.max(1, Math.trunc(next)),
+                      };
+                      return values;
+                    });
+                  } else
+                    setDraft((current) => ({
+                      ...current,
+                      finalCount:
+                        event.target.value === "" || !Number.isFinite(next)
+                          ? null
+                          : Math.trunc(next),
+                    }));
                 }}
                 className="h-8 w-24 tabular-nums"
                 aria-invalid={finalCountInvalid}
               />
               <span>명</span>
-              {additions !== null ? (
+              {ruleCounts[selectedRuleIndex]?.kind === "add" ? (
+                <span className="tabular-nums text-muted-foreground">
+                  +{ruleCounts[selectedRuleIndex]?.value}명
+                </span>
+              ) : additions !== null ? (
                 <span className="tabular-nums text-muted-foreground">+{additions}명</span>
               ) : null}
             </div>
@@ -1403,9 +1640,9 @@ export function QuestionExplorerPanel({
             <Button
               type="button"
               disabled={busy || sourceScopeDirty || generationBlock !== null}
-              onClick={() => void generate()}
+              onClick={() => void generateBatch()}
             >
-              {busy ? "설정 확인 중…" : "생성"}
+              {busy ? "설정 확인 중…" : ruleIds.length > 1 ? "일괄 생성" : "생성"}
             </Button>
           </footer>
         </>
@@ -1413,6 +1650,50 @@ export function QuestionExplorerPanel({
 
       {message ? (
         <p className="border-t px-4 py-2 text-sm text-muted-foreground">{message}</p>
+      ) : null}
+      {composite ? (
+        <div className="border-t px-4 py-3 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="font-medium">복합 결과 · 최종 응답 {composite.finalResponseCount}명</p>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  void exportComposite(composite.compositeId, "csv").catch((cause: unknown) =>
+                    setError(questionExplorerErrorMessage(cause, "export_result")),
+                  )
+                }
+              >
+                CSV
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  void exportComposite(composite.compositeId, "xlsx").catch((cause: unknown) =>
+                    setError(questionExplorerErrorMessage(cause, "export_result")),
+                  )
+                }
+              >
+                XLSX
+              </Button>
+            </div>
+          </div>
+          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+            {composite.children.map((child, index) => (
+              <p key={child.ruleId}>
+                규칙 {index + 1} · 원본 {child.scopeResponseCount}명 ·{" "}
+                {child.count.kind === "add"
+                  ? `+${child.count.value}명`
+                  : `최종 ${child.count.value}명`}{" "}
+                · 결과 {child.finalResponseCount}명
+              </p>
+            ))}
+          </div>
+        </div>
       ) : null}
       {error ? (
         <p role="alert" className="border-t px-4 py-2 text-sm text-destructive">
@@ -1844,6 +2125,42 @@ export function QuestionExplorerPanel({
               onClick={() => void resolveEditPlan("replacement")}
             >
               원본 {editPlan?.preview.replacementCount ?? 0}개 대체
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={compositeEditPlan !== null}
+        onOpenChange={(open) => !open && setCompositeEditPlan(null)}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>규칙의 원본 대체 선택</DialogTitle>
+            <DialogDescription>
+              {compositeEditPlan
+                ? `${compositeEditPlan.ruleId} 규칙에 원본 대체 승인이 필요합니다.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-sm">
+            대체 대상 원본 응답 {compositeEditPlan?.preview.replacementCount ?? 0}개
+          </p>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void resolveCompositePlan("append_only")}
+            >
+              원본 유지
+            </Button>
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => void resolveCompositePlan("replacement")}
+            >
+              원본 대체
             </Button>
           </DialogFooter>
         </DialogContent>
