@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown, Settings2, Sparkles } from "lucide-react";
 
 import type {
   FormListItem,
@@ -49,6 +50,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { QuestionExplorerPanel } from "./QuestionExplorerPanel";
+import { projectQuestions } from "./QuestionExplorerPanel/model";
+import { Empty } from "@/components/ui/empty";
 import {
   filterProjectChoices,
   promoteProjectChoice,
@@ -67,6 +70,7 @@ import {
 } from "./destructiveConfirmation";
 
 type RuntimeState = "checking" | "ready" | "error";
+type WorkspaceView = "setup" | "result";
 
 type DestructiveConfirmation =
   | { kind: "project"; project: ProjectSummaryView }
@@ -98,6 +102,8 @@ export function AppShell() {
   const [error, setError] = useState<string | null>(null);
   const [destructiveConfirmation, setDestructiveConfirmation] =
     useState<DestructiveConfirmation | null>(null);
+  const [selectedQuestionId, setSelectedQuestionId] = useState("");
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("setup");
   const activeDraftFlushRef = useRef<(() => Promise<void>) | null>(null);
 
   const registerDraftFlush = useCallback((flush: (() => Promise<void>) | null): void => {
@@ -494,6 +500,8 @@ export function AppShell() {
   const accountRows = accountSettingsRows(accounts, session?.account.id ?? null);
   const selectedProjectDisplayName =
     projects.find((project) => project.id === selectedProject?.id)?.name ?? selectedProject?.name;
+  const questions = selectedProject ? projectQuestions(selectedProject) : [];
+  const selectQuestion = useCallback((questionId: string) => setSelectedQuestionId(questionId), []);
   const newProjectNameError = newProjectFormId
     ? projectNameValidationMessage(newProjectName)
     : null;
@@ -534,148 +542,235 @@ export function AppShell() {
   }
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <header className="flex h-12 items-center justify-between border-b px-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="hidden shrink-0 text-sm font-semibold sm:inline">
-            Survey Data Generator
-          </span>
-          {selectedProject ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="max-w-[280px] justify-start px-2 font-medium"
-                    disabled={projectsBusy || refreshBusy}
-                  >
-                    <span className="truncate">{selectedProjectDisplayName}</span>
-                    <span className="shrink-0 text-muted-foreground" aria-hidden="true">
-                      ▾
-                    </span>
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="start" className="min-w-[280px]">
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel>최근 프로젝트</DropdownMenuLabel>
-                  {recentProjects.length > 0 ? (
-                    recentProjects.map((project) => (
-                      <DropdownMenuItem
-                        key={project.id}
-                        className="items-start py-2"
-                        onClick={() => void switchProject(project.id)}
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-medium">{project.name}</span>
-                          <span className="mt-0.5 block text-xs text-muted-foreground">
-                            응답 {project.responseCount}개 · 문항 {project.questionCount}개
-                          </span>
-                        </span>
-                      </DropdownMenuItem>
-                    ))
-                  ) : (
-                    <DropdownMenuItem disabled>다른 최근 프로젝트가 없습니다.</DropdownMenuItem>
-                  )}
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setProjectSearchOpen(true)}>
-                  프로젝트 검색…
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={openNewProjectDialog}>새 프로젝트</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void handleProjectChange()}>
-                  모든 프로젝트 보기
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : (
-            <span className="text-sm font-medium">프로젝트</span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {selectedProject ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={refreshBusy}
-              onClick={() => setRefreshDialogOpen(true)}
+    <main className="app-shell min-h-screen bg-muted/20 text-foreground">
+      <aside className="app-sidebar hidden border-r bg-background md:flex">
+        <div className="flex h-full w-full flex-col p-3">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-auto w-full justify-between gap-3 px-2 py-2.5 text-left"
+                  disabled={projectsBusy || refreshBusy}
+                />
+              }
             >
-              원본 업데이트
-            </Button>
-          ) : null}
-          <span className="hidden text-xs text-muted-foreground md:inline">
-            {session.account.email}
-          </span>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={authBusy}
-            onClick={() => void openSettings()}
-          >
-            설정
-          </Button>
-        </div>
-      </header>
-
-      {selectedProject ? (
-        <div className="mx-auto w-full max-w-[1440px] px-4 py-3">
-          <QuestionExplorerPanel
-            project={selectedProject}
-            sourceReview={sourceReview}
-            onDraftFlushReady={registerDraftFlush}
-          />
-        </div>
-      ) : (
-        <div className="mx-auto w-full max-w-3xl px-6 py-10">
-          <section>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h1 className="text-lg font-semibold tracking-tight">프로젝트</h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  최근 작업을 열거나 새 프로젝트를 만드세요.
-                </p>
-              </div>
-              <Button
-                disabled={formsBusy || importingFormId !== null}
-                onClick={openNewProjectDialog}
-              >
-                새 프로젝트
-              </Button>
-            </div>
-            <div className="mt-5 divide-y border-y">
-              {projects.map((project) => (
-                <div key={project.id} className="flex items-center justify-between gap-4 py-3">
-                  <button
-                    type="button"
-                    className="min-w-0 text-left"
-                    disabled={projectsBusy}
-                    onClick={() => void switchProject(project.id)}
-                  >
-                    <p className="truncate text-sm font-medium">{project.name}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      응답 {project.responseCount}개 · 문항 {project.questionCount}개
-                    </p>
-                  </button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={projectsBusy}
-                    onClick={() => setDestructiveConfirmation({ kind: "project", project })}
-                  >
-                    삭제
-                  </Button>
-                </div>
-              ))}
-              {!projectsBusy && projects.length === 0 ? (
-                <p className="py-5 text-sm text-muted-foreground">아직 만든 프로젝트가 없습니다.</p>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
+                  <Sparkles className="size-4" aria-hidden="true" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold tracking-tight">
+                    {selectedProjectDisplayName ?? "Survey Synth"}
+                  </span>
+                  <span className="block truncate text-[11px] text-muted-foreground">
+                    {selectedProject ? `응답 ${selectedProject.responseCount}개` : "프로젝트 선택"}
+                  </span>
+                </span>
+              </span>
+              <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" side="right" className="min-w-[280px]">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>최근 프로젝트</DropdownMenuLabel>
+                {recentProjects.length > 0 ? (
+                  recentProjects.map((project) => (
+                    <DropdownMenuItem
+                      key={project.id}
+                      className="items-start py-2"
+                      onClick={() => void switchProject(project.id)}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{project.name}</span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          응답 {project.responseCount}개 · 문항 {project.questionCount}개
+                        </span>
+                      </span>
+                    </DropdownMenuItem>
+                  ))
+                ) : (
+                  <DropdownMenuItem disabled>다른 최근 프로젝트가 없습니다.</DropdownMenuItem>
+                )}
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setProjectSearchOpen(true)}>
+                프로젝트 검색…
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={openNewProjectDialog}>새 프로젝트</DropdownMenuItem>
+              {selectedProject ? (
+                <DropdownMenuItem disabled={refreshBusy} onClick={() => setRefreshDialogOpen(true)}>
+                  원본 업데이트
+                </DropdownMenuItem>
               ) : null}
+              <DropdownMenuItem onClick={() => void handleProjectChange()}>
+                모든 프로젝트 보기
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <div className="mt-6 flex min-h-0 flex-1 flex-col border-t pt-4">
+            <nav className="space-y-0.5 px-1" aria-label="작업 영역">
+              <button
+                type="button"
+                className={`w-full rounded-md px-2.5 py-2 text-left text-sm transition-colors ${workspaceView === "setup" ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                onClick={() => setWorkspaceView("setup")}
+              >
+                생성 설정
+              </button>
+              <button
+                type="button"
+                className={`w-full rounded-md px-2.5 py-2 text-left text-sm transition-colors ${workspaceView === "result" ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                onClick={() => setWorkspaceView("result")}
+              >
+                결과
+              </button>
+            </nav>
+            <div className="mt-5 flex min-h-0 flex-1 flex-col border-t pt-4">
+              <p className="px-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                질문
+              </p>
+              {questions.length > 0 ? (
+                <nav
+                  className="mt-2 min-h-0 flex-1 space-y-0.5 overflow-y-auto"
+                  aria-label="질문 목록"
+                >
+                  {questions.map((question) => (
+                    <button
+                      key={question.id}
+                      type="button"
+                      className={`w-full truncate rounded-md px-2.5 py-2 text-left text-xs transition-colors ${question.id === selectedQuestionId ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                      onClick={() => selectQuestion(question.id)}
+                    >
+                      {question.title}
+                    </button>
+                  ))}
+                </nav>
+              ) : (
+                <Empty>
+                  <p className="text-xs font-medium">질문이 없습니다</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Form을 불러오면 여기에 표시됩니다.
+                  </p>
+                </Empty>
+              )}
             </div>
-          </section>
+          </div>
+          <div className="mt-auto border-t pt-3">
+            <div className="flex items-center gap-2 px-2.5 pb-2">
+              <span className="grid size-7 shrink-0 place-items-center rounded-full bg-muted text-xs font-medium">
+                {session.account.email.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="min-w-0 truncate text-xs text-muted-foreground">
+                {session.account.email}
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full justify-start gap-2 px-2.5 text-muted-foreground"
+              onClick={() => void openSettings()}
+            >
+              <Settings2 className="size-4" aria-hidden="true" /> 설정
+            </Button>
+          </div>
         </div>
-      )}
+      </aside>
+      <div className="app-shell-main min-w-0">
+        {selectedProject ? (
+          <>
+            <div className="flex items-center gap-2 border-b bg-background px-4 py-2 md:hidden">
+              <Button
+                type="button"
+                size="sm"
+                variant={workspaceView === "setup" ? "secondary" : "ghost"}
+                onClick={() => setWorkspaceView("setup")}
+              >
+                생성 설정
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={workspaceView === "result" ? "secondary" : "ghost"}
+                onClick={() => setWorkspaceView("result")}
+              >
+                결과
+              </Button>
+              <select
+                aria-label="질문 선택"
+                className="ml-auto min-w-0 max-w-[55%] rounded-md border bg-background px-2 py-1.5 text-xs"
+                value={selectedQuestionId || questions[0]?.id || ""}
+                onChange={(event) => selectQuestion(event.target.value)}
+              >
+                {questions.map((question) => (
+                  <option key={question.id} value={question.id}>
+                    {question.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="app-content w-full px-4 pb-8 sm:px-6 lg:px-8">
+              <QuestionExplorerPanel
+                project={selectedProject}
+                sourceReview={sourceReview}
+                onDraftFlushReady={registerDraftFlush}
+                selectedQuestionId={selectedQuestionId}
+                onSelectedQuestionChange={selectQuestion}
+                workspaceView={workspaceView}
+                onWorkspaceViewChange={setWorkspaceView}
+              />
+            </div>
+          </>
+        ) : (
+          <div className="mx-auto w-full max-w-3xl px-6 py-10">
+            <section>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h1 className="text-lg font-semibold tracking-tight">프로젝트</h1>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    최근 작업을 열거나 새 프로젝트를 만드세요.
+                  </p>
+                </div>
+                <Button
+                  disabled={formsBusy || importingFormId !== null}
+                  onClick={openNewProjectDialog}
+                >
+                  새 프로젝트
+                </Button>
+              </div>
+              <div className="mt-5 divide-y border-y">
+                {projects.map((project) => (
+                  <div key={project.id} className="flex items-center justify-between gap-4 py-3">
+                    <button
+                      type="button"
+                      className="min-w-0 text-left"
+                      disabled={projectsBusy}
+                      onClick={() => void switchProject(project.id)}
+                    >
+                      <p className="truncate text-sm font-medium">{project.name}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        응답 {project.responseCount}개 · 문항 {project.questionCount}개
+                      </p>
+                    </button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={projectsBusy}
+                      onClick={() => setDestructiveConfirmation({ kind: "project", project })}
+                    >
+                      삭제
+                    </Button>
+                  </div>
+                ))}
+                {!projectsBusy && projects.length === 0 ? (
+                  <p className="py-5 text-sm text-muted-foreground">
+                    아직 만든 프로젝트가 없습니다.
+                  </p>
+                ) : null}
+              </div>
+            </section>
+          </div>
+        )}
+      </div>
 
       <Dialog
         open={settingsOpen}

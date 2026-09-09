@@ -400,6 +400,34 @@ export const TargetProfileResultSchema = z
   .strict();
 export type TargetProfileResult = z.infer<typeof TargetProfileResultSchema>;
 
+export const TargetPreviewRowSchema = z
+  .object({
+    subjectKey: z.string().min(1),
+    targetId: TargetIdSchema.optional(),
+    kind: z.enum(["count", "share", "mean", "conditional_share"]),
+    currentCount: z.number().int().nonnegative().optional(),
+    currentShare: z.number().min(0).max(1).optional(),
+    projectedCount: z.number().int().nonnegative().optional(),
+    projectedShare: z.number().min(0).max(1).optional(),
+    deltaCount: z.number().int().optional(),
+    currentMean: z.number().finite().optional(),
+    projectedMean: z.number().finite().optional(),
+    status: z.enum(["projected", "needs_replacement", "invalid"]),
+  })
+  .strict();
+export type TargetPreviewRow = z.infer<typeof TargetPreviewRowSchema>;
+
+export const TargetPreviewResultSchema = z
+  .object({
+    projectId: ProjectIdSchema,
+    sourceScope: SourceScopeSchema,
+    sourceCount: z.number().int().nonnegative(),
+    finalCount: z.number().int().positive().nullable(),
+    rows: z.array(TargetPreviewRowSchema),
+  })
+  .strict();
+export type TargetPreviewResult = z.infer<typeof TargetPreviewResultSchema>;
+
 export const SynthesisTargetIntentSnapshotSchema = z
   .object({
     targetId: TargetIdSchema,
@@ -973,6 +1001,7 @@ export interface BackendRpc {
     input: z.infer<typeof TargetsProfileParamsSchema>;
     output: TargetProfileResult;
   };
+  "targets.preview": { input: TargetDraft; output: TargetPreviewResult };
   "targets.validate": { input: TargetDraft; output: TargetsValidateResult };
   "targets.draft.get": {
     input: z.infer<typeof ProjectParamsSchema>;
@@ -1036,6 +1065,7 @@ const rpcMethods = [
   "valueGroups.create",
   "valueGroups.delete",
   "targets.profile",
+  "targets.preview",
   "targets.validate",
   "targets.draft.get",
   "targets.draft.save",
@@ -1092,6 +1122,7 @@ const rpcParamSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "valueGroups.create": ValueGroupsCreateParamsSchema,
   "valueGroups.delete": ValueGroupsDeleteParamsSchema,
   "targets.profile": TargetsProfileParamsSchema,
+  "targets.preview": TargetDraftSchema,
   "targets.validate": TargetDraftSchema,
   "targets.draft.get": ProjectParamsSchema,
   "targets.draft.save": TargetDraftSchema,
@@ -1135,6 +1166,7 @@ const rpcResultSchemas: Record<RpcMethod, z.ZodTypeAny> = {
   "valueGroups.create": ValueGroupSchema,
   "valueGroups.delete": ActionResultSchema,
   "targets.profile": TargetProfileResultSchema,
+  "targets.preview": TargetPreviewResultSchema,
   "targets.validate": TargetsValidateResultSchema,
   "targets.draft.get": TargetDraftViewSchema.nullable(),
   "targets.draft.save": TargetDraftViewSchema,

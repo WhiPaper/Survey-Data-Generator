@@ -28,6 +28,7 @@ import {
   type TargetDraft,
   type TargetDraftView,
   type TargetProfileResult,
+  type TargetPreviewResult,
   type TargetsValidateResult,
   type ValueGroupObservedValue,
   type ValueGroupView,
@@ -232,6 +233,10 @@ export const getTargetProfile = (
     },
     backend,
   );
+export const getTargetPreview = (
+  draft: TargetDraft,
+  backend?: BackendInvoker,
+): Promise<TargetPreviewResult> => callBackend("targets.preview", draft, backend);
 export const validateTargetDraft = (
   draft: TargetDraft,
   backend?: BackendInvoker,

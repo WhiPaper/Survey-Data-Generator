@@ -1,6 +1,7 @@
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ClipboardItem, clipboard, dialog, ipcMain, shell } from "electron";
 
 import { loadGoogleOAuthConfig } from "./auth/config";
 import { createElectronRefreshTokenStore } from "./auth/electron-credentials";
@@ -26,6 +27,8 @@ import { createWindowCloseGate } from "./window-close-gate";
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
 const WINDOW_CLOSE_REQUEST_CHANNEL = "survey-synth:window-close-request";
 const WINDOW_CLOSE_RESPONSE_CHANNEL = "survey-synth:window-close-response";
+const CHART_COPY_CHANNEL = "survey-synth:chart-copy";
+const CHART_SAVE_CHANNEL = "survey-synth:chart-save";
 const closeGates = new WeakMap<BrowserWindow, ReturnType<typeof createWindowCloseGate>>();
 const developmentMode = !app.isPackaged;
 const packagedSmoke = app.isPackaged && process.env.SURVEY_SYNTH_PACKAGED_SMOKE === "1";
@@ -115,6 +118,38 @@ ipcMain.handle(BACKEND_CALL_CHANNEL, async (_event, serializedRequest: string) =
     }
     return { ok: false as const, error: normalized };
   }
+});
+
+ipcMain.handle(CHART_COPY_CHANNEL, async (_event, dataUrl: unknown) => {
+  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png;base64,")) {
+    throw new Error("Invalid chart image");
+  }
+  const png = Buffer.from(dataUrl.slice("data:image/png;base64,".length), "base64");
+  if (png.length === 0 || png.length > 10_000_000) throw new Error("Invalid chart image");
+  await clipboard.write([
+    new ClipboardItem({ "image/png": new Blob([png], { type: "image/png" }) }),
+  ]);
+});
+
+ipcMain.handle(CHART_SAVE_CHANNEL, async (_event, input: unknown) => {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    typeof (input as { svg?: unknown }).svg !== "string" ||
+    typeof (input as { filename?: unknown }).filename !== "string"
+  ) {
+    throw new Error("Invalid chart export");
+  }
+  const { svg, filename } = input as { svg: string; filename: string };
+  if (svg.length > 2_000_000 || filename.length > 120) throw new Error("Invalid chart export");
+  const result = await dialog.showSaveDialog({
+    title: "차트 저장",
+    defaultPath: filename.endsWith(".svg") ? filename : `${filename}.svg`,
+    filters: [{ name: "SVG image", extensions: ["svg"] }],
+  });
+  if (result.canceled || !result.filePath) return "cancelled" as const;
+  await writeFile(result.filePath, svg, "utf8");
+  return "saved" as const;
 });
 
 void app

@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 import type { RunSummary, RunsGetResult } from "@survey-synth/contracts";
 
 import { Button } from "@/components/ui/button";
@@ -20,6 +22,7 @@ import { runIntentLabel } from "./runIntent";
 import { runPresentationLabel } from "./runPresentation";
 import { resultTargetGroups } from "./resultTargetGroups";
 import { outcomeValue, type QuestionView } from "./model";
+import { ResultChart } from "./ResultChart";
 
 export type RunContext = {
   run: RunsGetResult;
@@ -29,6 +32,7 @@ type ResultViewProps = {
   contexts: RunContext[];
   summaries: RunSummary[];
   selectedRunId: string;
+  selectedQuestionId?: string;
   questions: QuestionView[];
   exportBusy: boolean;
   onSelectRun: (runId: string) => void;
@@ -40,6 +44,7 @@ export function ResultView({
   contexts,
   summaries,
   selectedRunId,
+  selectedQuestionId,
   questions,
   exportBusy,
   onSelectRun,
@@ -48,6 +53,13 @@ export function ResultView({
 }: ResultViewProps) {
   const context =
     contexts.find((candidate) => candidate.run.runId === selectedRunId) ?? contexts[0] ?? null;
+
+  useEffect(() => {
+    if (!selectedQuestionId || !context) return;
+    document
+      .getElementById(`result-question-${selectedQuestionId}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [selectedQuestionId, context?.run.runId]);
 
   if (!context) {
     return (
@@ -109,7 +121,11 @@ export function ResultView({
       <div className="divide-y">
         {targetNotice ? <p className="py-5 text-sm text-muted-foreground">{targetNotice}</p> : null}
         {targetGroups.map((group) => (
-          <section key={group.questionId} className="py-5">
+          <section
+            key={group.questionId}
+            id={`result-question-${group.questionId}`}
+            className="py-5"
+          >
             <h3 className="text-sm font-medium">{group.questionTitle}</h3>
             <div className="mt-3 space-y-4">
               {group.outcomes.map((outcome) => {
@@ -161,6 +177,21 @@ export function ResultView({
                 );
               })}
             </div>
+            <ResultChart
+              questionTitle={group.questionTitle}
+              outcomes={group.outcomes}
+              baselines={context.run.baselines}
+              labels={
+                new Map(
+                  group.outcomes.map((outcome) => {
+                    const presentation = context.run.presentations.find(
+                      (candidate) => String(candidate.targetId) === String(outcome.targetId),
+                    );
+                    return [String(outcome.targetId), runPresentationLabel(presentation)];
+                  }),
+                )
+              }
+            />
           </section>
         ))}
       </div>

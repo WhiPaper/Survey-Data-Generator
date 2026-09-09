@@ -202,6 +202,8 @@ export const handleBackendCall = async (
         params.scoreMappings,
       );
     }
+    case "targets.preview":
+      return requireTargets(services).preview(request.params as TargetDraft);
     case "targets.validate": {
       const params = request.params as TargetDraft;
       const result = await requireTargets(services).validate(params);

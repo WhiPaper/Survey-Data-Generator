@@ -13,6 +13,7 @@ import type {
   TargetDraftTarget,
   TargetIssue,
   TargetProfileResult,
+  TargetPreviewResult,
   ValueGroupObservedValue,
   ValueGroupView,
 } from "@survey-synth/contracts";
@@ -26,6 +27,7 @@ import {
   getRun,
   getTargetDraft,
   getTargetProfile,
+  getTargetPreview,
   listRuns,
   listValueGroups,
   listValueGroupValues,
@@ -46,6 +48,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -150,16 +153,39 @@ export function QuestionExplorerPanel({
   project,
   sourceReview,
   onDraftFlushReady,
+  selectedQuestionId: selectedQuestionIdProp,
+  onSelectedQuestionChange,
+  workspaceView: workspaceViewProp,
+  onWorkspaceViewChange,
 }: {
   project: ProjectDetailView;
   sourceReview?: ProjectSourceReviewResult | null;
   onDraftFlushReady?: (flush: (() => Promise<void>) | null) => void;
+  selectedQuestionId?: string;
+  onSelectedQuestionChange?: (questionId: string) => void;
+  workspaceView?: WorkspaceView;
+  onWorkspaceViewChange?: (view: WorkspaceView) => void;
 }) {
   const questions = useMemo(() => projectQuestions(project), [project]);
-  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("setup");
-  const [selectedQuestionId, setSelectedQuestionId] = useState(questions[0]?.id ?? "");
+  const [internalWorkspaceView, setInternalWorkspaceView] = useState<WorkspaceView>("setup");
+  const workspaceView = workspaceViewProp ?? internalWorkspaceView;
+  const setWorkspaceView = (view: WorkspaceView) => {
+    setInternalWorkspaceView(view);
+    onWorkspaceViewChange?.(view);
+  };
+  const [internalSelectedQuestionId, setInternalSelectedQuestionId] = useState(
+    questions[0]?.id ?? "",
+  );
+  const selectedQuestionId = selectedQuestionIdProp ?? internalSelectedQuestionId;
+  const setSelectedQuestionId = (questionId: string) => {
+    setInternalSelectedQuestionId(questionId);
+    onSelectedQuestionChange?.(questionId);
+  };
   const [query, setQuery] = useState("");
   const [targetOnly, setTargetOnly] = useState(false);
+  const [distributionDisplayMode, setDistributionDisplayMode] = useState<"share" | "count">(
+    "share",
+  );
   const [draft, setDraft] = useState<TargetDraft>({
     projectId: project.id,
     finalCount: project.responseCount + 40,
@@ -181,6 +207,8 @@ export function QuestionExplorerPanel({
     preview: EditPlanPreview;
   } | null>(null);
   const [profile, setProfile] = useState<TargetProfileResult | null>(null);
+  const [preview, setPreview] = useState<TargetPreviewResult | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
   const [profileBusy, setProfileBusy] = useState(false);
   const [scopeApplyBusy, setScopeApplyBusy] = useState(false);
   const [scopeEditor, setScopeEditor] = useState<SourceScope>({ kind: "all" });
@@ -271,10 +299,12 @@ export function QuestionExplorerPanel({
   };
 
   useEffect(() => {
-    setSelectedQuestionId((current) =>
-      questions.some((question) => question.id === current) ? current : (questions[0]?.id ?? ""),
-    );
-  }, [questions]);
+    const next = questions.some((question) => question.id === selectedQuestionId)
+      ? selectedQuestionId
+      : (questions[0]?.id ?? "");
+    setInternalSelectedQuestionId(next);
+    onSelectedQuestionChange?.(next);
+  }, [questions, onSelectedQuestionChange, selectedQuestionId]);
 
   useEffect(() => {
     let active = true;
@@ -368,6 +398,28 @@ export function QuestionExplorerPanel({
     }, 450);
     return () => window.clearTimeout(timer);
   }, [draft, draftSaveCoordinator, loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setPreviewBusy(true);
+      void getTargetPreview(draft)
+        .then((nextPreview) => {
+          if (active) setPreview(nextPreview);
+        })
+        .catch(() => {
+          if (active) setPreview(null);
+        })
+        .finally(() => {
+          if (active) setPreviewBusy(false);
+        });
+    }, 180);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [draft, loaded]);
 
   const flushDraft = useCallback(async (): Promise<void> => {
     if (!loaded) return;
@@ -943,6 +995,23 @@ export function QuestionExplorerPanel({
     }
   };
 
+  useEffect(() => {
+    if (workspaceView !== "result" || runContexts.length > 0) return;
+    const runId = selectedRunId || runSummaries[0]?.runId;
+    if (!runId) return;
+    let active = true;
+    void getRun(runId)
+      .then((run) => {
+        if (!active) return;
+        setRunContexts([{ run }]);
+        setSelectedRunId(runId);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [workspaceView, runContexts.length, runSummaries, selectedRunId]);
+
   const recordRun = async (runId: string): Promise<void> => {
     const run = await getRun(runId);
     setRunContexts((current) => [
@@ -1163,6 +1232,32 @@ export function QuestionExplorerPanel({
           optionKey: option.key,
         };
         const target = subjectTarget(draft.targets, editingTarget);
+        const previewRow = target
+          ? preview?.rows.find((row) => String(row.targetId) === String(target.id))
+          : preview?.rows.find(
+              (row) =>
+                row.subjectKey === `option:${question.id}:${option.key}` ||
+                row.subjectKey === `checkbox_option:${question.id}:${option.key}`,
+            );
+        const projectedCount =
+          previewRow?.projectedCount ??
+          (finalCount !== null && finalCount !== undefined
+            ? Math.round(finalCount * currentShare)
+            : (metric?.count ?? 0));
+        const projectedDeltaCount = previewRow?.deltaCount ?? projectedCount - (metric?.count ?? 0);
+        const chartTooltip = [
+          `원본 ${metric?.count ?? 0}명`,
+          `${projectedDeltaCount >= 0 ? "추가 예상" : "감소/대체"} ${Math.abs(projectedDeltaCount)}명`,
+          `최종 예상 ${projectedCount}명`,
+        ].join(" · ");
+        const chartBaseShare =
+          distributionDisplayMode === "count" && finalCount && finalCount > 0
+            ? (metric?.count ?? 0) / finalCount
+            : currentShare;
+        const chartDeltaShare =
+          distributionDisplayMode === "count" && finalCount && finalCount > 0
+            ? projectedDeltaCount / finalCount
+            : (previewRow?.projectedShare ?? currentShare) - currentShare;
         const conditionalCount =
           subjectKind === "checkbox_option"
             ? draft.targets.filter(
@@ -1179,19 +1274,43 @@ export function QuestionExplorerPanel({
             key={option.key}
             type="button"
             onClick={() => openOptionTarget(question, subjectKind, option.key, option.label)}
-            className="group grid w-full grid-cols-[minmax(140px,1fr)_72px_72px_minmax(120px,1.2fr)_140px] items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm hover:bg-muted/60"
+            className="group grid w-full grid-cols-[minmax(140px,1fr)_72px_minmax(120px,1.2fr)_140px] items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm hover:bg-muted/60"
           >
             <span className="truncate font-medium">{option.label}</span>
             <span className="text-right tabular-nums text-muted-foreground">
-              {metric?.count ?? 0}명
+              {distributionDisplayMode === "count"
+                ? `${projectedCount}명`
+                : formatShare(previewRow?.projectedShare ?? currentShare)}
             </span>
-            <span className="text-right tabular-nums">{formatShare(currentShare)}</span>
-            <span className="h-1.5 overflow-hidden rounded-full bg-muted">
-              <span
-                className="block h-full rounded-full bg-foreground/45"
-                style={{ width: `${Math.max(0, Math.min(100, currentShare * 100))}%` }}
-              />
-            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    className="flex h-2 min-w-0 overflow-hidden rounded-full bg-muted"
+                    aria-label={chartTooltip}
+                  />
+                }
+              >
+                <span
+                  className="block min-w-0 rounded-l-full bg-slate-500/70"
+                  style={{ width: `${Math.max(0, Math.min(100, chartBaseShare * 100))}%` }}
+                />
+                {chartDeltaShare > 0 ? (
+                  <span
+                    className="block min-w-0 rounded-r-full bg-sky-500/75"
+                    style={{ width: `${Math.max(0, Math.min(100, chartDeltaShare * 100))}%` }}
+                  />
+                ) : chartDeltaShare < 0 ? (
+                  <span
+                    className="block min-w-0 rounded-r-full bg-amber-500/75"
+                    style={{
+                      width: `${Math.max(0, Math.min(100, Math.abs(chartDeltaShare) * 100))}%`,
+                    }}
+                  />
+                ) : null}
+              </TooltipTrigger>
+              <TooltipContent>{chartTooltip}</TooltipContent>
+            </Tooltip>
             <span
               className={`text-right tabular-nums ${
                 summary || conditionalCount > 0
@@ -1212,37 +1331,13 @@ export function QuestionExplorerPanel({
   }
 
   return (
-    <section className="mt-4 overflow-hidden rounded-lg border bg-background">
-      <nav className="flex h-11 items-center gap-1 border-b px-3">
-        <Button
-          type="button"
-          size="sm"
-          variant={workspaceView === "setup" ? "secondary" : "ghost"}
-          className="h-7"
-          onClick={() => setWorkspaceView("setup")}
-        >
-          생성 설정
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={workspaceView === "result" ? "secondary" : "ghost"}
-          className="h-7"
-          disabled={runSummaries.length === 0 && runContexts.length === 0}
-          onClick={() => {
-            const runId = selectedRunId || runSummaries[0]?.runId || runContexts[0]?.run.runId;
-            if (runId) void selectRun(runId);
-          }}
-        >
-          결과
-        </Button>
-      </nav>
-
+    <section className="w-full">
       {workspaceView === "result" ? (
         <ResultView
           contexts={runContexts}
           summaries={runSummaries}
           selectedRunId={selectedRunId}
+          selectedQuestionId={selectedQuestionId}
           questions={questions}
           exportBusy={exportBusy}
           onSelectRun={(runId) => void selectRun(runId)}
@@ -1254,7 +1349,7 @@ export function QuestionExplorerPanel({
         />
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-2">
+          <div className="flex flex-wrap items-center gap-2 border-b py-2">
             <span className="text-xs font-medium text-muted-foreground">증강 규칙</span>
             {ruleIds.map((ruleId, index) => (
               <Button
@@ -1280,7 +1375,7 @@ export function QuestionExplorerPanel({
               각 규칙은 독립된 기간·목표·시드를 사용합니다.
             </span>
           </div>
-          <div className="flex min-h-16 flex-wrap items-center gap-x-6 gap-y-2 border-b px-4 py-2">
+          <div className="flex min-h-16 flex-wrap items-center gap-x-6 gap-y-2 border-b py-2">
             <div className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">원본</span>
               <Select
@@ -1419,9 +1514,9 @@ export function QuestionExplorerPanel({
             ) : null}
           </div>
 
-          <div className="grid min-h-[560px] grid-cols-[280px_minmax(0,1fr)]">
-            <aside className="min-w-0 border-r">
-              <div className="space-y-3 border-b p-3">
+          <div className="grid min-h-[560px] grid-cols-1">
+            <div className="hidden">
+              <div className="space-y-3 border-b py-3">
                 <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
@@ -1450,7 +1545,7 @@ export function QuestionExplorerPanel({
                   </Button>
                 </div>
               </div>
-              <div className="max-h-[560px] overflow-y-auto p-2">
+              <div className="max-h-[560px] overflow-y-auto py-2">
                 {filteredQuestions.map((question) => {
                   const count = targetCountFor(question.id);
                   const needsReview = reviewQuestionIds.has(question.id);
@@ -1478,18 +1573,60 @@ export function QuestionExplorerPanel({
                   );
                 })}
               </div>
-            </aside>
+            </div>
 
-            <div className="min-w-0 overflow-y-auto px-8 py-7">
+            <div className="min-w-0 overflow-y-auto pl-6 pr-1 py-7 sm:pl-8">
               {selectedQuestion ? (
-                <div className="max-w-[900px]">
+                <div className="max-w-[1240px]">
                   <header>
-                    <h2 className="text-xl font-semibold tracking-tight">
-                      {selectedQuestion.title}
-                    </h2>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {questionPopulationText(selectedQuestion, profile, sourceCount)}
-                    </p>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h2 className="text-xl font-semibold tracking-tight">
+                          {selectedQuestion.title}
+                        </h2>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {questionPopulationText(selectedQuestion, profile, sourceCount)}
+                        </p>
+                      </div>
+                      {selectedQuestion.kind === "single_choice" ||
+                      selectedQuestion.kind === "multi_choice" ? (
+                        <div className="flex flex-wrap items-center justify-end gap-3">
+                          <div className="hidden items-center gap-2 text-[11px] text-muted-foreground sm:flex">
+                            <span className="flex items-center gap-1">
+                              <i className="size-2 rounded-full bg-slate-500/70" />
+                              원본
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <i className="size-2 rounded-full bg-sky-500/75" />
+                              추가 예상
+                            </span>
+                          </div>
+                          <div
+                            className="flex items-center rounded-md border p-0.5"
+                            aria-label="분포 표시 단위"
+                          >
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={distributionDisplayMode === "share" ? "secondary" : "ghost"}
+                              className="h-7 px-2.5 text-xs"
+                              onClick={() => setDistributionDisplayMode("share")}
+                            >
+                              비율
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={distributionDisplayMode === "count" ? "secondary" : "ghost"}
+                              className="h-7 px-2.5 text-xs"
+                              onClick={() => setDistributionDisplayMode("count")}
+                            >
+                              인원
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                   </header>
 
                   {selectedQuestion.kind === "single_choice"
@@ -1636,6 +1773,7 @@ export function QuestionExplorerPanel({
               {additions !== null ? ` · +${additions}명 · 최종 ${finalCount}명` : ""}
               {` · ${draft.targets.length > 0 ? `목표 ${draft.targets.length}개` : "목표 없음"}`}
               {noAdditionalResponses ? " · 추가로 생성할 응답이 없습니다." : ""}
+              {previewBusy ? " · 예상 변화 계산 중…" : ""}
             </p>
             <Button
               type="button"

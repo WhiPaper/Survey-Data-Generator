@@ -5,6 +5,8 @@ import { createBeforeCloseRegistry, type BeforeCloseListener } from "./close-req
 const BACKEND_CALL_CHANNEL = "survey-synth:backend-call";
 const WINDOW_CLOSE_REQUEST_CHANNEL = "survey-synth:window-close-request";
 const WINDOW_CLOSE_RESPONSE_CHANNEL = "survey-synth:window-close-response";
+const CHART_COPY_CHANNEL = "survey-synth:chart-copy";
+const CHART_SAVE_CHANNEL = "survey-synth:chart-save";
 
 type BackendIpcResult = { ok: true; result: unknown } | { ok: false; error: unknown };
 
@@ -25,4 +27,10 @@ ipcRenderer.on(WINDOW_CLOSE_REQUEST_CHANNEL, () => {
 const onBeforeClose = (listener: BeforeCloseListener): (() => void) =>
   beforeCloseRegistry.setListener(listener);
 
-contextBridge.exposeInMainWorld("surveySynth", { backendCall, onBeforeClose });
+contextBridge.exposeInMainWorld("surveySynth", {
+  backendCall,
+  onBeforeClose,
+  copyChart: (dataUrl: string) => ipcRenderer.invoke(CHART_COPY_CHANNEL, dataUrl) as Promise<void>,
+  saveChart: (svg: string, filename: string) =>
+    ipcRenderer.invoke(CHART_SAVE_CHANNEL, { svg, filename }) as Promise<"saved" | "cancelled">,
+});

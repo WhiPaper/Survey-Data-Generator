@@ -10,6 +10,7 @@ import type {
   TargetIssue,
   LikertScoreMapping,
   TargetProfileResult,
+  TargetPreviewResult,
   TargetsValidateResult,
 } from "@survey-synth/contracts";
 import type {
@@ -740,6 +741,7 @@ export interface TargetService {
     sourceScope?: SourceScope,
     scoreMappings?: LikertScoreMapping[],
   ): Promise<TargetProfileResult>;
+  preview(draft: TargetDraft): Promise<TargetPreviewResult>;
   profileForRevision(
     projectId: string,
     sourceRevisionId: string,
@@ -758,6 +760,159 @@ export const createTargetService = (
 ): TargetService => ({
   profile: async (projectId, sourceScope, scoreMappings) =>
     profile(db, projectId, sourceScope, scoreMappings),
+
+  preview: async (draft) => {
+    const context = scopeContext(db, draft.projectId, draft.sourceScope);
+    const groups = projectGroups(db, draft.projectId);
+    const profileResult = profileFromContext(db, draft.projectId, context, []);
+    const rowsByKey = new Map<string, TargetPreviewResult["rows"][number]>();
+    const estimatedEligibleCount = (denominatorCount: number): number | undefined =>
+      draft.finalCount === null || context.responses.length === 0
+        ? undefined
+        : Math.round((draft.finalCount * denominatorCount) / context.responses.length);
+
+    const subjectKey = (value: {
+      kind: string;
+      subject?: { kind: string; questionId?: string; optionKey?: string; valueGroupId?: string };
+      population?: { valueGroupId: string };
+      questionId?: string;
+      optionKey?: string;
+    }): string => {
+      if (value.kind === "conditional_share") {
+        return `conditional_share:${value.population?.valueGroupId}:${value.questionId}:${value.optionKey}`;
+      }
+      const subject = value.subject;
+      return `${subject?.kind}:${subject?.questionId ?? subject?.valueGroupId}:${subject?.optionKey ?? ""}`;
+    };
+
+    for (const metric of profileResult.metrics) {
+      if (metric.kind !== "subject" && metric.kind !== "conditional_share") continue;
+      const key = subjectKey(
+        metric.kind === "subject"
+          ? { kind: metric.kind, subject: metric.subject }
+          : {
+              kind: metric.kind,
+              population: metric.population,
+              questionId: metric.questionId,
+              optionKey: metric.optionKey,
+            },
+      );
+      const projectedDenominator =
+        metric.kind === "conditional_share"
+          ? undefined
+          : estimatedEligibleCount(metric.denominatorCount);
+      const projectedCount =
+        projectedDenominator === undefined
+          ? undefined
+          : Math.round(projectedDenominator * metric.share);
+      rowsByKey.set(key, {
+        subjectKey: key,
+        currentCount: metric.count,
+        currentShare: metric.share,
+        ...(projectedCount === undefined
+          ? {}
+          : {
+              projectedCount,
+              projectedShare: metric.share,
+              deltaCount: projectedCount - metric.count,
+            }),
+        kind: metric.kind === "conditional_share" ? "conditional_share" : "share",
+        status: "projected",
+      });
+    }
+
+    for (const target of draft.targets) {
+      const resolved = resolveTarget(context, groups, target);
+      const key = subjectKey(
+        resolved && "kind" in resolved && resolved.kind !== "mean" && resolved.kind !== "count"
+          ? resolved.kind === "conditional_share"
+            ? resolved
+            : { kind: "share", subject: resolved.subject }
+          : target,
+      );
+      if ("code" in resolved) {
+        rowsByKey.set(key, {
+          subjectKey: key,
+          targetId: target.id,
+          kind: target.kind,
+          status: "invalid",
+        });
+        continue;
+      }
+
+      if (resolved.kind === "mean") {
+        const scoreMapping = target.kind === "mean" ? target.scoreMapping : undefined;
+        const metric = meanMetric(context, resolved.questionId, scoreMapping ? [scoreMapping] : []);
+        const currentMean = metric?.mean;
+        rowsByKey.set(key, {
+          subjectKey: key,
+          targetId: target.id,
+          kind: target.kind,
+          ...(currentMean === undefined ? {} : { currentMean }),
+          projectedMean: resolved.value,
+          status: "projected",
+        });
+        continue;
+      }
+
+      const metric =
+        resolved.kind === "conditional_share"
+          ? conditionalMetric(
+              context,
+              groups,
+              target as Extract<TargetDraftTarget, { kind: "conditional_share" }>,
+            )
+          : subjectMetric(context, groups, resolved.subject);
+      if (!metric) {
+        rowsByKey.set(key, {
+          subjectKey: key,
+          targetId: target.id,
+          kind: target.kind,
+          status: "invalid",
+        });
+        continue;
+      }
+
+      const projectedDenominator =
+        resolved.kind === "conditional_share"
+          ? undefined
+          : estimatedEligibleCount(metric.denominatorCount);
+      const projectedShare =
+        draft.finalCount === null || resolved.kind === "conditional_share"
+          ? undefined
+          : resolved.kind === "count"
+            ? projectedDenominator !== undefined && resolved.value <= projectedDenominator
+              ? resolved.value / projectedDenominator
+              : undefined
+            : resolved.value;
+      const projectedCount =
+        resolved.kind === "count"
+          ? resolved.value
+          : projectedDenominator === undefined
+            ? undefined
+            : Math.round(projectedDenominator * resolved.value);
+      const deltaCount = projectedCount === undefined ? undefined : projectedCount - metric.count;
+      rowsByKey.set(key, {
+        subjectKey: key,
+        targetId: target.id,
+        kind: target.kind,
+        currentCount: metric.count,
+        currentShare: metric.share,
+        ...(projectedCount === undefined ? {} : { projectedCount }),
+        ...(projectedShare === undefined ? {} : { projectedShare }),
+        ...(deltaCount === undefined ? {} : { deltaCount }),
+        status: deltaCount !== undefined && deltaCount < 0 ? "needs_replacement" : "projected",
+      });
+    }
+
+    return {
+      projectId: draft.projectId,
+      sourceScope: draft.sourceScope,
+      sourceCount: context.responses.length,
+      finalCount: draft.finalCount,
+      rows: [...rowsByKey.values()],
+    };
+  },
 
   profileForRevision: async (projectId, sourceRevisionId, sourceScope, scoreMappings) => {
     const context = scopeContext(db, projectId, sourceScope, sourceRevisionId);

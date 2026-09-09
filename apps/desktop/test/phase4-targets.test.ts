@@ -333,6 +333,43 @@ describe("Phase 4 target profile and draft lifecycle", () => {
     );
   });
 
+  it("does not estimate conditional-target counts before the solver selects a population", async () => {
+    const database = setup();
+    const service = createTargetService(
+      database.db,
+      captureSynthesis(() => undefined),
+    );
+    const group = await createValueGroupService(database.db).create({
+      projectId: "project-1",
+      questionId: "q-city",
+      name: "서울",
+      members: ["Seoul"],
+    });
+
+    const preview = await service.preview({
+      projectId: "project-1",
+      finalCount: 4,
+      sourceScope: { kind: "all" },
+      seed: 42,
+      targets: [
+        {
+          id: "t-conditional" as never,
+          kind: "conditional_share",
+          population: { kind: "value_group", valueGroupId: group.id },
+          questionId: "q-checkbox",
+          optionKey: "music",
+          intent: { kind: "absolute", value: 0.5 },
+        },
+      ],
+    });
+
+    const row = preview.rows.find((candidate) => String(candidate.targetId) === "t-conditional");
+    expect(row).toMatchObject({ currentCount: 1, currentShare: 1, kind: "conditional_share" });
+    expect(row).not.toHaveProperty("projectedCount");
+    expect(row).not.toHaveProperty("projectedShare");
+    expect(row).not.toHaveProperty("deltaCount");
+  });
+
   it("starts a targetless draft when the final count adds responses", async () => {
     const database = setup();
     let captured: SynthesisStartParams | null = null;
